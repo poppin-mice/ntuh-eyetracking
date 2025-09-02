@@ -1,0 +1,23 @@
+所有的檔案路徑都在:C:\Users\User\hospital_final
+桌面上的捷徑分別是參照到calibration.bat、VA.bat、VF.bat
+
+
+
+
+
+先雙擊calibration
+calibration一定要選擇圖片(預設有噴火龍跟妙蛙種子) 也可以貼自己想要的圖在這個資料夾:C:\Users\User\hospital_final\校正圖片選擇
+
+
+calibration完之後可以跑VA跟VF了
+
+
+
+
+VA的輸出結果在VA_output
+VF的輸出結果在VF_output
+
+
+如果發現GUI 選單太大或太小可以去VF.py or VA.py的self.geometry("1020x920")調整選單大小
+
+VA VF跑到一半想終止時 用滑鼠點進畫面 按shift 再按q 即可終止
