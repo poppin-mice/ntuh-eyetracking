@@ -4,7 +4,7 @@
 # 可從 GUI 選擇 Goldmann II~V、刺激圖片、是否旋轉、刺激點數等
 # 載入/儲存 last_settings.json；可調整 gaze marker 樣式
 # 結束時顯示 PASS/FAIL 總數並輸出 CSV
-# + Inter-trial：每個刺激前／單次結果後顯示中心導引圖片或十字 N 秒
+# + Inter-trial：顯示中心導引圖片 N 秒 → 背景停留 M 秒 → 下一 trial
 # ================================================================
 import os, sys, math, time, datetime, logging
 from collections import deque
@@ -30,7 +30,7 @@ import json
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("svop_debug.log"), logging.StreamHandler()]
+    handlers=[pygame if False else logging.StreamHandler(), logging.FileHandler("svop_debug.log")]
 )
 LAST_SETTINGS_FILE = Path(__file__).resolve().parent / "VF_output" / "last_settings.json"
 DEFAULT_INTER_DIR = Path(r"C:\Users\User\hospital_final\校正圖片選擇\皮卡丘")
@@ -52,7 +52,7 @@ PASS_COLOR        = (0, 255, 0)
 ERROR_COLOR       = (255, 0, 0)
 
 # ----------------------------------------------------------------
-# Event-filter helpers（保留：若未來需要再用）
+# Event-filter helpers
 # ----------------------------------------------------------------
 def restore_event_filter():
     try:
@@ -65,24 +65,18 @@ def restore_event_filter():
         pass
 
 def prep_input_for_calibration():
-    try:
-        pygame.key.stop_text_input()
-    except Exception:
-        pass
-    try:
-        pygame.key.set_mods(0)
-    except Exception:
-        pass
+    try: pygame.key.stop_text_input()
+    except Exception: pass
+    try: pygame.key.set_mods(0)
+    except Exception: pass
     pygame.event.set_allowed(None)
     pygame.event.set_allowed([pygame.KEYDOWN, pygame.KEYUP, pygame.QUIT,
                               pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP,
                               pygame.ACTIVEEVENT])
     pygame.event.clear()
     pygame.event.pump()
-    try:
-        pygame.event.set_grab(True)
-    except Exception:
-        pass
+    try: pygame.event.set_grab(True)
+    except Exception: pass
 
 def ensure_pygame_focus(timeout=2.0):
     t0 = time.time()
@@ -143,7 +137,7 @@ def convert_positions_to_pixels(deg_pts, w, h, px_per_cm, dist_cm, diameter_px):
 # ---------- Inter-trial 顯示（圖片或白色十字固定點） ----------
 def show_interval_center(screen, W, H, inter_img_surf, duration_s):
     """
-    在中心顯示 inter-trial 圖片 duration_s 秒；若 inter_img_surf 為 None，則顯示白色十字。
+    中心顯示 inter-trial 圖片 duration_s 秒；若 inter_img_surf 為 None，顯示白色十字。
     期間按 Q 立即退出。
     """
     t0 = time.time()
@@ -176,9 +170,22 @@ def show_interval_center(screen, W, H, inter_img_surf, duration_s):
             screen.blit(local_img, (x, y))
         else:
             cx, cy = W // 2, H // 2
-            pygame.draw.line(screen, cross_color, (cx - cross_len, cy), (cx + cross_len, cy), cross_w)
-            pygame.draw.line(screen, cross_color, (cx, cy - cross_len), (cx, cy + cross_len), cross_w)
+            pygame.draw.line(screen, (255,255,255), (cx - cross_len, cy), (cx + cross_len, cy), cross_w)
+            pygame.draw.line(screen, (255,255,255), (cx, cy - cross_len), (cx, cy + cross_len), cross_w)
 
+        pygame.display.flip()
+        clock.tick(60)
+
+def show_background_blank(screen, duration_s):
+    """清背景並維持 duration_s 秒；期間可按 Q 離開。"""
+    W, H = screen.get_size()
+    clock = pygame.time.Clock()
+    t0 = time.time()
+    while time.time() - t0 < duration_s:
+        for ev in pygame.event.get():
+            if ev.type == pygame.KEYDOWN and ev.key == pygame.K_q:
+                pygame.quit(); sys.exit()
+        screen.fill(BACKGROUND_COLOR)
         pygame.display.flip()
         clock.tick(60)
 
@@ -189,10 +196,10 @@ class ConfigGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SVOP Test Configuration")
-        self.root.geometry("560x1180")
+        self.root.geometry("560x1240")
         self.cancelled = True
         self.root.protocol("WM_DELETE_WINDOW", self.on_cancel)
-        self.default_inter_dir = DEFAULT_INTER_DIR  # 新增：inter-trial 預設資料夾
+        self.default_inter_dir = DEFAULT_INTER_DIR  # inter-trial 預設資料夾
 
         # === 預設資料夾 ===
         self.default_calib_dir = Path(__file__).resolve().parent / "calibration_profiles"
@@ -208,22 +215,15 @@ class ConfigGUI:
         # Goldmann Size
         tk.Label(self.root, text="Goldmann Size:").pack(pady=4)
         self.size = tk.StringVar(value="Goldmann IV")
-        ttk.Combobox(
-            self.root,
-            textvariable=self.size,
-            values=list(ANGULAR_DIAMETERS.keys()),
-            state="readonly"
-        ).pack()
+        ttk.Combobox(self.root, textvariable=self.size,
+                     values=list(ANGULAR_DIAMETERS.keys()),
+                     state="readonly").pack()
 
         # Stimulus points
         tk.Label(self.root, text="Stimulus Points:").pack(pady=4)
         self.stim_points = tk.IntVar(value=9)
-        ttk.Combobox(
-            self.root,
-            textvariable=self.stim_points,
-            values=[5, 9, 13],
-            state="readonly"
-        ).pack()
+        ttk.Combobox(self.root, textvariable=self.stim_points,
+                     values=[5, 9, 13], state="readonly").pack()
 
         # Screen width
         tk.Label(self.root, text="Screen Width (cm):").pack(pady=4)
@@ -242,18 +242,15 @@ class ConfigGUI:
 
         # Enable rotation?
         self.enable_rotation = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            self.root,
-            text="Enable Continuous Rotation",
-            variable=self.enable_rotation
-        ).pack(pady=4)
+        tk.Checkbutton(self.root, text="Enable Continuous Rotation",
+                       variable=self.enable_rotation).pack(pady=4)
 
         # Rotation speed
         tk.Label(self.root, text="Rotation Speed (°/s):").pack(pady=4)
         self.rot_speed = tk.DoubleVar(value=90.0)
         tk.Entry(self.root, textvariable=self.rot_speed).pack()
 
-        # === Stimulus image（預設為資料夾；若未挑檔，啟動時自動挑第一張）===
+        # === Stimulus image（資料夾可；未挑檔則啟動時自動挑第一張）===
         tk.Label(self.root, text="Stimulus Image:").pack(pady=4)
         self.stim_path = tk.StringVar(value=str(self.default_stim_dir))
         frame = tk.Frame(self.root); frame.pack(fill="x", padx=10)
@@ -294,6 +291,11 @@ class ConfigGUI:
         self.inter_image_dur = tk.DoubleVar(value=1.5)
         tk.Entry(self.root, textvariable=self.inter_image_dur).pack()
 
+        # ★ 新增：背景持續（秒）
+        tk.Label(self.root, text="背景持續（秒）after inter-trial:").pack(pady=4)
+        self.bg_after_inter_dur = tk.DoubleVar(value=1.0)
+        tk.Entry(self.root, textvariable=self.bg_after_inter_dur).pack()
+
         # Buttons
         btn_row = tk.Frame(self.root); btn_row.pack(pady=12)
         tk.Button(btn_row, text="Use last settings", command=self.on_load_last).pack(side="left", padx=6)
@@ -330,7 +332,6 @@ class ConfigGUI:
         if f:
             self.inter_image_path.set(f)
 
-
     def browse_calib_dir(self):
         d = filedialog.askdirectory(
             title="Select calibration folder",
@@ -349,8 +350,6 @@ class ConfigGUI:
                     if pics:
                         self.stim_path.set(str(pics[0]))
                         break
-
-
 
             # 若 inter_image_path 是資料夾，嘗試挑第一張圖片
             ip = Path(self.inter_image_path.get().strip())
@@ -372,10 +371,6 @@ class ConfigGUI:
                 logging.warning("Inter-trial image not found. Fallback to crosshair.")
                 self.inter_image_path.set("")
 
-
-
-
-
             if not self.calib_dir.get().strip():
                 raise ValueError("Please choose a calibration folder created by calibration.py")
             if not Path(self.calib_dir.get().strip()).exists():
@@ -386,10 +381,11 @@ class ConfigGUI:
                 raise ValueError("Rotate speed must be ≥ 0")
             if not os.path.isfile(self.stim_path.get()):
                 raise ValueError("Stimulus image not found")
-            # inter-trial image 可選；若填了但不存在，直接清空
-            if self.inter_image_path.get().strip() and (not os.path.isfile(self.inter_image_path.get().strip())):
-                logging.warning("Inter-trial image not found. Fallback to crosshair.")
-                self.inter_image_path.set("")
+
+            # 背景時間檢查
+            if float(self.bg_after_inter_dur.get()) < 0:
+                raise ValueError("背景持續（秒）不可為負數")
+
         except Exception as e:
             messagebox.showerror("Input Error", str(e))
             return
@@ -413,9 +409,11 @@ class ConfigGUI:
             "gaze_color":          self.gaze_color.get().strip(),
             "gaze_radius":         self.gaze_radius.get(),
             "gaze_width":          self.gaze_width.get(),
-            # ★ Inter-trial
+            # Inter-trial
             "inter_image_path":    self.inter_image_path.get().strip(),
             "inter_image_dur":     float(self.inter_image_dur.get()),
+            # 背景停留
+            "bg_after_inter_dur":  float(self.bg_after_inter_dur.get()),
         }
 
     def _save_last_settings(self):
@@ -451,9 +449,11 @@ class ConfigGUI:
         self.gaze_color.set(d.get("gaze_color", self.gaze_color.get()))
         self.gaze_radius.set(int(d.get("gaze_radius", self.gaze_radius.get())))
         self.gaze_width.set(int(d.get("gaze_width", self.gaze_width.get())))
-        # ★ Inter-trial
+        # Inter-trial
         self.inter_image_path.set(d.get("inter_image_path", str(self.default_inter_dir)))
         self.inter_image_dur.set(float(d.get("inter_image_dur", 1.5)))
+        # 背景停留
+        self.bg_after_inter_dur.set(float(d.get("bg_after_inter_dur", 1.0)))
 
         messagebox.showinfo("Loaded", "已套用上一筆設定。")
 
@@ -467,6 +467,7 @@ def svop_test(screen, stim_pts, stim_deg_list, diameter_px, gf, stim_img, font, 
     rot_speed  = cfg['rot_speed']
     do_rotate  = cfg['enable_rotation']
     inter_dur  = float(cfg.get("inter_image_dur", 1.5))
+    bg_dur     = float(cfg.get("bg_after_inter_dur", 1.0))
     orig_stim  = stim_img.copy()
     angle      = 0.0
 
@@ -478,9 +479,13 @@ def svop_test(screen, stim_pts, stim_deg_list, diameter_px, gf, stim_img, font, 
     results = []
 
     # ===== 逐點呈現刺激 =====
+    first_trial = True
     for idx, stim in enumerate(stim_pts, start=1):
-        # 每個刺激開始前：導引回中心
-        show_interval_center(screen, W, H, inter_img_surf, inter_dur)
+        # 僅在「第一次 trial 前」顯示 inter-trial → 背景
+        if first_trial:
+            show_interval_center(screen, W, H, inter_img_surf, inter_dur)
+            show_background_blank(screen, bg_dur)
+            first_trial = False
 
         target_q   = get_quadrant(stim[0], stim[1], cx, cy)
         dwell_start= None
@@ -566,8 +571,9 @@ def svop_test(screen, stim_pts, stim_deg_list, diameter_px, gf, stim_img, font, 
         pygame.display.flip()
         time.sleep(1)
 
-        # 單次結束後：再次導引回中心（真正 inter-trial）
+        # 單次結束後：inter-trial 圖片 → 背景 → 下一 trial
         show_interval_center(screen, W, H, inter_img_surf, inter_dur)
+        show_background_blank(screen, bg_dur)
 
     # ===== 結束後總結 =====
     pass_count = sum(1 for r in results if r['result']=="PASS")

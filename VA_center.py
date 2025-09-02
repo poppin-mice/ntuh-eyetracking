@@ -30,15 +30,12 @@ def get_va_result_cpd(cpd_value: float, *_ignored):
     """
     只依據 cpd 判定 VA 分數。你可依需求微調 thr_cpd。
     """
-    # cpd 門檻（約 36,32,28,24,20,16,12,8,4）
     thr_cpd = [18.0, 16.0, 14.0, 12.0, 10.0, 8.0, 6.0, 4.0, 2.0]
     scores  = [0.9,  0.8,  0.7,  0.6,  0.5,  0.4,  0.3, 0.2, 0.1]
-
     for t, s in zip(thr_cpd, scores):
         if cpd_value >= t:
             return s
     return "Unknown"
-
 
 DO_BLUR    = True
 BLUR_KSIZE = (5, 5)
@@ -135,15 +132,14 @@ class SettingsWindow(tk.Tk):
         super().__init__()
         self.title("VA Test Settings")
         self.resizable(False, False)
-        self.geometry("1020x920")
+        self.geometry("1020x980")
 
         LABEL_FONT = ("Arial", 14)
         ENTRY_FONT = ("Arial", 14)
 
-        # === 預設的校正資料夾：<專案>/calibration_profiles ===
+        # 預設校正資料夾
         self.default_calib_dir = Path(__file__).resolve().parent / "calibration_profiles"
-        self.default_calib_dir.mkdir(parents=True, exist_ok=True)  # 確保存在
-        # 「Calibration folder」欄位預設值
+        self.default_calib_dir.mkdir(parents=True, exist_ok=True)
         self.calib_dir_var = tk.StringVar(value=str(self.default_calib_dir))
 
         # 基本參數
@@ -153,8 +149,8 @@ class SettingsWindow(tk.Tk):
         self.gaze_width_var  = tk.IntVar(value=4)
 
         self.stim_var   = tk.DoubleVar(value=5.0)     # 刺激時間上限（秒）
-        self.pass_dur_var = tk.DoubleVar(value=2.0)   # 連續看對秒數（GUI 可調）
-        self.blank_var  = tk.DoubleVar(value=1.0)
+        self.pass_dur_var = tk.DoubleVar(value=2.0)   # 連續看對秒數
+        self.blank_var  = tk.DoubleVar(value=1.0)     # 仍保留（不影響新流程）
         self.rad_var    = tk.IntVar(value=400)
 
         self.rotate_var = tk.BooleanVar(value=False)
@@ -170,9 +166,10 @@ class SettingsWindow(tk.Tk):
         self.scr_width_cm_var = tk.DoubleVar(value=53.0)
         self.view_dist_cm_var = tk.DoubleVar(value=120.0)
 
-        # ★ 新增：間隔圖片與顯示秒數
+        # ★ 新增：間隔圖片與顯示秒數 + 間隔結束後背景停留秒數
         self.interval_img_path_var = tk.StringVar(value="")
-        self.interval_img_dur_var  = tk.DoubleVar(value=3)
+        self.interval_img_dur_var  = tk.DoubleVar(value=1.5)
+        self.bg_after_inter_dur_var= tk.DoubleVar(value=1.0)
 
         self.cfg = None
         pad = {'padx': 10, 'pady': 8}
@@ -181,12 +178,10 @@ class SettingsWindow(tk.Tk):
         ttk.Label(self, text="User name:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
         ttk.Entry(self, textvariable=self.user_var, font=ENTRY_FONT, width=20).grid(row=r, column=1, **pad); r += 1
 
-        # ★ 校正資料夾（載入現成 checkpoint；VA 不做校正）
         ttk.Label(self, text="Calibration folder (required):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
         cdir_frame = ttk.Frame(self); cdir_frame.grid(row=r, column=1, sticky="w", **pad)
         ttk.Entry(cdir_frame, textvariable=self.calib_dir_var, font=ENTRY_FONT, width=40).pack(side="left")
         def _browse_calib_dir():
-            # 直接打開 <專案>/calibration_profiles
             p = filedialog.askdirectory(
                 title="Choose calibration folder (from calibration_profiles)",
                 initialdir=str(self.default_calib_dir)
@@ -199,7 +194,6 @@ class SettingsWindow(tk.Tk):
         ttk.Spinbox(self, textvariable=self.stim_var, from_=0.5, to=30.0,
                     increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
 
-        # ★ Pass duration（連續看對秒數）
         ttk.Label(self, text="Pass duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
         ttk.Spinbox(self, textvariable=self.pass_dur_var, from_=0.1, to=10.0,
                     increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
@@ -255,13 +249,11 @@ class SettingsWindow(tk.Tk):
         # 旋轉
         ttk.Checkbutton(self, text="Rotate stimulus (grating)", variable=self.rotate_var)\
             .grid(row=r, column=0, sticky="w", **pad); r += 1
-
         ttk.Label(self, text="Rotation Speed (deg/s):", font=LABEL_FONT)\
             .grid(row=r, column=0, sticky="w", **pad)
         self.rot_speed_spin = ttk.Spinbox(self, textvariable=self.rot_speed_var, from_=0, to=2000,
                                           increment=1, width=10, font=ENTRY_FONT)
         self.rot_speed_spin.grid(row=r, column=1, **pad); r += 1
-
         ttk.Label(self, text="Direction:", font=LABEL_FONT)\
             .grid(row=r, column=0, sticky="w", **pad)
         self.rot_dir_combo = ttk.Combobox(self, textvariable=self.rot_dir_var, values=["CW","CCW"],
@@ -283,6 +275,11 @@ class SettingsWindow(tk.Tk):
 
         ttk.Label(self, text="Inter-trial image duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
         ttk.Spinbox(self, textvariable=self.interval_img_dur_var, from_=0.2, to=10.0,
+                    increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+
+        # ★ 新增：Inter-trial 後背景停留（秒）
+        ttk.Label(self, text="Background hold after inter-trial (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(self, textvariable=self.bg_after_inter_dur_var, from_=0.0, to=10.0,
                     increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
 
         def _toggle_rotate_controls(*args):
@@ -345,9 +342,10 @@ class SettingsWindow(tk.Tk):
             # 已存在的 checkpoint 目錄
             'calib_dir': self.calib_dir_var.get().strip(),
 
-            # ★ 間隔圖片設定
+            # ★ 間隔圖片設定 + 背景停留
             'inter_interval_img_path': self.interval_img_path_var.get().strip(),
             'inter_interval_img_dur' : float(self.interval_img_dur_var.get()),
+            'bg_after_inter_dur'     : float(self.bg_after_inter_dur_var.get()),
         }
 
         # 存成 last_settings.json
@@ -380,9 +378,10 @@ class SettingsWindow(tk.Tk):
             'gaze_width'   : int(self.gaze_width_var.get()),
             'calib_dir'    : self.calib_dir_var.get(),
 
-            # ★ 間隔圖片
+            # ★ 間隔圖片 + 背景停留
             'interval_img_path': self.interval_img_path_var.get(),
             'interval_img_dur' : float(self.interval_img_dur_var.get()),
+            'bg_after_inter_dur': float(self.bg_after_inter_dur_var.get()),
         }
 
     def _apply_gui_values(self, d: dict):
@@ -402,12 +401,12 @@ class SettingsWindow(tk.Tk):
         self.gaze_color_var.set(d.get('gaze_color', '0,255,0'))
         self.gaze_radius_var.set(d.get('gaze_radius', 30))
         self.gaze_width_var.set(d.get('gaze_width', 4))
-        # 若 last_settings 沒存 calib_dir，就保留預設 calibration_profiles
         self.calib_dir_var.set(d.get('calib_dir', str(self.default_calib_dir)))
 
-        # ★ 間隔圖片
+        # ★ 間隔圖片 + 背景停留
         self.interval_img_path_var.set(d.get('interval_img_path', ''))
         self.interval_img_dur_var.set(d.get('interval_img_dur', 1.5))
+        self.bg_after_inter_dur_var.set(d.get('bg_after_inter_dur', 1.0))
 
     def on_load_last(self):
         try:
@@ -429,17 +428,16 @@ def run_test(cfg):
     W, H = info.current_w, info.current_h
     win = pygame.display.set_mode((W, H), pygame.FULLSCREEN)
 
-    # ★ 僅載入 checkpoint，不做校正
+    # 僅載入 checkpoint，不做校正
     profile_dir = Path(cfg['calib_dir'])
     if not profile_dir.exists():
         messagebox.showerror("Calibration missing", f"Folder not found:\n{profile_dir}")
         pygame.quit(); sys.exit(1)
 
-    dcfg = DefaultConfig()  # 不設定 cali_mode / cali_target，因為不跑校正
+    dcfg = DefaultConfig()
     calib = SVRCalibration(model_save_path=str(profile_dir))
     gf = GazeFollower(config=dcfg, calibration=calib)
 
-    # 確認有載到校正檔
     if not gf.calibration.has_calibrated:
         messagebox.showerror("Calibration missing",
                              f"No checkpoint detected in:\n{profile_dir}\n\n"
@@ -454,7 +452,7 @@ def run_test(cfg):
     stair = Staircase(start=2.0, step=2.0, minv=2.0, maxv=20.0)
 
     centers = {'left': (W // 4, H // 2), 'right': (3 * W // 4, H // 2)}
-    clock   = pygame.time.Clock()  # ← show_interval_center 也會用到
+    clock   = pygame.time.Clock()
     results = []
 
     # 背景（兩側輔助圓）
@@ -466,7 +464,7 @@ def run_test(cfg):
             pygame.draw.circle(surf, other_color, pos, rad)
         return surf
 
-    # ★ 載入間隔圖片（若沒選擇或載入失敗，就改用白色十字）
+    # 載入間隔圖片（若沒選擇或載入失敗，就改用白色十字）
     interval_img_surf = None
     if cfg.get('inter_interval_img_path'):
         try:
@@ -476,16 +474,11 @@ def run_test(cfg):
             interval_img_surf = None
 
     def show_interval_center(duration_s: float):
-        """
-        在中心顯示間隔圖片 duration_s 秒。若無圖片則顯示十字固定點。
-        可按 Q 提早中止實驗。
-        """
+        """中心顯示間隔圖片 duration_s 秒；若無圖片則顯示十字。"""
         t0 = time.time()
         cross_color = (255, 255, 255)
         cross_len   = min(int(min(W, H) * 0.03), 40)
         cross_w     = 4
-
-        # 若圖片太大，等比縮到不超過螢幕短邊的 40%
         local_img = None
         if interval_img_surf is not None:
             iw, ih = interval_img_surf.get_width(), interval_img_surf.get_height()
@@ -496,22 +489,16 @@ def run_test(cfg):
                 local_img = pygame.transform.smoothscale(interval_img_surf, new_size)
             else:
                 local_img = interval_img_surf
-
         while time.time() - t0 < duration_s:
             for ev in pygame.event.get():
                 if ev.type == pygame.KEYDOWN and ev.key == pygame.K_q:
-                    # 優雅地釋放
                     try:
                         gf.stop_sampling()
                         gf.release()
                     except Exception:
                         pass
                     pygame.quit(); sys.exit()
-
-            # 背景清成 bg_color
             win.fill(to_rgb_tuple(cfg['bg_color']))
-
-            # 畫圖片或十字
             if local_img is not None:
                 x = (W - local_img.get_width()) // 2
                 y = (H - local_img.get_height()) // 2
@@ -520,15 +507,26 @@ def run_test(cfg):
                 cx, cy = W // 2, H // 2
                 pygame.draw.line(win, cross_color, (cx - cross_len, cy), (cx + cross_len, cy), cross_w)
                 pygame.draw.line(win, cross_color, (cx, cy - cross_len), (cx, cy + cross_len), cross_w)
-
             pygame.display.flip()
             clock.tick(60)
 
+    def show_background_blank(duration_s: float):
+        """清背景並維持 duration_s 秒；期間可按 Q 離開。"""
+        t0 = time.time()
+        while time.time() - t0 < duration_s:
+            for ev in pygame.event.get():
+                if ev.type == pygame.KEYDOWN and ev.key == pygame.K_q:
+                    pygame.quit(); sys.exit()
+            win.fill(to_rgb_tuple(cfg['bg_color']))
+            pygame.display.flip()
+            clock.tick(60)
+
+    # 先顯示一次 inter-trial 圖片 → 背景，再開始第一個 trial
+    show_interval_center(cfg.get('inter_interval_img_dur', 1.5))
+    show_background_blank(cfg.get('bg_after_inter_dur', 1.0))
+
     # === 實驗主迴圈 ===
     while not stair.done():
-        # 每個 trial 開始前，顯示「導引回中心」畫面
-        show_interval_center(cfg.get('inter_interval_img_dur', 1.5))
-
         side  = random.choice(['left', 'right'])
         cpd   = float(stair.freq)
         cs    = cpd * cfg['screen_width_deg']
@@ -549,7 +547,7 @@ def run_test(cfg):
         start  = time.time()
         passed = False
         gaze_q = deque(maxlen=5)
-        hold_start = None               # 連續看對計時
+        hold_start = None
         hold_elapsed = 0.0
 
         x0 = centers[side][0] - rad
@@ -615,10 +613,10 @@ def run_test(cfg):
                 avgx = max(0, min(W-1, int(avgx)))
                 avgy = max(0, min(H-1, int(avgy)))
 
-                # 半螢幕判定：右邊 >= W/2；左邊 < W/2
+                # 半螢幕判定
                 in_correct_half = (avgx >= W // 2) if side == 'right' else (avgx < W // 2)
 
-                # 連續看對秒數（不受 stim_dur 限制）
+                # 連續看對秒數
                 if in_correct_half:
                     if hold_start is None:
                         hold_start = time.time()
@@ -652,7 +650,7 @@ def run_test(cfg):
                 no_txt = font_small.render(msg, True, (255,100,100))
                 win.blit(no_txt, (10, 40))
 
-            # 狀態列：顯示持續秒數 / 需求秒數
+            # 狀態列
             font = pygame.font.SysFont(None, 30)
             txt = font.render(
                 f"{cpd:.2f} cpd  ({cs:.1f} cyc/screen)  t={t:.1f}s  hold={hold_elapsed:.1f}/{cfg['pass_dur']:.1f}s",
@@ -663,7 +661,7 @@ def run_test(cfg):
             pygame.display.flip()
             clock.tick(60)
 
-            # 只有「目前不在正確半邊」時才吃刺激時間上限
+            # 只有目前不在正確半邊時才吃刺激時間上限
             if t > cfg['stim_dur'] and hold_start is None:
                 break
 
@@ -679,10 +677,9 @@ def run_test(cfg):
         stair.update(passed)
         results.append({'cpd': cpd, 'cycles_per_screen': cs, 'side': side, 'res': fb_text})
 
-        # Trial 間「導引回中心」：顯示間隔圖片
+        # Trial 間：inter-trial 圖片 → 背景停留
         show_interval_center(cfg.get('inter_interval_img_dur', 1.5))
-        # 若你還想保留純空白休息，可再加：
-        # time.sleep(cfg['blank_dur'])
+        show_background_blank(cfg.get('bg_after_inter_dur', 1.0))
 
     # ---- 結算（以 cpd）----
     final_cpd = float(stair.freq)
@@ -719,7 +716,7 @@ def run_test(cfg):
                 pygame.quit(); sys.exit()
         time.sleep(0.05)
 
-    # 不太會到這行，但保險
+    # 保險
     gf.stop_sampling(); gf.release(); pygame.quit()
 
 # ---------- main ----------
