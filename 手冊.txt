@@ -1,4 +1,7 @@
 所有的檔案路徑都在:C:\Users\User\hospital_final
+如果使用者名稱不一樣 請自己修改User -> 你的使用者名稱
+
+
 桌面上的捷徑分別是參照到calibration.bat、VA.bat、VF.bat
 
 
@@ -19,5 +22,6 @@ VF的輸出結果在VF_output
 
 
 如果發現GUI 選單太大或太小可以去VF.py or VA.py的self.geometry("1020x920")調整選單大小
+
 
 VA VF跑到一半想終止時 用滑鼠點進畫面 按shift 再按q 即可終止
