@@ -301,6 +301,9 @@ class SettingsWindow(tk.Tk):
         self.preview_running = False
         self.camera_helper = None
         self.face_aligner = None
+        
+        # [NEW] Gaze Marker Toggle
+        self.show_gaze_marker_var = tk.BooleanVar(value=True)
 
         self.cfg = None
         
@@ -597,6 +600,9 @@ class SettingsWindow(tk.Tk):
         ttk.Label(parent, text="Bright Color:", font=l_font).grid(row=r, sticky="w", **pad)
         ttk.Entry(parent, textvariable=self.color_light_var, font=e_font, width=15).grid(row=r, column=1, **pad)
         ttk.Button(parent, text="Pick", command=lambda: choose_color(self.color_light_var)).grid(row=r, column=2, **pad); r+=1
+        
+        # Gaze Marker Toggle
+        ttk.Checkbutton(parent, text="Show Gaze Marker during Test", variable=self.show_gaze_marker_var).grid(row=r, column=1, sticky="w", **pad); r+=1
 
         ttk.Label(parent, text="Dark Color:", font=l_font).grid(row=r, sticky="w", **pad)
         ttk.Entry(parent, textvariable=self.color_dark_var, font=e_font, width=15).grid(row=r, column=1, **pad)
@@ -862,6 +868,7 @@ class SettingsWindow(tk.Tk):
             'rec_sol_data': self.rec_sol_data_var.get(),
             'rec_sol_raw_video': self.rec_sol_raw_video_var.get(),
             'camera_id': self.safe_get_int(self.camera_idx_var, 0),
+            'show_gaze_marker': self.show_gaze_marker_var.get(),
         }
 
         # Save settings
@@ -893,6 +900,7 @@ class SettingsWindow(tk.Tk):
             'rec_webcam': self.rec_webcam_var.get(),
             'rec_sol_data': self.rec_sol_data_var.get(),
             'rec_sol_raw_video': self.rec_sol_raw_video_var.get(),
+            'show_gaze_marker': self.show_gaze_marker_var.get(),
         }
 
     def on_load_last(self):
@@ -920,6 +928,7 @@ class SettingsWindow(tk.Tk):
             if 'rec_webcam' in data: self.rec_webcam_var.set(data['rec_webcam'])
             if 'rec_sol_data' in data: self.rec_sol_data_var.set(data['rec_sol_data'])
             if 'rec_sol_raw_video' in data: self.rec_sol_raw_video_var.set(data['rec_sol_raw_video'])
+            if 'show_gaze_marker' in data: self.show_gaze_marker_var.set(data['show_gaze_marker'])
             messagebox.showinfo("Loaded", f"Loaded last settings.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load: {e}")
@@ -1364,7 +1373,8 @@ def run_test(cfg, sol_context=None):
                     else: in_correct_half = (gx < W // 2)
                     
                     # Draw Marker
-                    pygame.draw.circle(win, to_rgb_tuple(cfg['gaze_marker_color']), (gx, gy), cfg['gaze_marker_radius'], cfg['gaze_marker_width'])
+                    if cfg.get('show_gaze_marker', True):
+                         pygame.draw.circle(win, to_rgb_tuple(cfg['gaze_marker_color']), (gx, gy), cfg['gaze_marker_radius'], cfg['gaze_marker_width'])
 
             # Pass/Fail Logic
             if valid_sample and in_correct_half:
