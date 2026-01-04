@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Logs
+logs/
+*.log
+va_crash_log.txt
+
+# Output Data
+VA_output/
+VF_output/
+*.csv
+
+# Temporary Files
+~$*
+*.tmp
+
+# User Calibration Data (Assuming generic folder exists, ignore user subfolders)
+calibration_profiles/*/
+!calibration_profiles/README.md
+!calibration_profiles/.gitkeep

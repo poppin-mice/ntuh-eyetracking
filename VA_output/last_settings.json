@@ -15,5 +15,8 @@
   "gaze_color": "0,255,0",
   "gaze_radius": 30,
   "gaze_width": 4,
-  "calib_dir": "C:/Users/tchuang/hospital_final/hospital2/calibration_profiles/huang_5pt"
+  "calib_dir": "C:/Users/edan8/Workspace/eye-tracking-project/ntuh-eyetracking/calibration_profiles/user1_9pt",
+  "interval_img_path": "",
+  "interval_img_dur": 1.5,
+  "bg_after_inter_dur": 1.0
 }

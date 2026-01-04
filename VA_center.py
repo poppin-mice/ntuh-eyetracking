@@ -131,11 +131,11 @@ class SettingsWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("VA Test Settings")
-        self.resizable(False, False)
-        self.geometry("1020x980")
+        self.resizable(True, True)
+        self.geometry("1024x768")
 
-        LABEL_FONT = ("Arial", 14)
-        ENTRY_FONT = ("Arial", 14)
+        LABEL_FONT = ("Arial", 12)
+        ENTRY_FONT = ("Arial", 12)
 
         # 預設校正資料夾
         self.default_calib_dir = Path(__file__).resolve().parent / "calibration_profiles"
@@ -172,115 +172,122 @@ class SettingsWindow(tk.Tk):
         self.bg_after_inter_dur_var= tk.DoubleVar(value=1.0)
 
         self.cfg = None
-        pad = {'padx': 10, 'pady': 8}
+        
+        # --- Layout Frames ---
+        container = ttk.Frame(self, padding=20)
+        container.pack(fill="both", expand=True)
+        
+        left_frame = ttk.Frame(container)
+        left_frame.grid(row=0, column=0, sticky="nsew", padx=10)
+        
+        right_frame = ttk.Frame(container)
+        right_frame.grid(row=0, column=1, sticky="nsew", padx=10)
+        
+        container.columnconfigure(0, weight=1)
+        container.columnconfigure(1, weight=1)
 
+        pad = {'padx': 5, 'pady': 5}
+
+        # --- LEFT COLUMN ---
         r = 0
-        ttk.Label(self, text="User name:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Entry(self, textvariable=self.user_var, font=ENTRY_FONT, width=20).grid(row=r, column=1, **pad); r += 1
+        ttk.Label(left_frame, text="User name:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Entry(left_frame, textvariable=self.user_var, font=ENTRY_FONT, width=20).grid(row=r, column=1, **pad); r += 1
 
-        ttk.Label(self, text="Calibration folder (required):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        cdir_frame = ttk.Frame(self); cdir_frame.grid(row=r, column=1, sticky="w", **pad)
-        ttk.Entry(cdir_frame, textvariable=self.calib_dir_var, font=ENTRY_FONT, width=40).pack(side="left")
+        ttk.Label(left_frame, text="Calibration folder:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        # Wrap calib frame as it might be wide
+        cdir_frame = ttk.Frame(left_frame)
+        cdir_frame.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Entry(cdir_frame, textvariable=self.calib_dir_var, font=ENTRY_FONT, width=25).pack(side="left")
         def _browse_calib_dir():
             p = filedialog.askdirectory(
-                title="Choose calibration folder (from calibration_profiles)",
+                title="Choose calibration folder",
                 initialdir=str(self.default_calib_dir)
             )
-            if p:
-                self.calib_dir_var.set(p)
-        ttk.Button(self, text="Browse", command=_browse_calib_dir).grid(row=r, column=2, **pad); r += 1
+            if p: self.calib_dir_var.set(p)
+        ttk.Button(cdir_frame, text="Browse", command=_browse_calib_dir).pack(side="left", padx=5); r += 1
 
-        ttk.Label(self, text="Stimulus Duration cap (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.stim_var, from_=0.5, to=30.0,
-                    increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
-
-        ttk.Label(self, text="Pass duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.pass_dur_var, from_=0.1, to=10.0,
-                    increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
-
-        ttk.Label(self, text="Blank Duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.blank_var, from_=0.2, to=10.0,
-                    increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
-
-        ttk.Label(self, text="Circle Radius (px):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.rad_var, from_=50, to=800,
-                    increment=10, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
-
+        # Colors
         def choose_color(target_var):
             color = colorchooser.askcolor()[0]
             if color:
                 r_, g_, b_ = [int(c) for c in color]
                 target_var.set(f"{r_},{g_},{b_}")
 
-        ttk.Label(self, text="Bright Stripe Color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Entry(self, textvariable=self.color_light_var, font=ENTRY_FONT, width=15).grid(row=r, column=1, **pad)
-        ttk.Button(self, text="Pick", command=lambda: choose_color(self.color_light_var)).grid(row=r, column=2, **pad); r += 1
+        ttk.Label(left_frame, text="Bright Stripe Color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        f_cl = ttk.Frame(left_frame); f_cl.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Entry(f_cl, textvariable=self.color_light_var, font=ENTRY_FONT, width=15).pack(side="left")
+        ttk.Button(f_cl, text="Pick", command=lambda: choose_color(self.color_light_var)).pack(side="left", padx=5); r += 1
 
-        ttk.Label(self, text="Dark Stripe Color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Entry(self, textvariable=self.color_dark_var, font=ENTRY_FONT, width=15).grid(row=r, column=1, **pad)
-        ttk.Button(self, text="Pick", command=lambda: choose_color(self.color_dark_var)).grid(row=r, column=2, **pad); r += 1
+        ttk.Label(left_frame, text="Dark Stripe Color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        f_cd = ttk.Frame(left_frame); f_cd.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Entry(f_cd, textvariable=self.color_dark_var, font=ENTRY_FONT, width=15).pack(side="left")
+        ttk.Button(f_cd, text="Pick", command=lambda: choose_color(self.color_dark_var)).pack(side="left", padx=5); r += 1
 
-        ttk.Label(self, text="Background Color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Entry(self, textvariable=self.bg_color_var, font=ENTRY_FONT, width=15).grid(row=r, column=1, **pad)
-        ttk.Button(self, text="Pick", command=lambda: choose_color(self.bg_color_var)).grid(row=r, column=2, **pad); r += 1
+        ttk.Label(left_frame, text="Background Color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        f_bg = ttk.Frame(left_frame); f_bg.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Entry(f_bg, textvariable=self.bg_color_var, font=ENTRY_FONT, width=15).pack(side="left")
+        ttk.Button(f_bg, text="Pick", command=lambda: choose_color(self.bg_color_var)).pack(side="left", padx=5); r += 1
 
-        # 視線標記
-        ttk.Label(self, text="Gaze marker color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Entry(self, textvariable=self.gaze_color_var, font=ENTRY_FONT, width=15).grid(row=r, column=1, **pad)
-        ttk.Button(self, text="Pick", command=lambda: choose_color(self.gaze_color_var)).grid(row=r, column=2, **pad); r += 1
+        # Gaze Marker
+        ttk.Label(left_frame, text="Gaze marker color:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        f_gc = ttk.Frame(left_frame); f_gc.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Entry(f_gc, textvariable=self.gaze_color_var, font=ENTRY_FONT, width=15).pack(side="left")
+        ttk.Button(f_gc, text="Pick", command=lambda: choose_color(self.gaze_color_var)).pack(side="left", padx=5); r += 1
 
-        ttk.Label(self, text="Gaze marker radius (px):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.gaze_radius_var, from_=1, to=200,
-                    increment=1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+        ttk.Label(left_frame, text="Gaze marker radius (px):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(left_frame, textvariable=self.gaze_radius_var, from_=1, to=200, increment=1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
-        ttk.Label(self, text="Gaze marker line width:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.gaze_width_var, from_=0, to=40,
-                    increment=1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+        ttk.Label(left_frame, text="Gaze marker line width:", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(left_frame, textvariable=self.gaze_width_var, from_=0, to=40, increment=1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
-        # 螢幕與距離
-        ttk.Label(self, text="Screen width (cm):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.scr_width_cm_var, from_=10.0, to=300.0,
-                    increment=0.5, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+        # --- RIGHT COLUMN ---
+        r = 0
+        ttk.Label(right_frame, text="Stimulus Duration cap (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.stim_var, from_=0.5, to=30.0, increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
-        ttk.Label(self, text="Viewing distance (cm):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.view_dist_cm_var, from_=10.0, to=300.0,
-                    increment=1.0, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+        ttk.Label(right_frame, text="Pass duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.pass_dur_var, from_=0.1, to=10.0, increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
-        # 旋轉
-        ttk.Checkbutton(self, text="Rotate stimulus (grating)", variable=self.rotate_var)\
-            .grid(row=r, column=0, sticky="w", **pad); r += 1
-        ttk.Label(self, text="Rotation Speed (deg/s):", font=LABEL_FONT)\
-            .grid(row=r, column=0, sticky="w", **pad)
-        self.rot_speed_spin = ttk.Spinbox(self, textvariable=self.rot_speed_var, from_=0, to=2000,
-                                          increment=1, width=10, font=ENTRY_FONT)
-        self.rot_speed_spin.grid(row=r, column=1, **pad); r += 1
-        ttk.Label(self, text="Direction:", font=LABEL_FONT)\
-            .grid(row=r, column=0, sticky="w", **pad)
-        self.rot_dir_combo = ttk.Combobox(self, textvariable=self.rot_dir_var, values=["CW","CCW"],
-                                          state="readonly", width=10, font=ENTRY_FONT)
-        self.rot_dir_combo.grid(row=r, column=1, **pad); r += 1
+        ttk.Label(right_frame, text="Blank Duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.blank_var, from_=0.2, to=10.0, increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
-        # ★ 間隔圖片與秒數（GUI）
-        ttk.Label(self, text="Inter-trial image (center):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        img_frame = ttk.Frame(self); img_frame.grid(row=r, column=1, sticky="w", **pad)
-        ttk.Entry(img_frame, textvariable=self.interval_img_path_var, font=ENTRY_FONT, width=40).pack(side="left")
+        ttk.Label(right_frame, text="Circle Radius (px):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.rad_var, from_=50, to=800, increment=10, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        ttk.Label(right_frame, text="Screen width (cm):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.scr_width_cm_var, from_=10.0, to=300.0, increment=0.5, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        ttk.Label(right_frame, text="Viewing distance (cm):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.view_dist_cm_var, from_=10.0, to=300.0, increment=1.0, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        # Rotation
+        ttk.Checkbutton(right_frame, text="Rotate stimulus (grating)", variable=self.rotate_var).grid(row=r, column=0, sticky="w", **pad); r += 1
+        
+        ttk.Label(right_frame, text="Rotation Speed (deg/s):", font=LABEL_FONT).grid(row=r, column=0, sticky="w", **pad)
+        self.rot_speed_spin = ttk.Spinbox(right_frame, textvariable=self.rot_speed_var, from_=0, to=2000, increment=1, width=10, font=ENTRY_FONT)
+        self.rot_speed_spin.grid(row=r, column=1, sticky="w", **pad); r += 1
+        
+        ttk.Label(right_frame, text="Direction:", font=LABEL_FONT).grid(row=r, column=0, sticky="w", **pad)
+        self.rot_dir_combo = ttk.Combobox(right_frame, textvariable=self.rot_dir_var, values=["CW","CCW"], state="readonly", width=10, font=ENTRY_FONT)
+        self.rot_dir_combo.grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        # Inter-trial
+        ttk.Label(right_frame, text="Inter-trial image (center):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        img_frame = ttk.Frame(right_frame); img_frame.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Entry(img_frame, textvariable=self.interval_img_path_var, font=ENTRY_FONT, width=25).pack(side="left")
         def _browse_interval_img():
             p = filedialog.askopenfilename(
                 title="Choose interval image",
                 filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp"), ("All files", "*.*")]
             )
-            if p:
-                self.interval_img_path_var.set(p)
-        ttk.Button(self, text="Browse", command=_browse_interval_img).grid(row=r, column=2, **pad); r += 1
+            if p: self.interval_img_path_var.set(p)
+        ttk.Button(img_frame, text="Browse", command=_browse_interval_img).pack(side="left", padx=5); r += 1
 
-        ttk.Label(self, text="Inter-trial image duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.interval_img_dur_var, from_=0.2, to=10.0,
-                    increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+        ttk.Label(right_frame, text="Inter-trial img duration (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.interval_img_dur_var, from_=0.2, to=10.0, increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
-        # ★ 新增：Inter-trial 後背景停留（秒）
-        ttk.Label(self, text="Background hold after inter-trial (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
-        ttk.Spinbox(self, textvariable=self.bg_after_inter_dur_var, from_=0.0, to=10.0,
-                    increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, **pad); r += 1
+        ttk.Label(right_frame, text="Bg hold after inter-trial (s):", font=LABEL_FONT).grid(row=r, sticky="w", **pad)
+        ttk.Spinbox(right_frame, textvariable=self.bg_after_inter_dur_var, from_=0.0, to=10.0, increment=0.1, width=10, font=ENTRY_FONT).grid(row=r, column=1, sticky="w", **pad); r += 1
 
         def _toggle_rotate_controls(*args):
             state = "normal" if self.rotate_var.get() else "disabled"
@@ -289,8 +296,12 @@ class SettingsWindow(tk.Tk):
         self.rotate_var.trace_add("write", _toggle_rotate_controls)
         _toggle_rotate_controls()
 
-        ttk.Button(self, text="Use last settings", command=self.on_load_last).grid(row=r, columnspan=3, pady=6); r += 1
-        ttk.Button(self, text="Start Test", command=self.on_start, style="Big.TButton").grid(row=r, columnspan=3, pady=20)
+        # Bottom Buttons
+        btn_frame = ttk.Frame(container)
+        btn_frame.grid(row=1, column=0, columnspan=2, pady=20)
+        
+        ttk.Button(btn_frame, text="Use last settings", command=self.on_load_last).pack(side="top", pady=5)
+        ttk.Button(btn_frame, text="Start Test", command=self.on_start, style="Big.TButton").pack(side="top", pady=10)
 
         style = ttk.Style()
         style.configure("Big.TButton", font=("Arial", 16, "bold"), padding=10)

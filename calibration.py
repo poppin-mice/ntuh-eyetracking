@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os, sys, time, math, logging
 from pathlib import Path
+import cv2
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -14,6 +15,7 @@ from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
 from gazefollower.logger import Log as GFLog
+from gazefollower.camera import WebCamCamera
 
 
 # --------- 固定命名規則：calibration_profiles/<user>_<pts>pt ---------
@@ -79,11 +81,12 @@ class CalibGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Calibration")
-        self.geometry("480x360")
-        self.resizable(False, False)
+        self.geometry("600x500")
+        self.resizable(True, True)
 
         self.user = tk.StringVar(value="anonymous")
         self.pts  = tk.IntVar(value=9)
+        self.camera_idx = tk.StringVar(value="0")
 
         # 預設校正圖片資料夾
         default_cali_dir = Path(__file__).resolve().parent / "校正圖片選擇"
@@ -93,9 +96,16 @@ class CalibGUI(tk.Tk):
         self.cali_img_w    = tk.IntVar(value=170)
         self.cali_img_h    = tk.IntVar(value=170)
 
+        # 掃描相機
+        cams = self.list_cameras()
+        if not cams: cams = [0]
+
         r = 0
         ttk.Label(self, text="User name:").grid(row=r, column=0, sticky="w", padx=10, pady=6)
         ttk.Entry(self, textvariable=self.user, width=20).grid(row=r, column=1, padx=10); r += 1
+
+        ttk.Label(self, text="Select Camera:").grid(row=r, column=0, sticky="w", padx=10, pady=6)
+        ttk.Combobox(self, textvariable=self.camera_idx, values=cams, state="readonly", width=5).grid(row=r, column=1, padx=10, sticky="w"); r += 1
 
         ttk.Label(self, text="Calibration points:").grid(row=r, column=0, sticky="w", padx=10, pady=6)
         ttk.Combobox(self, textvariable=self.pts, values=[5,9,13], state="readonly", width=8).grid(row=r, column=1, padx=10); r += 1
@@ -115,6 +125,17 @@ class CalibGUI(tk.Tk):
 
         self.cfg = None
 
+    def list_cameras(self, max_cameras=10):
+        available = []
+        for i in range(max_cameras):
+            try:
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    available.append(i)
+                    cap.release()
+            except: pass
+        return available
+
     def _browse_img(self, init_dir=None):
         f = filedialog.askopenfilename(
             title="Select calibration image",
@@ -131,11 +152,20 @@ class CalibGUI(tk.Tk):
             "pts":  int(self.pts.get()),
             "cali_img_path": self.cali_img_path.get().strip(),
             "cali_img_size": (int(self.cali_img_w.get()), int(self.cali_img_h.get())),
+            "camera_id": int(self.camera_idx.get()),
         }
         self.destroy()
 
 
+import numpy as np
+import ctypes
+
 def main():
+    # [FIX] DPI Awareness for Windows 11 scaling
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception: pass
+
     logging.basicConfig(level=logging.INFO)
 
     # 初始化 gazefollower 的 logger（一定要先呼叫）
@@ -157,6 +187,9 @@ def main():
 
     # 設定 gazefollower
     dcfg = DefaultConfig()
+    # [FIX] Sync screen size with Pygame
+    dcfg.screen_size = np.array([W, H])
+    
     dcfg.cali_mode = gui.cfg["pts"]
     if gui.cfg.get("cali_img_path"):
         dcfg.cali_target_img = gui.cfg["cali_img_path"]
@@ -169,7 +202,12 @@ def main():
     print(f"[Calibration folder] {profile_dir}")
 
     calib = SVRCalibration(model_save_path=str(profile_dir))
-    gf = GazeFollower(config=dcfg, calibration=calib)
+    
+    # [FIX] Use selected camera
+    cid = gui.cfg.get("camera_id", 0)
+    webcam = WebCamCamera(webcam_id=cid)
+    
+    gf = GazeFollower(config=dcfg, calibration=calib, camera=webcam)
 
     # ===== 校正前的防呆處理 =====
     prep_input_for_calibration()

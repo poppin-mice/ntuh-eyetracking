@@ -36,6 +36,7 @@ class WebCamCamera(Camera):
         self.img_height = img_height
         self.img_width = img_width
         self.cam_fps = cam_fps
+        self.last_frame = None
         self._cap = cv2.VideoCapture()
         # Set the camera resolution and frame rate.
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.img_width)
@@ -72,6 +73,7 @@ class WebCamCamera(Camera):
 
             # Resize the frame to 640x480 if necessary
             frame = cv2.resize(frame, (self.img_width, self.img_height))
+            self.last_frame = frame
             # Lock and execute callback function if set.
             try:
                 with self.callback_and_param_lock:
