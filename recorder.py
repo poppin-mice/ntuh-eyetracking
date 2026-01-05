@@ -44,28 +44,27 @@ class Recorder:
              "timestamp", "gaze_x", "gaze_y", "raw_x", "raw_y", "worn", "validity"
         ])
         
-        # Video Stuff
-        self.video_writer = None # Webcam
-        self.screen_writer = None # Screen
-        self.sol_video_writer = None # Sol
-        
-        # Video Timestamp Writers (Late Init)
-        self.ts_webcam_file = None
-        self.ts_webcam_writer = None
-        
-        self.ts_screen_file = None
-        self.ts_screen_writer = None
-        
-        self.ts_sol_file = None
-        self.ts_sol_writer = None
-
         self.frame_count = 0
-        
-        # [OPTIMIZATION] Threaded Recording
-        self.queue = queue.Queue(maxsize=60)
         self.running = True
-        self.worker_thread = threading.Thread(target=self._worker, daemon=True)
-        self.worker_thread.start()
+
+        # [OPTIMIZATION] Multithreaded Recording
+        # Separate queues to prevent one slow stream from blocking others
+        BATCH_SIZE = 256
+        self.queue_webcam = queue.Queue(maxsize=BATCH_SIZE)
+        self.queue_screen = queue.Queue(maxsize=BATCH_SIZE)
+        self.queue_sol    = queue.Queue(maxsize=BATCH_SIZE)
+        self.queue_csv    = queue.Queue(maxsize=BATCH_SIZE)
+
+        # Workers
+        self.thread_webcam = threading.Thread(target=self._worker_webcam, daemon=True)
+        self.thread_screen = threading.Thread(target=self._worker_screen, daemon=True)
+        self.thread_sol    = threading.Thread(target=self._worker_sol,    daemon=True)
+        self.thread_csv    = threading.Thread(target=self._worker_csv,    daemon=True)
+
+        self.thread_webcam.start()
+        self.thread_screen.start()
+        self.thread_sol.start()
+        self.thread_csv.start()
 
     def _init_timestamp_writer(self, filename):
         f = open(os.path.join(self.session_dir, filename), "w", newline="", encoding='utf-8')
@@ -78,26 +77,41 @@ class Recorder:
                            webcam_gaze=None, 
                            sol_gaze=None, 
                            sol_raw=None,
-                           sol_frame=None, # [NEW] Sol Raw Video Frame
-                           sol_info=None, # [NEW] Extra Sol Info (validity, worn)
+                           sol_frame=None, # Sol Raw Video Frame
+                           sol_info=None, # Extra Sol Info (validity, worn)
                            target_letter=None, key_pressed=None, is_correct=None,
                            landmarks_str="", face_box="", left_eye_box="", right_eye_box=""):
         
         # Capture Data (Main Thread)
         timestamp = time.time()
+        f_idx = self.frame_count
+        self.frame_count += 1
         
-        # Optimization: Only capture screen if we are actually recording video (implied by non-None)
-        screen_pixels = None
+        # 1. Webcam Frame
+        if frame is not None:
+             try:
+                 self.queue_webcam.put_nowait((frame.copy(), f_idx, timestamp))
+             except queue.Full:
+                 print("Warning: Webcam Queue Full (Dropping Frame)")
+
+        # 2. Screen Frame (Optimization: Only capture if needed)
         if screen_surface is not None:
-             # Fast copy to numpy array (HWC)
-             screen_pixels = pygame.surfarray.array3d(screen_surface)
-        
-        # Copy frames (if mutable/reused buffer)
-        frame_copy = frame.copy() if frame is not None else None
-        sol_frame_copy = sol_frame.copy() if sol_frame is not None else None
-        
+             try:
+                 # Fast copy to numpy array (HWC)
+                 pixels = pygame.surfarray.array3d(screen_surface)
+                 self.queue_screen.put_nowait((pixels, f_idx, timestamp))
+             except queue.Full:
+                 print("Warning: Screen Queue Full (Dropping Frame)")
+
+        # 3. Sol Frame
+        if sol_frame is not None:
+             try:
+                 self.queue_sol.put_nowait((sol_frame.copy(), f_idx, timestamp))
+             except queue.Full:
+                 print("Warning: Sol Queue Full (Dropping Frame)")
+
+        # 4. CSV Data
         data = {
-            'frame_index': self.frame_count, # [FIX] Capture index immediately
             'timestamp': timestamp,
             'stim': stim_pos,
             'wg': webcam_gaze,
@@ -112,89 +126,119 @@ class Recorder:
             'leb': left_eye_box,
             'reb': right_eye_box
         }
-        
-        self.frame_count += 1 # Increment immediately
-        
-        if self.running:
-            try:
-                self.queue.put_nowait((frame_copy, screen_pixels, sol_frame_copy, data))
-            except queue.Full:
-                print("Warning: Recorder queue full, dropping frame!")
+        try:
+            self.queue_csv.put_nowait(data)
+        except queue.Full:
+            print("Warning: CSV Queue Full (Dropping Data!)")
 
-    def _worker(self):
-        while self.running or not self.queue.empty():
+    # --- Worker: Webcam ---
+    def _worker_webcam(self):
+        writer = None
+        ts_file, ts_writer = None, None
+        
+        while True:
             try:
-                item = self.queue.get(timeout=0.1)
+                item = self.queue_webcam.get(timeout=0.1)
             except queue.Empty:
+                if not self.running: break
                 continue
             
-            if item is None: break # Sentinel
+            if item is None: break
             
-            # Unpack
-            frame, screen_pixels, sol_frame, d = item
-            ts = d['timestamp']
-            f_idx = d['frame_index'] # [FIX] Use captured index
+            frame, f_idx, ts = item
             
-            # --- 1. Webcam Video ---
-            if frame is not None:
-                if self.video_writer is None:
-                    h, w = frame.shape[:2]
-                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                    self.video_writer = cv2.VideoWriter(
-                        os.path.join(self.session_dir, "webcam_video.mp4"),
-                        fourcc, 30.0, (w, h)
-                    )
-                    self.ts_webcam_file, self.ts_webcam_writer = self._init_timestamp_writer("webcam_video_timestamp.csv")
-                
-                # Frame is RGB (from WebCamCamera), VideoWriter expects BGR
-                frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                self.video_writer.write(frame_bgr)
-                # Timestamp (Frame Index not tracked explicitly per video, using generic count or just append)
-                # We can track per-video frame count if needed, but append is sequential
-                # Assuming index matches line number
-                # Or we can store internal counters.
-                # Let's just write timestamp
-                # User asked for frame_index, timestamp
-                # We can't easily know frame index of writer without counter, let's assume it's sequential
-                # User asked for frame_index, timestamp
-                # We can't easily know frame index of writer without counter, let's assume it's sequential
-                self.ts_webcam_writer.writerow([f_idx, ts]) # [FIX] Use captured f_idx
-                # Actually usage implies video timestamp. The frame_count is global. 
-                # Better to use a counter for each writer? 
-                # Let's use global count for now as it syncs all events.
+            if writer is None:
+                h, w = frame.shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(
+                    os.path.join(self.session_dir, "webcam_video.mp4"),
+                    fourcc, 30.0, (w, h)
+                )
+                ts_file, ts_writer = self._init_timestamp_writer("webcam_video_timestamp.csv")
             
-            # --- 2. Screen Video ---
-            if screen_pixels is not None:
-                if self.screen_writer is None:
-                    w, h = screen_pixels.shape[:2]
-                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                    self.screen_writer = cv2.VideoWriter(
-                        os.path.join(self.session_dir, "screen_record.mp4"),
-                        fourcc, 30.0, (w, h)
-                    )
-                    self.ts_screen_file, self.ts_screen_writer = self._init_timestamp_writer("screen_video_timestamp.csv")
-                
-                # Transpose (W,H,3) -> (H,W,3) and RGB -> BGR
-                view = screen_pixels.transpose([1, 0, 2])
-                screen_frame = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
-                self.screen_writer.write(screen_frame)
-                self.ts_screen_writer.writerow([f_idx, ts]) # [FIX] Use captured f_idx
+            # RGB -> BGR
+            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            writer.write(frame_bgr)
+            ts_writer.writerow([f_idx, ts])
+        
+        if writer: writer.release()
+        if ts_file: ts_file.close()
 
-            # --- 3. Sol Video ---
-            if sol_frame is not None:
-                if self.sol_video_writer is None:
-                    h, w = sol_frame.shape[:2]
-                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                    self.sol_video_writer = cv2.VideoWriter(
-                        os.path.join(self.session_dir, "sol_video.mp4"),
-                        fourcc, 30.0, (w, h)
-                    )
-                    self.ts_sol_file, self.ts_sol_writer = self._init_timestamp_writer("sol_video_timestamp.csv")
-                
-                self.sol_video_writer.write(sol_frame)
-                self.ts_sol_writer.writerow([f_idx, ts]) # [FIX] Use captured f_idx
+    # --- Worker: Screen ---
+    def _worker_screen(self):
+        writer = None
+        ts_file, ts_writer = None, None
 
-            # --- 4. Main CSV ---
+        while True:
+            try:
+                item = self.queue_screen.get(timeout=0.1)
+            except queue.Empty:
+                if not self.running: break
+                continue
+            
+            if item is None: break
+
+            pixels, f_idx, ts = item
+            
+            if writer is None:
+                w, h = pixels.shape[:2] # Pygame array is (W, H, 3)
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(
+                    os.path.join(self.session_dir, "screen_record.mp4"),
+                    fourcc, 30.0, (w, h)
+                )
+                ts_file, ts_writer = self._init_timestamp_writer("screen_video_timestamp.csv")
+            
+            # Pygame (W,H,3) -> cv2 (H,W,3) BGR
+            view = pixels.transpose([1, 0, 2])
+            frame_bgr = cv2.cvtColor(view, cv2.COLOR_RGB2BGR) # Pygame is RGB
+            writer.write(frame_bgr)
+            ts_writer.writerow([f_idx, ts])
+
+        if writer: writer.release()
+        if ts_file: ts_file.close()
+
+    # --- Worker: Sol ---
+    def _worker_sol(self):
+        writer = None
+        ts_file, ts_writer = None, None
+        
+        while True:
+            try:
+                item = self.queue_sol.get(timeout=0.1)
+            except queue.Empty:
+                if not self.running: break
+                continue
+            if item is None: break
+
+            frame, f_idx, ts = item
+            
+            if writer is None:
+                h, w = frame.shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                writer = cv2.VideoWriter(
+                    os.path.join(self.session_dir, "sol_video.mp4"),
+                    fourcc, 30.0, (w, h)
+                )
+                ts_file, ts_writer = self._init_timestamp_writer("sol_video_timestamp.csv")
+            
+            writer.write(frame)
+            ts_writer.writerow([f_idx, ts])
+
+        if writer: writer.release()
+        if ts_file: ts_file.close()
+
+    # --- Worker: CSV ---
+    def _worker_csv(self):
+        while True:
+            try:
+                d = self.queue_csv.get(timeout=0.1)
+            except queue.Empty:
+                if not self.running: break
+                continue
+            if d is None: break
+
+            # Main CSV
             sx, sy = d['stim'] if d['stim'] else (-1, -1)
             wgx, wgy = d['wg'] if d['wg'] else (-1, -1)
             sgx, sgy = d['sg'] if d['sg'] else (-1, -1)
@@ -217,8 +261,7 @@ class Recorder:
                 ])
             except ValueError: pass 
 
-            # --- 5. Sol Gaze CSV ---
-            # "timestamp", "gaze_x", "gaze_y", "raw_x", "raw_y", "worn", "validity"
+            # Sol Gaze CSV
             sol_info = d.get('s_info') or {}
             try:
                 self.sol_csv_writer.writerow([
@@ -230,23 +273,20 @@ class Recorder:
                 ])
             except ValueError: pass
 
-        # [FIX] Release resources in the worker thread
-        if self.video_writer: self.video_writer.release(); self.video_writer=None
-        if self.screen_writer: self.screen_writer.release(); self.screen_writer=None
-        if self.sol_video_writer: self.sol_video_writer.release(); self.sol_video_writer=None
-        
-        # Flush/Close CSVs
-        if self.ts_webcam_file: self.ts_webcam_file.close()
-        if self.ts_screen_file: self.ts_screen_file.close()
-        if self.ts_sol_file: self.ts_sol_file.close()
-
-
     def close(self):
+        print("Stopping Recorder...")
         self.running = False
-        if hasattr(self, 'queue'):
-            self.queue.put(None)
-            if self.worker_thread.is_alive():
-                self.worker_thread.join(timeout=3.0)
+        
+        # Wait for all threads to finish flushing their queues
+        timeout = 5.0 # Wait up to 5s per thread (parallel-ish)
+        
+        threads = [self.thread_webcam, self.thread_screen, self.thread_sol, self.thread_csv]
+        names = ["Webcam", "Screen", "Sol", "CSV"]
+        
+        for t, name in zip(threads, names):
+            if t.is_alive():
+                print(f"Waiting for {name} Recorder to finish...")
+                t.join(timeout=timeout)
         
         if self.csv_file:
             try: self.csv_file.close()
@@ -254,3 +294,4 @@ class Recorder:
         if self.sol_csv_file:
             try: self.sol_csv_file.close()
             except: pass
+        print("Recorder Stopped.")

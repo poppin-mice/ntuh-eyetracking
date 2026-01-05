@@ -1068,8 +1068,6 @@ def run_test(cfg, sol_context=None):
                 messagebox.showwarning("Sol Error", f"Failed to init Sol: {e}")
                 cfg['enable_sol'] = False
 
-
-
     # [NEW] Frame Helpers
     def get_sol_frame():
         frame_obj = None
@@ -1079,25 +1077,49 @@ def run_test(cfg, sol_context=None):
                 except queue.Empty: break
         
         if frame_obj:
-            try:
-                # Determine Resolution
-                w, h = 1328, 1200 # Default Sol Resolution (per user spec)
-                if sol_context and 'cam_params' in sol_context:
-                    try:
-                        res = sol_context['cam_params'].resolution
-                        if res: w, h = res.width, res.height
-                    except: pass
-                
-                # Convert SDK VideoFrame to Numpy Array
-                # Check for buffer access
-                if hasattr(frame_obj, 'get_buffer'):
+            if hasattr(frame_obj, 'img'):
+                 return frame_obj.img # Sol SDK (v2) Frame has .img (numpy)
+            
+            # Legacy / Buffer Fallback
+            if hasattr(frame_obj, 'get_buffer'):
+                try:
+                    # Determine Resolution
+                    w, h = 1328, 1200 # Default Sol Resolution
+                    if sol_context and 'cam_params' in sol_context:
+                         try:
+                             res = sol_context['cam_params'].resolution
+                             if res: w, h = res.width, res.height
+                         except: pass
+                    
                     buf = frame_obj.get_buffer()
                     arr = np.frombuffer(buf, dtype=np.uint8)
                     arr = arr.reshape((h, w, 3))
                     return arr
-            except Exception as e:
-                print(f"Sol Frame Convert Err: {e}")
+                except Exception as e:
+                    print(f"Sol Frame Convert Err: {e}")
+                    return None
+            
+            # Assume it's already Numpy
+            return frame_obj
+            
         return None
+
+    def get_webcam_frame():
+        if webcam and webcam.latest_frame is not None:
+             return webcam.latest_frame
+        return None
+        
+    def pump_recorder():
+         # [OPT] Helper to keep recorder buffer fed during blocking setup
+         if recorder and recorder.running:
+              sol_f = get_sol_frame() if cfg.get('rec_sol_raw_video') else None
+              wb_f = get_webcam_frame() if cfg.get('rec_webcam') else None
+              rec_screen = cfg.get('rec_webcam') or cfg.get('rec_sol_data')
+              recorder.process_and_record(
+                  wb_f, 
+                  win if rec_screen else None, 
+                  sol_frame=sol_f
+              )
 
     def get_webcam_frame():
         if gf and hasattr(gf, 'camera') and gf.camera:
@@ -1192,9 +1214,8 @@ def run_test(cfg, sol_context=None):
                 win if cfg.get('rec_video') else None,
                 sol_frame=sol_f
             )
-            clock.tick(60)
-
-
+            # [OPT] Restored to 30 FPS for high-rate data collection
+            clock.tick(30)
 
     def show_background_blank(duration_s):
         t0 = time.time()
@@ -1227,8 +1248,15 @@ def run_test(cfg, sol_context=None):
         cs    = cpd * cfg['screen_width_deg']
         rad   = int(cfg['radius'])
         diam  = rad * 2
+        
+        # [OPT] Pump data to prevent gap
+        pump_recorder()
         bg_surface = build_bg_surface(rad)
+        
+        pump_recorder()
         xx_patch, yy_patch, circle_mask_patch = prepare_patch_grid(rad)
+        
+        pump_recorder()
         circle_alpha = (circle_mask_patch.astype(np.uint8) * 255)
         patch_surf = pygame.Surface((diam, diam), pygame.SRCALPHA)
         start  = time.time()
@@ -1433,7 +1461,12 @@ def run_test(cfg, sol_context=None):
         fb_surf = fb_font.render(fb_text, True, color)
         win.blit(fb_surf, ((W - fb_surf.get_width()) // 2, (H - fb_surf.get_height()) // 2))
         pygame.display.flip()
-        time.sleep(1.0)
+        # [FIX] Replace sleep with active recording loop to prevent stutter
+        fb_start = time.time()
+        while time.time() - fb_start < 1.0:
+             pygame.event.pump()
+             pump_recorder()
+             clock.tick(30)
 
         # Feedback
         stair.update(passed)
