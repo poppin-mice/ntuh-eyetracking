@@ -50,16 +50,79 @@ def create_calibration_assets(screen_width, screen_height, aruco_dict, config):
 class ScreenProjector3D:
     def __init__(self, camera_matrix, dist_coeffs, aruco_dict, smoothing_factor):
         self.camera_matrix, self.dist_coeffs, self.aruco_dict = camera_matrix, dist_coeffs, aruco_dict
-        self.smoothing_factor = smoothing_factor 
+        self.smoothing_factor = smoothing_factor
         self.aruco_params = cv2.aruco.DetectorParameters()
         # Pose of Screen relative to Camera (rvec, tvec)
         self.smoothed_rvec, self.smoothed_tvec = None, None
         self.is_pose_valid = False
 
-    def is_calibrated(self): 
-        return self.is_pose_valid
+        # [OPT] Background ArUco Detection
+        self.pose_lock = threading.Lock()
+        self.pose_queue = queue.Queue(maxsize=2)  # Small queue for latest frames
+        self.pose_thread = None
+        self.pose_running = False
+
+    def is_calibrated(self):
+        with self.pose_lock:
+            return self.is_pose_valid
+
+    def start_background_detection(self, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m):
+        """Start background ArUco detection thread"""
+        if self.pose_running:
+            return
+        self.pose_running = True
+        self.pose_thread = threading.Thread(
+            target=self._pose_detection_worker,
+            args=(marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m),
+            daemon=True
+        )
+        self.pose_thread.start()
+        print("[ScreenProjector3D] Background ArUco detection started")
+
+    def stop_background_detection(self):
+        """Stop background ArUco detection thread"""
+        self.pose_running = False
+        if self.pose_thread and self.pose_thread.is_alive():
+            self.pose_thread.join(timeout=1.0)
+        print("[ScreenProjector3D] Background ArUco detection stopped")
+
+    def submit_frame_for_pose(self, image):
+        """Submit frame for background pose detection (non-blocking)"""
+        try:
+            # Overwrite old frame if queue is full
+            if self.pose_queue.full():
+                try:
+                    self.pose_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            self.pose_queue.put_nowait(image)
+        except queue.Full:
+            pass  # Drop frame if still full
+
+    def _pose_detection_worker(self, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m):
+        """Background thread for ArUco marker detection"""
+        frame_count = 0
+        while self.pose_running:
+            try:
+                image = self.pose_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            frame_count += 1
+            # Perform expensive ArUco detection
+            result, detected_ids = self._update_pose_internal(image, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m)
+
+            # [DEBUG] Print status every 50 frames
+            if frame_count % 50 == 0:
+                status = "CALIBRATED" if self.is_pose_valid else "NOT_CALIBRATED"
+                num_markers = len(detected_ids) if detected_ids else 0
+                print(f"[ArUco Thread] Frame {frame_count}: {status}, Markers detected: {num_markers}")
 
     def update_pose(self, image, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m):
+        """Legacy synchronous update_pose - calls internal method"""
+        return self._update_pose_internal(image, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m)
+
+    def _update_pose_internal(self, image, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m):
         corners, ids, _ = cv2.aruco.detectMarkers(image, self.aruco_dict, parameters=self.aruco_params)
         detected_count = len(ids) if ids is not None else 0
         if detected_count > 0:
@@ -108,28 +171,38 @@ class ScreenProjector3D:
         retval, rvec, tvec = cv2.solvePnP(object_points, image_points, self.camera_matrix, self.dist_coeffs, flags=cv2.SOLVEPNP_IPPE)
         
         if retval:
-            if self.smoothed_rvec is None:
-                self.smoothed_rvec, self.smoothed_tvec = rvec, tvec
-            else:
-                self.smoothed_rvec = self.smoothing_factor * rvec + (1 - self.smoothing_factor) * self.smoothed_rvec
-                self.smoothed_tvec = self.smoothing_factor * tvec + (1 - self.smoothing_factor) * self.smoothed_tvec
-            
-            self.is_pose_valid = True
+            # [OPT] Thread-safe pose update
+            with self.pose_lock:
+                if self.smoothed_rvec is None:
+                    self.smoothed_rvec, self.smoothed_tvec = rvec, tvec
+                else:
+                    self.smoothed_rvec = self.smoothing_factor * rvec + (1 - self.smoothing_factor) * self.smoothed_rvec
+                    self.smoothed_tvec = self.smoothing_factor * tvec + (1 - self.smoothing_factor) * self.smoothed_tvec
+
+                self.is_pose_valid = True
             return (self.smoothed_rvec, self.smoothed_tvec), detected_ids_list
         else:
-            self.is_pose_valid = False
+            with self.pose_lock:
+                self.is_pose_valid = False
             return None, detected_ids_list
 
     def project_gaze_to_screen(self, gaze_origin_cam_m, gaze_direction_cam_unit):
         """
         將 Camera Frame 的 Gaze Ray 投射到 Screen Frame 並計算與 Z=0 平面的交點
         """
-        if not self.is_pose_valid:
+        # [OPT] Thread-safe pose read
+        with self.pose_lock:
+            if not self.is_pose_valid:
+                return None
+            rvec = self.smoothed_rvec.copy() if self.smoothed_rvec is not None else None
+            tvec = self.smoothed_tvec.copy() if self.smoothed_tvec is not None else None
+
+        if rvec is None or tvec is None:
             return None
-            
-        R_screen_to_cam, _ = cv2.Rodrigues(self.smoothed_rvec)
+
+        R_screen_to_cam, _ = cv2.Rodrigues(rvec)
         R_cam_to_screen = R_screen_to_cam.T
-        t_screen_to_cam = self.smoothed_tvec
+        t_screen_to_cam = tvec
         
         # 轉換 Origin
         gaze_origin_screen_m = R_cam_to_screen @ (gaze_origin_cam_m.reshape(3,1) - t_screen_to_cam)

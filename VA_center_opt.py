@@ -803,10 +803,14 @@ class SettingsWindow(tk.Tk):
             if not self.winfo_exists(): return
         except: return
         if not self.is_sol_connected: return
-        # Drain queues to prevent backpressure if we are just sitting in menu
+        # [OPT] Drain queues to prevent backpressure if we are just sitting in menu
         try:
-            while not self.sol_gaze_queue.empty(): self.sol_gaze_queue.get_nowait()
-            while not self.sol_scene_queue.empty(): self.sol_scene_queue.get_nowait()
+            while True:
+                try: self.sol_gaze_queue.get_nowait()
+                except queue.Empty: break
+            while True:
+                try: self.sol_scene_queue.get_nowait()
+                except queue.Empty: break
         except: pass
         self.after(100, self.flush_sol_queues)
 
@@ -981,6 +985,28 @@ def run_test(cfg, sol_context=None):
     sol_projector = None
     sol_gaze_queue = None
     sol_scene_queue = None
+
+    # [DEBUG] Sol gaze processing counters
+    sol_debug_counters = {
+        'total_frames': 0,
+        'gaze_queue_empty': 0,
+        'not_calibrated': 0,
+        'attribute_error': 0,
+        'projection_failed': 0,
+        'valid_gaze': 0,
+        'smoothed_gaze': 0,
+        'frames_with_gaze_data': 0,  # Frames where we got gaze from queue
+        'used_cached_gaze': 0,  # Frames where we used last known gaze due to queue empty
+        'zero_norm_vector': 0,  # Gaze direction vector has zero length
+        'gaze_data_structure_error': 0  # Missing left_eye, right_eye, or combined fields
+    }
+
+    # [FIX] Cache for last valid gaze (to handle 30Hz gaze stream vs 60Hz rendering)
+    sol_last_valid_gaze_pt = None
+    sol_last_valid_raw_pt = None
+    sol_last_gaze_timestamp = None
+    SOL_GAZE_CACHE_TIMEOUT = 0.150  # 150ms timeout (analysis shows median=58ms, mean=93ms between samples)
+
     
     # Aruco Assets
     aruco_markers_px = {}
@@ -1039,6 +1065,14 @@ def run_test(cfg, sol_context=None):
 
             sol_projector = ScreenProjector3D(cam_matrix, dist_coeffs, adict, smoothing_factor=cfg['sol_pose_smooth'])
 
+            # [OPT] Start background ArUco detection thread
+            sol_projector.start_background_detection(
+                cfg['sol_marker_size']/W*physical_width_m,
+                aruco_markers_px,
+                marker_container_size,
+                W, H, physical_width_m
+            )
+
         else:
             # Fallback: validation should have caught this, but if we are here without context,
             # we try to connect or just fail.
@@ -1072,9 +1106,12 @@ def run_test(cfg, sol_context=None):
     def get_sol_frame():
         frame_obj = None
         if sol_scene_queue:
-            while not sol_scene_queue.empty():
-                try: frame_obj = sol_scene_queue.get_nowait()
-                except queue.Empty: break
+            # [OPT] Drain queue to get latest frame
+            while True:
+                try:
+                    frame_obj = sol_scene_queue.get_nowait()
+                except queue.Empty:
+                    break
         
         if frame_obj:
             if hasattr(frame_obj, 'img'):
@@ -1105,10 +1142,13 @@ def run_test(cfg, sol_context=None):
         return None
 
     def get_webcam_frame():
-        if webcam and webcam.latest_frame is not None:
-             return webcam.latest_frame
+        # [FIX] Unified webcam frame retrieval
+        if gf and hasattr(gf, 'camera') and gf.camera:
+            return getattr(gf.camera, 'last_frame', None)
+        elif webcam and webcam.latest_frame is not None:
+            return webcam.latest_frame
         return None
-        
+
     def pump_recorder():
          # [OPT] Helper to keep recorder buffer fed during blocking setup
          if recorder and recorder.running:
@@ -1116,15 +1156,10 @@ def run_test(cfg, sol_context=None):
               wb_f = get_webcam_frame() if cfg.get('rec_webcam') else None
               rec_screen = cfg.get('rec_webcam') or cfg.get('rec_sol_data')
               recorder.process_and_record(
-                  wb_f, 
-                  win if rec_screen else None, 
+                  wb_f,
+                  win if rec_screen else None,
                   sol_frame=sol_f
               )
-
-    def get_webcam_frame():
-        if gf and hasattr(gf, 'camera') and gf.camera:
-            return getattr(gf.camera, 'last_frame', None)
-        return None
 
     # 3. Initialize Recorder
     recorder = Recorder(output_dir="VA_output", subject_id=cfg['user_name'], session_num="1", is_va=True)
@@ -1208,10 +1243,11 @@ def run_test(cfg, sol_context=None):
             # Record
             sol_f = get_sol_frame() if cfg.get('rec_sol_raw_video') else None
             wb_f = get_webcam_frame()
-            
+            rec_screen = cfg.get('rec_webcam') or cfg.get('rec_sol_data')
+
             recorder.process_and_record(
-                wb_f, 
-                win if cfg.get('rec_video') else None,
+                wb_f,
+                win if rec_screen else None,  # [FIX] Use correct config key
                 sol_frame=sol_f
             )
             # [OPT] Restored to 30 FPS for high-rate data collection
@@ -1255,10 +1291,18 @@ def run_test(cfg, sol_context=None):
         
         pump_recorder()
         xx_patch, yy_patch, circle_mask_patch = prepare_patch_grid(rad)
-        
+
         pump_recorder()
         circle_alpha = (circle_mask_patch.astype(np.uint8) * 255)
-        patch_surf = pygame.Surface((diam, diam), pygame.SRCALPHA)
+
+        # [OPT] Pre-generate base pattern (0 degrees) once per trial
+        patch_rgb_0deg = generate_grating_oriented_patch(cs, xx_patch, yy_patch, 0.0, W, cfg['color_dark'], cfg['color_light'], DO_BLUR)
+        base_surf = pygame.Surface((diam, diam), pygame.SRCALPHA)
+        pygame.surfarray.blit_array(base_surf.subsurface((0, 0, diam, diam)), patch_rgb_0deg.swapaxes(0, 1)[:,:,:3])
+        pa = pygame.surfarray.pixels_alpha(base_surf)
+        pa[:] = circle_alpha.T
+        del pa
+
         start  = time.time()
         passed = False
         hold_start = None
@@ -1273,6 +1317,7 @@ def run_test(cfg, sol_context=None):
                     # Quit
                     if gf: gf.stop_sampling(); gf.release()
                     if sol_connector: sol_connector.stop()
+                    if sol_projector: sol_projector.stop_background_detection()
                     recorder.close()
                     pygame.quit(); sys.exit()
 
@@ -1280,21 +1325,22 @@ def run_test(cfg, sol_context=None):
             win.blit(bg_surface, (0, 0))
 
             # Draw Stimulus
-            angle = (t * cfg['rot_speed'] * cfg['rot_dir']) % 360.0 if cfg['rotate'] else 0.0
-            patch_rgb = generate_grating_oriented_patch(cs, xx_patch, yy_patch, angle, W, cfg['color_dark'], cfg['color_light'], DO_BLUR)
-            
-            px = pygame.surfarray.pixels3d(patch_surf)
-            px[:] = patch_rgb.swapaxes(0, 1)
-            del px
-            pa = pygame.surfarray.pixels_alpha(patch_surf)
-            pa[:] = circle_alpha.T
-            del pa
-            win.blit(patch_surf, (x0, y0))
+            # [OPT] Use pygame.transform.rotate instead of regenerating pattern
+            if cfg['rotate']:
+                angle = (t * cfg['rot_speed'] * cfg['rot_dir']) % 360.0
+                rotated_surf = pygame.transform.rotate(base_surf, -angle)  # Negative for clockwise
+                # Center the rotated surface
+                rot_rect = rotated_surf.get_rect(center=(x0 + rad, y0 + rad))
+                win.blit(rotated_surf, rot_rect)
+            else:
+                win.blit(base_surf, (x0, y0))
 
             # --- Data Collection ---
             webcam_gaze_pt = None
-            sol_gaze_pt = None
-            sol_raw_pt = (0,0)
+            sol_gaze_pt = None  # For evaluation (may use cache)
+            sol_raw_pt = None
+            sol_gaze_pt_for_csv = None  # [FIX] For CSV recording (only actual new data)
+            sol_raw_pt_for_csv = None
             sol_info = {}
             
             # 1. Webcam Gaze
@@ -1306,52 +1352,76 @@ def run_test(cfg, sol_context=None):
 
             # 2. Sol Gaze
             if sol_connector:
+                sol_debug_counters['total_frames'] += 1
+
+                # [DEBUG] Print status every 100 frames
+                if sol_debug_counters['total_frames'] % 100 == 0:
+                    total = sol_debug_counters['total_frames']
+                    valid = sol_debug_counters['valid_gaze']
+                    with_data = sol_debug_counters['frames_with_gaze_data']
+                    cached = sol_debug_counters['used_cached_gaze']
+                    effective = valid + cached  # Total usable gaze data
+                    print(f"[Sol Debug] Frame {total}: NewData={valid} ({valid/total*100:.1f}%), "
+                          f"Cached={cached} ({cached/total*100:.1f}%), "
+                          f"Effective={effective} ({effective/total*100:.1f}%)")
+
                 # Unified Frame Retrieval (Pose + Record)
                 sol_frame_numpy = get_sol_frame()
-                
+
                 if sol_frame_numpy is not None:
                      try:
-                        # Update Projector Pose
-                        # Needs raw buffer? No, update_pose takes numpy array or buffer?
-                        # ScreenProjector3D.update_pose uses cv2.aruco.detectMarkers(image)
-                        # So numpy array is perfect.
-                        sol_projector.update_pose(
-                            sol_frame_numpy, cfg['sol_marker_size']/W*physical_width_m,
-                            aruco_markers_px, marker_container_size,
-                            W, H, physical_width_m
-                        )
+                        # [OPT] Submit frame for background ArUco detection (non-blocking!)
+                        sol_projector.submit_frame_for_pose(sol_frame_numpy)
                      except Exception as e:
                         print(f"Sol Pose Err: {e}")
 
                 # Get Gaze
                 try:
-                    # Drain queue to get latest
+                    # [OPT] Drain queue to get latest (more efficient)
                     latest_gaze = None
+                    got_new_gaze_data = False
                     if sol_gaze_queue:
-                        while not sol_gaze_queue.empty():
-                            try: latest_gaze = sol_gaze_queue.get_nowait()
-                            except: pass
-                    
+                        while True:
+                            try:
+                                latest_gaze = sol_gaze_queue.get_nowait()
+                                got_new_gaze_data = True
+                            except queue.Empty:
+                                break
+
+                    if not got_new_gaze_data:
+                        sol_debug_counters['gaze_queue_empty'] += 1
+                    else:
+                        sol_debug_counters['frames_with_gaze_data'] += 1
+
+                    if latest_gaze:
+                        if not sol_projector.is_calibrated():
+                            sol_debug_counters['not_calibrated'] += 1
+
                     if latest_gaze and sol_projector.is_calibrated():
                          # Reference Logic from Remote-Sol-Glasses/src/main_app_recorder.py
                          try:
                              # 1. Calculate Origin (Average of Left/Right Eye Origins)
+                             # Check if gaze data has required structure
+                             if not hasattr(latest_gaze, 'left_eye') or not hasattr(latest_gaze, 'right_eye') or not hasattr(latest_gaze, 'combined'):
+                                 sol_debug_counters['gaze_data_structure_error'] += 1
+                                 raise AttributeError("Missing left_eye, right_eye, or combined")
+
                              left_o = latest_gaze.left_eye.gaze.origin
                              right_o = latest_gaze.right_eye.gaze.origin
                              gaze_origin_mm = np.array([
-                                 (left_o.x + right_o.x)/2.0, 
-                                 (left_o.y + right_o.y)/2.0, 
+                                 (left_o.x + right_o.x)/2.0,
+                                 (left_o.y + right_o.y)/2.0,
                                  (left_o.z + right_o.z)/2.0
                              ])
-                             
+
                              # 2. Get 3D Gaze Point
                              g3d = latest_gaze.combined.gaze_3d
                              gaze_point_mm = np.array([g3d.x, g3d.y, g3d.z])
-                             
+
                              # 3. Compute Direction Vector
                              gaze_direction_vec = gaze_point_mm - gaze_origin_mm
                              norm = np.linalg.norm(gaze_direction_vec)
-                             
+
                              if norm > 0:
                                  gaze_direction_unit = gaze_direction_vec / norm
                                  gaze_origin_m = gaze_origin_mm / 1000.0 # Convert to meters
@@ -1362,25 +1432,38 @@ def run_test(cfg, sol_context=None):
                                       pix = sol_projector.physical_to_pixels(screen_pt_m, W, physical_width_m)
                                       if pix:
                                           sol_gaze_pt = (int(pix[0]), int(pix[1]))
-                                          # Raw data should be the gaze point projected on the SCENE camera (before homography)
-                                          # But sol_projector doesn't expose it easily. 
-                                          # User requested "raw data ... possible to calculate mapped ... in all timestamp"
-                                          # If mapping fails, at least record the raw direction/origin?
-                                          # For compatibility with recorder (x,y), let's store the raw gaze point in mm (x,y)
-                                          # Or maybe just the projected point on screen (if successful).
-                                          # Let's map sol_raw to result of physical_to_pixels WITHOUT validity checks?
-                                          # No, 'sol_raw' usually implies input. 
-                                          # Let's stick to using 'sol_gaze_pt' for now as mapped, 
-                                          # but if user says raw is wrong, maybe they mean 'sol_gaze_data.csv' columns?
-                                          # The CSV header is "timestamp", "gaze_x", "gaze_y", "raw_x", "raw_y", ...
-                                          # In recorder.py, sol_raw is used for raw_x, raw_y.
-                                          # Let's store gaze_point_mm (x,y) as raw? Or maybe just re-use sol_gaze_pt if valid.
-                                          # Actually, standard is usually raw pixel coordinates on eye camera or scene camera.
-                                          # Since we don't have scene camera projection handy here (inside projector), 
-                                          # let's maintain sol_raw_pt = sol_gaze_pt but improve reliability.
                                           sol_raw_pt = sol_gaze_pt
-                         except AttributeError: pass # Missing eye data or combined data
-                except Exception as e: pass
+                                          sol_debug_counters['valid_gaze'] += 1
+
+                                          # [FIX] Save for CSV recording (actual new data only)
+                                          sol_gaze_pt_for_csv = sol_gaze_pt
+                                          sol_raw_pt_for_csv = sol_raw_pt
+
+                                          # [FIX] Cache this valid gaze with timestamp for when queue is empty
+                                          sol_last_valid_gaze_pt = sol_gaze_pt
+                                          sol_last_valid_raw_pt = sol_raw_pt
+                                          sol_last_gaze_timestamp = time.time()
+                                      else:
+                                          sol_debug_counters['projection_failed'] += 1
+                                 else:
+                                     sol_debug_counters['projection_failed'] += 1
+                         except AttributeError as e:
+                             sol_debug_counters['attribute_error'] += 1
+                             # print(f"[DEBUG] AttributeError in gaze processing: {e}")
+                except Exception as e:
+                    print(f"[DEBUG] Exception in Sol gaze processing: {e}")
+
+                # [FIX] Use cached gaze if queue was empty (rate mismatch: 30Hz stream vs 60Hz rendering)
+                # Only use cached gaze if:
+                #   1. We're still calibrated (ArUco markers still visible)
+                #   2. Cache is fresh (< 50ms old) - prevents using stale data
+                if not got_new_gaze_data and sol_last_valid_gaze_pt is not None and sol_projector.is_calibrated():
+                    if sol_last_gaze_timestamp is not None:
+                        time_since_last_gaze = time.time() - sol_last_gaze_timestamp
+                        if time_since_last_gaze < SOL_GAZE_CACHE_TIMEOUT:
+                            sol_gaze_pt = sol_last_valid_gaze_pt
+                            sol_raw_pt = sol_last_valid_raw_pt
+                            sol_debug_counters['used_cached_gaze'] += 1
 
             # --- Evaluation Logic ---
             eval_pt = None
@@ -1441,10 +1524,11 @@ def run_test(cfg, sol_context=None):
             recorder.process_and_record(
                 wb_f, # Webcam Frame (only if enabled)
                 win if rec_screen else None, # Screen (if either enabled)
-                stim_pos=(x0, y0), 
+                stim_pos=(x0, y0),
                 webcam_gaze=webcam_gaze_pt,
-                sol_gaze=sol_gaze_pt if cfg.get('rec_sol_data') else None,
-                sol_raw=sol_raw_pt if cfg.get('rec_sol_data') else None,
+                # [FIX] Only record actual new Sol gaze data (not cached), to maintain 30Hz CSV rate
+                sol_gaze=sol_gaze_pt_for_csv if cfg.get('rec_sol_data') else None,
+                sol_raw=sol_raw_pt_for_csv if cfg.get('rec_sol_data') else None,
                 sol_frame=sol_f, # Sol Frame (only if enabled)
                 sol_info=sol_info if cfg.get('rec_sol_data') else None,
                 target_letter=f"{cpd:.1f}", # Reusing field
@@ -1476,6 +1560,16 @@ def run_test(cfg, sol_context=None):
         # Interval
         show_interval_center(cfg['inter_interval_img_dur'])
         show_background_blank(cfg.get('bg_after_inter_dur', 1.0))
+
+    # [DEBUG] Print Sol gaze statistics
+    if cfg['enable_sol'] and sol_debug_counters['total_frames'] > 0:
+        print("\n" + "="*60)
+        print("SOL GAZE PROCESSING STATISTICS")
+        print("="*60)
+        for key, value in sol_debug_counters.items():
+            pct = (value / sol_debug_counters['total_frames'] * 100) if key != 'total_frames' else 100
+            print(f"{key:20s}: {value:6d} ({pct:5.1f}%)")
+        print("="*60 + "\n")
 
     # Final Result & CSV
     final_cpd = float(stair.freq)
@@ -1515,6 +1609,7 @@ def run_test(cfg, sol_context=None):
     # End
     if gf: gf.stop_sampling(); gf.release()
     if sol_connector: sol_connector.stop()
+    if sol_projector: sol_projector.stop_background_detection()
     recorder.close()
     pygame.quit()
     sys.exit()

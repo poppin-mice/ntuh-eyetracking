@@ -97,9 +97,10 @@ class Recorder:
         # 2. Screen Frame (Optimization: Only capture if needed)
         if screen_surface is not None:
              try:
-                 # Fast copy to numpy array (HWC)
-                 pixels = pygame.surfarray.array3d(screen_surface)
-                 self.queue_screen.put_nowait((pixels, f_idx, timestamp))
+                 # [OPT] Fast buffer copy instead of array3d
+                 w, h = screen_surface.get_size()
+                 buf = pygame.image.tostring(screen_surface, 'RGB')
+                 self.queue_screen.put_nowait((buf, w, h, f_idx, timestamp))
              except queue.Full:
                  print("Warning: Screen Queue Full (Dropping Frame)")
 
@@ -175,23 +176,22 @@ class Recorder:
             except queue.Empty:
                 if not self.running: break
                 continue
-            
+
             if item is None: break
 
-            pixels, f_idx, ts = item
-            
+            buf, w, h, f_idx, ts = item
+
             if writer is None:
-                w, h = pixels.shape[:2] # Pygame array is (W, H, 3)
                 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                 writer = cv2.VideoWriter(
                     os.path.join(self.session_dir, "screen_record.mp4"),
                     fourcc, 30.0, (w, h)
                 )
                 ts_file, ts_writer = self._init_timestamp_writer("screen_video_timestamp.csv")
-            
-            # Pygame (W,H,3) -> cv2 (H,W,3) BGR
-            view = pixels.transpose([1, 0, 2])
-            frame_bgr = cv2.cvtColor(view, cv2.COLOR_RGB2BGR) # Pygame is RGB
+
+            # [OPT] Convert buffer to numpy array in worker thread
+            frame_rgb = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 3))
+            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
             writer.write(frame_bgr)
             ts_writer.writerow([f_idx, ts])
 
@@ -261,17 +261,19 @@ class Recorder:
                 ])
             except ValueError: pass 
 
-            # Sol Gaze CSV
-            sol_info = d.get('s_info') or {}
-            try:
-                self.sol_csv_writer.writerow([
-                    d['timestamp'],
-                    sgx, sgy,
-                    srx, sry,
-                    sol_info.get('worn', ''),
-                    sol_info.get('validity', '')
-                ])
-            except ValueError: pass
+            # Sol Gaze CSV - Only write rows with actual valid data (skip -1s)
+            # This keeps CSV at ~30Hz (actual Sol sample rate) instead of 60Hz with gaps
+            if sgx != -1 and sgy != -1:  # Only write if we have valid Sol gaze data
+                sol_info = d.get('s_info') or {}
+                try:
+                    self.sol_csv_writer.writerow([
+                        d['timestamp'],
+                        sgx, sgy,
+                        srx, sry,
+                        sol_info.get('worn', ''),
+                        sol_info.get('validity', '')
+                    ])
+                except ValueError: pass
 
     def close(self):
         print("Stopping Recorder...")
