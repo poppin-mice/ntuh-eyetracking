@@ -727,11 +727,32 @@ def run_test(cfg, sol_context=None):
             return 'ok'
         thr = float(cfg.get('valid_start_threshold', 80.0))
         blank_bg = PAPER_GRAY if PAPER_COLOR_ENABLED else to_rgb_tuple(cfg['bg_color'])
+        forced = False
+        # Focus-independent SPACE, same approach as the offset calibration: cv2.waitKey only
+        # reports keys while the dashboard window holds OS focus and pygame.event only while the
+        # subject window does, so neither alone is reliable here. Seed prev from the current state
+        # so a SPACE still held from the previous screen doesn't instantly skip the gate.
+        try:
+            import ctypes
+            _u32 = ctypes.windll.user32
+            prev_space = bool(_u32.GetAsyncKeyState(0x20) & 0x8000)
+        except Exception:
+            _u32, prev_space = None, False
         while True:
           try:
+            if _u32 is not None:
+                space_down = bool(_u32.GetAsyncKeyState(0x20) & 0x8000)
+                if space_down and not prev_space:
+                    forced = True
+                prev_space = space_down
             for ev in pygame.event.get():
                 if ev.type == pygame.KEYDOWN and ev.key == pygame.K_q:
                     return 'quit'
+                if ev.type == pygame.KEYDOWN and ev.key == pygame.K_SPACE:
+                    forced = True
+            if forced:
+                print("[wait_for_stable_quality] SPACE pressed - forcing trial start")
+                break   # skip the rest of the frame (render + screen encode) so the start is instant
             win.fill(blank_bg)
             if cfg['enable_sol']:
                 for mid, pos in aruco_markers_px.items():
@@ -754,7 +775,7 @@ def run_test(cfg, sol_context=None):
                 sol_raw_gaze_data=sol_rd if cfg.get('rec_sol_data') else None,
                 sol_frame=sol_f)
             sol_pct, wc_pct = sol_quality.window_validity()
-            dash_state.update(gate=(sol_pct if need_sol else None, wc_pct if need_wc else None, thr))
+            dash_state.update(gate=(sol_pct if need_sol else None, wc_pct if need_wc else None, thr, True))
             ok = True
             if need_sol: ok = ok and (sol_pct is not None and sol_pct >= thr)
             if need_wc: ok = ok and (wc_pct is not None and wc_pct >= thr)

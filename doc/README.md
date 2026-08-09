@@ -33,10 +33,11 @@ This package contains three programs for eye-tracking visual acuity experiments.
 Each program reads/writes its data **next to its own `.exe`** (not inside `_internal/`):
 `VA_output/`, `calibration_profiles/`, `logs/`, and the image folders.
 
-**Sharing calibration profiles:** `calibration.exe` saves to `calibration/calibration_profiles/`,
-while `VA_center_opt.exe` reads from `VA_center_opt/calibration_profiles/`. After calibrating,
-either copy the new `<name>_<points>pt` folder into `VA_center_opt/calibration_profiles/`, or set
-VA_center_opt's **Webcam tab → Calibration Folder** to point at `calibration/calibration_profiles/`.
+**Sharing calibration profiles:** `calibration.exe` saves to `calibration/calibration_profiles/`
+and **also copies the finished profile** to `VA_center_opt/calibration_profiles/`, which is where
+`VA_center_opt.exe` reads from — so a new `<name>_<points>pt` profile is usable straight away. If
+the two folders are not side by side, copy it by hand or set VA_center_opt's **Webcam tab →
+Calibration Folder** to point at `calibration/calibration_profiles/`.
 A default `anonymous_9pt` profile is included in both.
 
 ## Building from Source

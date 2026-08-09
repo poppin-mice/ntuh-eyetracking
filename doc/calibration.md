@@ -86,10 +86,11 @@ calibration_profiles/{username}_{points}pt/
 
 Example: User "edan" with 9 points creates `calibration/calibration_profiles/edan_9pt/`
 
-> **To use a profile in VA_center_opt:** `VA_center_opt.exe` reads from its own
-> `calibration_profiles/` folder. Either copy the new `{username}_{points}pt` folder into
-> `VA_center_opt/calibration_profiles/`, or set VA_center_opt's **Webcam tab → Calibration
-> Folder** to point at `calibration/calibration_profiles/`.
+> **To use a profile in VA_center_opt:** the finished profile is **copied automatically** into
+> `VA_center_opt/calibration_profiles/{username}_{points}pt/` when that folder exists next to
+> `calibration/` (the standard release layout) — the "Done" dialog lists both paths. If the copy
+> is skipped (custom layout, output folder moved), copy the folder by hand or set VA_center_opt's
+> **Webcam tab → Calibration Folder** to point at `calibration/calibration_profiles/`.
 
 ## Included Calibration Images
 

@@ -44,6 +44,10 @@ if SDK_AVAILABLE:
                 print(f"[SolPatch] Could not set single-threaded decode: {_err}")
             return codec
 
+        # Assigning a name the SDK no longer calls would bind a dead attribute and silently bring
+        # the crash back, so fail loudly instead if a wheel bump renames it.
+        if not hasattr(_SolVideoMixin, "_create_video_codec"):
+            raise AttributeError("VideoMixin._create_video_codec is gone in this SDK wheel")
         _SolVideoMixin._create_video_codec = _sol_create_single_threaded_codec
         print("[SolPatch] Scene-video decode forced single-threaded (native-crash mitigation)")
     except Exception as _patch_err:
@@ -151,22 +155,25 @@ class SolConnector:
                 status_task = ac.get_status()
                 params_task = ac.get_scene_camera_param()
                 time_sync_task = ac.run_time_sync(10)
-                
+
                 results = await asyncio.gather(status_task, params_task, time_sync_task, return_exceptions=True)
 
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        raise Exception(f"初始化任務 {i} 失敗: {result}")
-                    
+                # Report EVERY failed step, not just the first - each retry needs the glasses on a head.
+                failed = [f"{name}: {r!r}" for name, r in
+                          zip(('status', 'scene_camera_param', 'time_sync'), results)
+                          if isinstance(r, BaseException)]
+                if failed:
+                    raise Exception("初始化失敗 -> " + "; ".join(failed))
+
                 status_resp, params_resp, time_sync_resp = results
                 camera_params = {
                     'cam_matrix': np.array(params_resp.result.camera_param.intrinsic),
                     'dist_coeffs': np.array(params_resp.result.camera_param.distort)
                 }
                 time_offset_ms = time_sync_resp.time_offset.mean
-                
+
                 print(f"相機參數獲取成功。時間偏移量: {time_offset_ms:.2f} ms")
-                message = f"連線成功 | 設備: {status_resp.device_name}，時間差 {time_offset_ms} ms"
+                message = f"連線成功 | 設備: {status_resp.result.device_name}，時間差 {time_offset_ms} ms"
 
                 if on_connect:
                     on_connect(message, camera_params, int(time_offset_ms))
@@ -175,10 +182,10 @@ class SolConnector:
                     self._gaze_stream_loop(ac),
                     self._scene_stream_loop(ac)
                 )
-                
+
                 while not self.stop_event.is_set():
                     await asyncio.sleep(0.1)
-                
+
                 print("[SolConnector] 收到停止信號，正在取消串流任務...")
                 streaming_tasks.cancel()
                 try:
@@ -190,7 +197,7 @@ class SolConnector:
             print(f"[SolConnector] Session failed: {e}")
             if on_fail:
                 on_fail(f"操作失敗: {e}")
-            # Ensure we don't crash the loop, but maybe re-raise if needed. 
+            # Ensure we don't crash the loop, but maybe re-raise if needed.
             # For now, just logging and callback.
 
     def stop(self):

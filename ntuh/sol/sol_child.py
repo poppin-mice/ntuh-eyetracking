@@ -42,10 +42,13 @@ def _extract_img(frame, np):
     return None
 
 
-def run_child(params, gaze_q, msg_q, cmd_q):
+def run_child(params, gaze_q, msg_q, cmd_q, frame_q=None):
     """Child process entry (multiprocessing target). `params` is a plain picklable dict:
     ip, port, aruco_dict_id, screen_w/h/x/y, marker_k/marker_n/marker_pattern_size,
-    marker_container_size, screen_width_m, pose_smooth, seed_homography(list|None)."""
+    marker_container_size, screen_width_m, pose_smooth, seed_homography(list|None),
+    stream_frames(bool). With stream_frames and a frame_q, the already-decoded scene frames are
+    sent to the parent's operator view (see scene_publish for the measured cost). The native
+    H.264 decode stays here, so crash-safety is unchanged."""
     _install_child_excepthook()
 
     # --- Deferred heavy imports: CHILD ONLY ---
@@ -63,11 +66,17 @@ def run_child(params, gaze_q, msg_q, cmd_q):
         patched = VideoMixin._create_video_codec.__name__
     except Exception:
         patched = "?"
-    try:
-        msg_q.put({"type": sol_ipc.ERROR, "where": "startup",
-                   "error": f"sys.modules leak={leaked or 'clean'}; decode_patch={patched}"})
-    except Exception:
-        pass
+    def _report(text, where="scene_stream"):
+        """Send a line to the parent's message log. The child has no console of its own, so this
+        is the only way it can explain itself."""
+        try:
+            msg_q.put({"type": sol_ipc.ERROR, "where": where, "error": text})
+        except Exception:
+            pass
+
+    _report(f"sys.modules leak={leaked or 'clean'}; decode_patch={patched}; "
+            f"stream_frames={bool(params.get('stream_frames'))}; frame_q={frame_q is not None}",
+            where="startup")
 
     # TEST HOOK: set SOL_CHILD_CRASH_AFTER=<seconds> to simulate the native decode crash
     # (hard process exit) so the parent's crash/respawn path can be exercised without the SDK.
@@ -155,7 +164,20 @@ def run_child(params, gaze_q, msg_q, cmd_q):
 
     def scene_publish():
         EMIT = 1.0 / 15.0
-        last_emit = 0.0
+        # Scene frames for the operator's tester view. v1.0.2 did this with a full-frame
+        # cv2.imencode(".jpg", q60) right here and was reverted: ~12.0 ms per frame, so at 15 fps
+        # it burned ~180 ms/s of CPU in the process that owns the crash-prone native H.264 decode.
+        # A plain contiguous copy of the same frame is ~1.0 ms (~10 ms/s at 10 fps) - 18x less -
+        # and keeps FULL resolution, which the operator view wants for back-projected overlays.
+        # (Measured: stride 1 = 1.02 ms, stride 2 = 3.25 ms - a strided gather defeats the
+        # prefetcher, so downscaling here would cost MORE than sending the whole frame.)
+        # ponytail: raw frames cost ~48 MB/s of pipe. Fine for one operator view on localhost;
+        # move to multiprocessing.shared_memory if a second consumer ever needs the stream.
+        FRAME_EMIT = 1.0 / 10.0
+        FRAME_STEP = 1
+        stream_frames = bool(params.get("stream_frames")) and frame_q is not None
+        last_emit = 0.0          # homography/pose cadence - dropping this killed the whole thread
+        last_frame_emit = 0.0
         while state["running"]:
             proj = state["proj"]
             if proj is None:
@@ -172,6 +194,33 @@ def run_child(params, gaze_q, msg_q, cmd_q):
                     img = ex
             if img is not None:
                 proj.submit_frame_for_pose(img)
+                if stream_frames:
+                    now_f = time.time()
+                    if now_f - last_frame_emit >= FRAME_EMIT:
+                        last_frame_emit = now_f
+                        try:
+                            out = np.ascontiguousarray(img[::FRAME_STEP, ::FRAME_STEP])
+                            # step travels with the frame so the parent scales camera-space
+                            # overlay coordinates by the same factor, whatever FRAME_STEP is.
+                            msg = (out.shape, FRAME_STEP, out.tobytes())
+                            try:
+                                frame_q.put_nowait(msg)
+                            except queue.Full:      # newest wins: bound the display latency
+                                try:
+                                    frame_q.get_nowait()
+                                except queue.Empty:
+                                    pass
+                                try:
+                                    frame_q.put_nowait(msg)
+                                except queue.Full:
+                                    pass
+                            if not state.get("streamed_once"):
+                                state["streamed_once"] = True
+                                _report(f"streaming scene frames to tester view {out.shape} step={FRAME_STEP}")
+                        except Exception as e:
+                            if not state.get("stream_err"):   # report once, never spam the loop
+                                state["stream_err"] = True
+                                _report(f"scene frame streaming failed: {e!r}")
             now = time.time()
             if now - last_emit >= EMIT:
                 last_emit = now

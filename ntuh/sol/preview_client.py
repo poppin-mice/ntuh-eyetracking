@@ -21,6 +21,7 @@ class SolPreviewClient:
         self.gaze_q = None
         self.msg_q = None
         self.cmd_q = None
+        self.frame_q = None
         self.intentional_stop = False
         self._crashed = False
         self._respawn_at = 0.0
@@ -32,8 +33,11 @@ class SolPreviewClient:
         self.gaze_q = mp.Queue(maxsize=120)
         self.msg_q = mp.Queue(maxsize=400)
         self.cmd_q = mp.Queue(maxsize=50)
+        # Scene frames for an operator view, only when asked for. Depth 2 so a slow parent makes
+        # the child drop frames instead of building a backlog of stale ones.
+        self.frame_q = mp.Queue(maxsize=2) if self.params.get("stream_frames") else None
         self.proc = mp.Process(target=run_child,
-                               args=(self.params, self.gaze_q, self.msg_q, self.cmd_q),
+                               args=(self.params, self.gaze_q, self.msg_q, self.cmd_q, self.frame_q),
                                daemon=True, name="sol_scene_worker")
         self.proc.start()
 
@@ -44,7 +48,7 @@ class SolPreviewClient:
         self._spawn()
 
     def _close_queues(self):
-        for q in (self.gaze_q, self.msg_q, self.cmd_q):
+        for q in (self.gaze_q, self.msg_q, self.cmd_q, self.frame_q):
             if q is None:
                 continue
             try:
@@ -52,7 +56,7 @@ class SolPreviewClient:
                 q.cancel_join_thread()  # don't let the feeder thread block parent exit
             except Exception:
                 pass
-        self.gaze_q = self.msg_q = self.cmd_q = None
+        self.gaze_q = self.msg_q = self.cmd_q = self.frame_q = None
 
     def stop(self, timeout=4.0):
         """Graceful stop: signal STOP (-> AsyncClient __aexit__ closes TCP), join, terminate only
@@ -102,6 +106,30 @@ class SolPreviewClient:
             except Exception:
                 break
         return out
+
+    def drain_frames(self):
+        """Newest scene frame as ((h, w, 3) uint8 array, step), or None if none arrived.
+
+        `step` is the child's downscale factor: multiply camera-space overlay coordinates by
+        1/step to land on this image. Older frames are dropped so the operator sees live video
+        rather than a backlog. numpy-only, to keep this module SDK-free.
+        """
+        if self.frame_q is None:
+            return None
+        latest = None
+        while True:
+            try:
+                latest = self.frame_q.get_nowait()
+            except Exception:
+                break
+        if latest is None:
+            return None
+        try:
+            import numpy as np
+            shape, step, buf = latest
+            return np.frombuffer(buf, dtype=np.uint8).reshape(shape), step
+        except Exception:
+            return None
 
     def _send(self, cmd):
         try:

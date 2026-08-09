@@ -160,7 +160,8 @@ class TesterDashboard:
 
     def _render_gate_banner(self, canvas, gate):
         """Top banner shown while a trial is waiting for stable valid data (quality gate)."""
-        sol_pct, wc_pct, thr = gate
+        sol_pct, wc_pct, thr = gate[:3]
+        can_force = len(gate) > 3 and gate[3]
         H, Wc = canvas.shape[:2]
         bar_h = 76
         canvas[:bar_h, :] = (0, 0, 110)   # dark red bar (BGR)
@@ -171,6 +172,8 @@ class TesterDashboard:
         if wc_pct is not None:
             parts.append(f"Webcam {wc_pct:.0f}%")
         msg = ("   ".join(parts) + f"   (need >= {thr:.0f}%)") if parts else f"need >= {thr:.0f}%"
+        if can_force:
+            msg += "   [SPACE = force start]"
         _put_text(canvas, msg, (Wc // 2, 60), _Q_WHITE, scale=0.62, center=True)
 
     def _render_webcam_panel(self, panel):

@@ -44,4 +44,4 @@ pyinstaller-hooks-contrib==2025.11
 # --- Ganzin Sol SDK (vendored wheel; not on PyPI) ---
 # Installed from the repo. Its own deps (aiohttp/websockets/requests) are
 # resolved automatically. Run pip from the repo root so this relative path works.
-vendor/ganzin_sol_sdk-1.2.2-py3-none-any.whl
+vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl

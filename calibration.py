@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sys, time, json, logging
+import os, sys, time, json, shutil, logging
 from pathlib import Path
 import cv2
 import tkinter as tk
@@ -680,7 +680,17 @@ def main():
     except Exception:
         pass
     if completed:
-        messagebox.showinfo("Done", f"Calibration saved to:\n{profile_dir}")
+        msg = f"Calibration saved to:\n{profile_dir}"
+        # Also drop a copy next to VA_center_opt.exe (release layout: <root>/calibration/
+        # and <root>/VA_center_opt/) so the VA/VF app sees the profile without a manual copy.
+        mirror = APP_DIR.parent / "VA_center_opt" / "calibration_profiles" / profile_dir.name
+        if mirror.parent.parent.is_dir() and mirror.resolve() != profile_dir.resolve():
+            try:
+                shutil.copytree(profile_dir, mirror, dirs_exist_ok=True)
+                msg += f"\n\nAlso copied to:\n{mirror}"
+            except Exception as e:
+                print(f"[Mirror to VA_center_opt failed] {e}")
+        messagebox.showinfo("Done", msg)
 
     # [FIX] Restore original keyboard layout on exit (atexit is the backstop).
     kb_manager.restore()

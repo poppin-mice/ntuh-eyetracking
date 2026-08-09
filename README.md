@@ -22,7 +22,8 @@ This file is for **developers**.
 - (For live Sol work) Ganzin Sol glasses + the paired phone running **Ganzin Chronus**, on the same Wi-Fi.
 
 The **Ganzin Sol SDK** and **GazeFollower** are bundled in this repo — nothing to fetch separately:
-- `vendor/ganzin_sol_sdk-1.2.2-py3-none-any.whl` — installed by `requirements.txt`.
+- `vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl` — installed by `requirements.txt`. Must match the
+  remote API version your Chronus app reports; a mismatch fails at connect time.
 - `gazefollower/` — vendored source (imported directly, do **not** edit vendored internals).
 
 ## Setup
