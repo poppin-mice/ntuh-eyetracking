@@ -1,6 +1,6 @@
 ==============================================================================
  NTUH Eye-Tracking Suite - Release Notes
- Build date: 2026-08-09
+ Build date: 2026-08-10
 ==============================================================================
 
 This release builds on the 2026-07-21 build (same three programs:
