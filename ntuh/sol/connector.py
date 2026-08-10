@@ -5,6 +5,7 @@ native access-violation crash. Extracted verbatim from sol_tracker.py.
 """
 import asyncio
 import queue
+import sys
 import threading
 import time
 
@@ -18,6 +19,83 @@ try:
 except ImportError:
     SDK_AVAILABLE = False
     class AsyncClient: pass
+
+
+# --- SDK compatibility ------------------------------------------------------------------------
+# This code targets the 2.x remote API, where every reply is {status, message, result} and the
+# payload hangs off `.result`. Under a 1.x wheel the same calls return a flat object, so the first
+# thing that touches a payload dies with "'NoneType' object has no attribute 'camera_param'" -
+# which names neither the SDK nor the version. requirements.txt pins the 2.0.1 wheel, but a venv
+# that predates that pin (or a wheel installed into a DIFFERENT interpreter - on Windows `python3`
+# is often the Microsoft Store Python, not the venv) silently keeps the old one. Check the wheel
+# before touching the network so the environment is named at Connect.
+REQUIRED_SDK_MAJOR = 2
+VENDORED_WHEEL = "vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl"
+
+
+def installed_sdk_version():
+    """Version of the installed ganzin-sol-sdk distribution, or None if it cannot be determined."""
+    try:
+        from importlib import metadata
+        return metadata.version("ganzin-sol-sdk")
+    except Exception:
+        return None
+
+
+def check_sdk_version():
+    """Is the INSTALLED Ganzin wheel the major version this code targets? -> (ok, message).
+
+    `message` is operator-facing on failure (it names both versions, the interpreter, and the fix)
+    and a one-line note on success.
+    """
+    if not SDK_AVAILABLE:
+        return False, ("Ganzin Sol SDK is not installed in this Python environment:\n"
+                       f"    {sys.executable}\n\n"
+                       f"Install it from the repo root with:\n"
+                       f"    python -m pip install {VENDORED_WHEEL}")
+    ver = installed_sdk_version()
+    if ver is None:
+        return True, "Ganzin Sol SDK version unknown (no distribution metadata) - continuing"
+    try:
+        major = int(str(ver).split(".")[0])
+    except (ValueError, IndexError):
+        return True, f"Ganzin Sol SDK version unparsable ({ver}) - continuing"
+    if major != REQUIRED_SDK_MAJOR:
+        return False, (
+            f"Wrong Ganzin Sol SDK version.\n\n"
+            f"    installed:  {ver}\n"
+            f"    required:   {REQUIRED_SDK_MAJOR}.x\n"
+            f"    interpreter: {sys.executable}\n\n"
+            f"The 1.x and 2.x replies have different shapes, so connecting would fail later with "
+            f"an error that does not mention the SDK at all.\n\n"
+            f"Fix it from the repo root with:\n"
+            f"    python -m pip install {VENDORED_WHEEL}\n\n"
+            f"Run that with the SAME interpreter you start the app with. Inside the venv use "
+            f"'python', NOT 'python3' - on Windows 'python3' is usually the Microsoft Store "
+            f"Python, so the wheel lands in a different environment and nothing changes here."
+        )
+    return True, f"Ganzin Sol SDK {ver} (requires {REQUIRED_SDK_MAJOR}.x) OK"
+
+
+def _require_result(resp, what):
+    """Return resp.result, or raise an error that names the endpoint and quotes the device.
+
+    A reachable-but-not-ready phone (glasses not attached, Chronus backgrounded) answers with
+    status=FAILED, an explanatory `message`, and result=None. Dereferencing that blindly is where
+    "'NoneType' object has no attribute 'camera_param'" came from.
+    """
+    result = getattr(resp, "result", None)
+    if result is not None:
+        return result
+    status = getattr(resp, "status", None)
+    status = getattr(status, "value", status)
+    message = getattr(resp, "message", None)
+    raise Exception(
+        f"the glasses returned no {what} (status={status}"
+        + (f", message={message!r}" if message else "")
+        + "). Check that the Sol glasses are attached to the phone, Chronus is in the foreground, "
+          "and the phone is on the same Wi-Fi, then press Connect again."
+    )
 
 # [Crash fix] Force SINGLE-THREADED scene-video decode.
 #
@@ -186,31 +264,58 @@ class SolConnector:
             if on_fail: on_fail("SDK未安裝。")
             return
 
+        # Wheel check first: a mismatched SDK cannot produce a usable session, and failing here
+        # names the problem instead of surfacing as a broken reply three calls later.
+        sdk_ok, sdk_msg = check_sdk_version()
+        print(f"[SolConnector] {sdk_msg}")
+        if not sdk_ok:
+            if on_fail: on_fail(sdk_msg)
+            return
+
         try:
             async with AsyncClient(self.ip, self.port) as ac:
                 print("[SolConnector] 正在獲取設備狀態與相機參數...")
                 status_task = ac.get_status()
                 params_task = ac.get_scene_camera_param()
                 time_sync_task = ac.run_time_sync(10)
+                version_task = ac.get_version()
 
-                results = await asyncio.gather(status_task, params_task, time_sync_task, return_exceptions=True)
+                results = await asyncio.gather(status_task, params_task, time_sync_task,
+                                               version_task, return_exceptions=True)
 
                 # Report EVERY failed step, not just the first - each retry needs the glasses on a head.
                 failed = [f"{name}: {r!r}" for name, r in
-                          zip(('status', 'scene_camera_param', 'time_sync'), results)
+                          zip(('status', 'scene_camera_param', 'time_sync', 'version'), results)
                           if isinstance(r, BaseException)]
                 if failed:
                     raise Exception("初始化失敗 -> " + "; ".join(failed))
 
-                status_resp, params_resp, time_sync_resp = results
+                status_resp, params_resp, time_sync_resp, version_resp = results
+
+                # Second half of the version check: what the PHONE speaks. AsyncClient.__aenter__
+                # already rejects a major mismatch, but it does not say which two versions were
+                # compared - and on a match this line is the record of what the pair actually was.
+                _ver = getattr(version_resp, 'result', None)
+                device_api = getattr(_ver, 'remote_api_version', None) if _ver is not None else None
+                sdk_ver = installed_sdk_version()
+                print(f"[SolConnector] SDK {sdk_ver} <-> phone remote API {device_api}")
+                if device_api and sdk_ver and str(device_api).split('.')[0] != str(sdk_ver).split('.')[0]:
+                    raise Exception(
+                        f"Sol remote API mismatch: the phone speaks {device_api} but the installed "
+                        f"SDK is {sdk_ver}. Install the matching wheel from vendor/, or update the "
+                        f"Chronus app, so the major versions agree."
+                    )
+
+                params_result = _require_result(params_resp, "scene camera parameters")
+                status_result = _require_result(status_resp, "device status")
                 camera_params = {
-                    'cam_matrix': np.array(params_resp.result.camera_param.intrinsic),
-                    'dist_coeffs': np.array(params_resp.result.camera_param.distort)
+                    'cam_matrix': np.array(params_result.camera_param.intrinsic),
+                    'dist_coeffs': np.array(params_result.camera_param.distort)
                 }
                 time_offset_ms = time_sync_resp.time_offset.mean
 
                 print(f"相機參數獲取成功。時間偏移量: {time_offset_ms:.2f} ms")
-                message = f"連線成功 | 設備: {status_resp.result.device_name}，時間差 {time_offset_ms} ms"
+                message = f"連線成功 | 設備: {status_result.device_name}，時間差 {time_offset_ms} ms"
 
                 if on_connect:
                     on_connect(message, camera_params, int(time_offset_ms))

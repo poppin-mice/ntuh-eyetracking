@@ -56,6 +56,13 @@ VA_center_opt
            silent-end / error are now reported to the parent console (they were prints inside the
            child, which has no console), as are worker crash and respawn. A recovered crash no
            longer counts against MAX_RESPAWNS, so several across a long test can't abort it.
+           Also: Connect now verifies the installed Ganzin wheel is 2.x BEFORE opening a socket,
+           and names the version and the interpreter if it is not. A stale 1.x wheel used to
+           connect and then die on the first reply it could not parse, with
+           "'NoneType' object has no attribute 'camera_param'" - which mentions neither the SDK
+           nor the version. The phone's remote API version is logged next to the SDK's on every
+           connect, and a reachable-but-not-ready phone (glasses detached, Chronus backgrounded)
+           now reports its own FAILED message instead of that AttributeError.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in

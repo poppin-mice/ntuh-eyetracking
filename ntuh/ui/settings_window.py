@@ -2963,6 +2963,17 @@ Controls: SPACE = Record point, Q = Cancel"""
                 messagebox.showerror("Error", "Sol SDK not available.")
                 return
 
+            # Check the installed Ganzin wheel before opening a socket. A 1.x wheel connects fine
+            # and then fails on the first reply it cannot parse, with an error that mentions
+            # neither the SDK nor the version - say it here instead.
+            from ntuh.sol.connector import check_sdk_version
+            _sdk_ok, _sdk_msg = check_sdk_version()
+            if not _sdk_ok:
+                print(f"[Sol] {_sdk_msg}")
+                messagebox.showerror("Ganzin Sol SDK version", _sdk_msg)
+                self.lbl_sol_status.configure(text="Wrong SDK version", foreground="red")
+                return
+
             self.btn_connect_sol.configure(state="disabled", text="Connecting...")
             self.lbl_sol_status.configure(text="Connecting...", foreground="orange")
             self._connect_inprocess_sol()
