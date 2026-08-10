@@ -103,7 +103,8 @@ def run_child(params, gaze_q, msg_q, cmd_q, frame_q=None):
     adict = cv2.aruco.getPredefinedDictionary(int(params["aruco_dict_id"]))
     internal_gaze_q = queue.Queue(maxsize=120)
     internal_scene_q = queue.Queue(maxsize=2)
-    connector = SolConnector(params["ip"], params["port"], internal_gaze_q, internal_scene_q)
+    connector = SolConnector(params["ip"], params["port"], internal_gaze_q, internal_scene_q,
+                             report=lambda text: _report(text, where="scene_stream"))
 
     state = {"proj": None, "running": True, "connect_failed": False}
 
@@ -178,6 +179,14 @@ def run_child(params, gaze_q, msg_q, cmd_q, frame_q=None):
         stream_frames = bool(params.get("stream_frames")) and frame_q is not None
         last_emit = 0.0          # homography/pose cadence - dropping this killed the whole thread
         last_frame_emit = 0.0
+        # Scene-stall watchdog. The homography/pose emit below is deliberately OUTSIDE the
+        # "did a frame arrive" branch (dropping it froze gaze mapping entirely), so when the scene
+        # RTSP session dies this thread happily keeps republishing the LAST homography at 15 Hz
+        # while gaze keeps streaming - the parent cannot tell a live head pose from one frozen
+        # minutes ago. Time the newest decoded frame and ship that age with every homography.
+        STALL_S = 2.0
+        last_frame_t = None      # None until this child has decoded its first scene frame
+        stalled = False
         while state["running"]:
             proj = state["proj"]
             if proj is None:
@@ -193,6 +202,10 @@ def run_child(params, gaze_q, msg_q, cmd_q, frame_q=None):
                 if ex is not None:
                     img = ex
             if img is not None:
+                if stalled:
+                    _report(f"scene frames resumed after {time.time() - last_frame_t:.1f}s")
+                    stalled = False
+                last_frame_t = time.time()
                 proj.submit_frame_for_pose(img)
                 if stream_frames:
                     now_f = time.time()
@@ -222,6 +235,13 @@ def run_child(params, gaze_q, msg_q, cmd_q, frame_q=None):
                                 state["stream_err"] = True
                                 _report(f"scene frame streaming failed: {e!r}")
             now = time.time()
+            # None (rather than 0) before the first frame, so the parent treats "connected but no
+            # video yet" as unusable too instead of briefly trusting the seeded homography.
+            frame_age = None if last_frame_t is None else now - last_frame_t
+            if frame_age is not None and not stalled and frame_age >= STALL_S:
+                stalled = True
+                _report(f"no scene frames for {frame_age:.1f}s - homography and ArUco are frozen "
+                        f"(gaze is unaffected)")
             if now - last_emit >= EMIT:
                 last_emit = now
                 try:
@@ -229,6 +249,10 @@ def run_child(params, gaze_q, msg_q, cmd_q, frame_q=None):
                     msg_q.put({"type": sol_ipc.HOMOGRAPHY,
                                "H": (H.tolist() if H is not None else None),
                                "valid": bool(proj.is_homography_valid(strict=True)),
+                               # Age of the newest decoded scene frame. `valid` is a latch the
+                               # ArUco worker only touches when a frame arrives, so it stays True
+                               # forever on a dead stream; this is what makes staleness visible.
+                               "frame_age": (None if frame_age is None else float(frame_age)),
                                "ids": list(proj.get_detected_marker_ids())})
                     r, t = proj.get_current_pose()
                     msg_q.put({"type": sol_ipc.POSE,

@@ -6,6 +6,7 @@ native access-violation crash. Extracted verbatim from sol_tracker.py.
 import asyncio
 import queue
 import threading
+import time
 
 import numpy as np
 
@@ -60,11 +61,16 @@ class SolConnector:
     A pure Python class to manage Ganzin Sol SDK connection and streaming.
     Decoupled from PyQt.
     """
-    def __init__(self, ip, port, gaze_queue, scene_queue):
+    def __init__(self, ip, port, gaze_queue, scene_queue, report=None):
         self.ip = ip
         self.port = port
         self.gaze_queue = gaze_queue
         self.scene_queue = scene_queue
+        # Optional sink for scene-stream notes, called as report(text). The isolated child has no
+        # console of its own, so a bare print() there is lost and a dead scene stream looks like
+        # nothing at all; the child passes its IPC _report so these reach the parent's console.
+        # In-process users (calibration, VA/VF) leave it None and just get the print.
+        self._report = report
         self.stop_event = threading.Event()
         self._scene_active = threading.Event()  # Controls scene stream on/off
         # Start PAUSED: the scene (H.264) video is only needed for ArUco during preview/calibration/
@@ -83,6 +89,15 @@ class SolConnector:
         """Resume the scene (video) stream for ArUco detection."""
         self._scene_active.set()
         print("[SolConnector] Scene stream resumed")
+
+    def _note(self, text):
+        """Print a scene-stream note and forward it to the owner (see `report` in __init__)."""
+        print(f"[SolConnector] {text}")
+        if self._report is not None:
+            try:
+                self._report(text)
+            except Exception:
+                pass
 
     async def _gaze_stream_loop(self, ac):
         print("[SolConnector] Gaze stream loop started.")
@@ -114,6 +129,7 @@ class SolConnector:
 
     async def _scene_stream_loop(self, ac):
         print("[SolConnector] Scene stream loop started.")
+        session = 0
         while not self.stop_event.is_set():
             # Wait until scene stream is activated
             while not self._scene_active.is_set():
@@ -122,17 +138,38 @@ class SolConnector:
                     return
                 await asyncio.sleep(0.2)
 
-            # Run scene stream until paused or stopped
+            # Run scene stream until paused or stopped.
+            # Every entry here is a FULL RTSP re-subscribe (recv_video builds a new VideoStream),
+            # after which nothing decodes until the device's first RTCP Sender Report and the first
+            # keyframe. That gap is invisible downstream - the gaze stream and the homography
+            # publisher keep running - so each session is announced and timed.
+            session += 1
+            t_sub = time.time()
+            n_frames = 0
+            self._note(f"scene RTSP session #{session}: subscribing")
             try:
                 async for frame in recv_video(ac, Camera.SCENE):
                     if self.stop_event.is_set() or not self._scene_active.is_set():
                         break
+                    if n_frames == 0:
+                        self._note(f"scene session #{session}: first frame after "
+                                   f"{time.time() - t_sub:.1f}s")
+                    n_frames += 1
                     try: self.scene_queue.put_nowait(frame)
                     except queue.Full: pass
+                else:
+                    # Fell out of the async-for WITHOUT an exception. aiortsp signals transport
+                    # death by pushing a sentinel onto its packet queue, so the iterator simply
+                    # ends: no exception, no retry sleep, and (before this note) no trace at all.
+                    if not self.stop_event.is_set() and self._scene_active.is_set():
+                        self._note(f"scene session #{session}: ended silently after {n_frames} "
+                                   f"frames / {time.time() - t_sub:.1f}s - resubscribing")
+                        await asyncio.sleep(0.5)  # floor the retry rate if it ends instantly
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[SolConnector] Scene stream error: {e}")
+                self._note(f"scene session #{session}: error after {n_frames} frames / "
+                           f"{time.time() - t_sub:.1f}s: {e!r}")
                 if self.stop_event.is_set():
                     break
                 await asyncio.sleep(0.5)  # Brief pause before retry
