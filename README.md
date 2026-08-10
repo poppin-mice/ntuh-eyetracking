@@ -39,6 +39,12 @@ pip install -r requirements.txt
 
 > Run `pip install` from the **repo root** so the relative `vendor/…whl` path in `requirements.txt` resolves.
 
+> **Use `python`, not `python3`.** A Windows venv only creates `python.exe`, so with the venv active
+> `python3` falls through to the Microsoft Store Python and installs into a *different* environment —
+> the venv keeps its old packages and nothing appears to change. If the Ganzin SDK is stale,
+> VA_center_opt refuses to connect and says so, naming the interpreter it is actually running under.
+> Re-sync an existing venv with `pip install -r requirements.txt` after pulling.
+
 ## Run from source
 
 With the venv active, from the repo root:

@@ -115,6 +115,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 - Set the accuracy test's subject screen with *Preview Gaze Mapping → Screen*, and the operator's monitoring screen with *General → Screen & Viewing → Tester Screen*. When these are two different monitors, a **tester view** opens on the Tester Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
 - The camera picture appears as soon as frames arrive; the target and corrected-gaze markers need a valid homography, so until the ArUco markers are found you see the video with the raw gaze only and a "no homography yet" note.
 - The tester view is shown only on the Tester Screen; the subject never sees a gaze dot (so they cannot chase it and bias the measurement). With a single monitor the test runs as before, without a tester window.
+- **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
 
 ### Recording Tab
 
@@ -185,3 +186,9 @@ Click "Start Practice" to run a practice session. Practice mode uses the same st
 | Sol glasses not connecting | Check IP/port, ensure glasses are on the same network |
 | Black screen | Press ESC, check camera and display settings |
 | Webcam disconnects mid-test | Program auto-reconnects (up to 5 attempts) |
+| "Wrong Ganzin Sol SDK version" dialog on Connect | The bundled SDK does not match this build. Running from source: `python -m pip install vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl` from the repo root — with the **same** interpreter you launch with (inside a venv use `python`, not `python3`). The dialog names the interpreter it found. |
+| "the phone returned no scene camera parameters" | The phone and Wi-Fi are fine — the scene camera is on the **glasses**. Check they are plugged into the phone and that Chronus shows a live scene preview. If they are attached, check the Chronus app is **2.2.1 or newer**. |
+| "the phone returned no device status" | Chronus is not answering. Check it is running, in the foreground, and on the same Wi-Fi as the PC. |
+| `Homography: STALE` / red "SCENE VIDEO STALLED" banner in the accuracy test | The Sol scene video stopped; the head pose is frozen, so recording is blocked on purpose. Wait — it usually recovers in a few seconds. Repeat the point you were on. |
+
+The console window logs the SDK version, the phone's remote API version and the minimum Chronus app version on every connect, plus each scene-stream (re)subscribe and any worker crash/respawn — quote those lines when reporting a connection or accuracy-test problem.

@@ -12,7 +12,7 @@ notes in this folder for those. Below are only the changes since 2026-07-21.
  VERSION NUMBERS
 ------------------------------------------------------------------------------
 Each program shows its version in the window title bar:
-      VA_center_opt   v1.2.0   (changed this release)
+      VA_center_opt   v1.2.1   (changed this release)
       calibration     v1.1.0   (changed this release)
       replayer        v1.0.0   (unchanged)
 Please include the version shown in the title when reporting an issue.
@@ -62,6 +62,57 @@ every flow uses them, not just Sol calibration. Saved settings files keep
 working - the stored keys are the same.
 
 ------------------------------------------------------------------------------
+ STALLED SCENE VIDEO IS NOW DETECTED  (VA_center_opt)  -- fix, v1.2.1
+------------------------------------------------------------------------------
+IMPORTANT if you run the Accuracy Test. The Sol front (scene) camera stream can
+stop while everything else keeps working - the gaze stream is separate and is
+NOT affected. When that happened, the tester view kept showing the LAST picture
+it received, with the live gaze dot still moving on top of it and a green
+"Homography: LIVE - press SPACE" banner. It looked completely normal.
+
+It is not. The head pose (the ArUco homography) that every measurement is
+converted through is computed FROM that video. While the video is stopped, the
+head pose is frozen at whatever it was, so points recorded during the stall are
+measured against a stale head position. Gaze still moves, so the precision
+number still looks healthy - a saved report cannot tell you it happened.
+
+In one recorded test the video was frozen for about 24 seconds and 15 of the 21
+points were collected during it, with no indication on screen.
+
+Now:
+  - the tester view shows "Homography: STALE" and a red banner
+    "SCENE VIDEO STALLED <seconds> - image, ArUco and head pose are frozen";
+  - SPACE is REFUSED while stale, so a bad point cannot be recorded;
+  - a point that goes stale part-way through is discarded - repeat that point;
+  - the console logs when the video stops and when it comes back.
+
+This protection also works with a single monitor, where there is no tester
+window to look at.
+
+WHAT TO DO IF YOU SEE IT: wait. It usually recovers by itself in a few seconds.
+The point you were on was not recorded; just do it again once the banner clears.
+
+------------------------------------------------------------------------------
+ CLEARER CONNECT ERRORS  (VA_center_opt)  -- fix, v1.2.1
+------------------------------------------------------------------------------
+Connecting used to fail with the unhelpful message
+      'NoneType' object has no attribute 'camera_param'
+no matter what was actually wrong. Now:
+
+  - Pressing Connect checks the bundled Ganzin SDK FIRST. If it is the wrong
+    version, you get a dialog naming the version found, the version needed and
+    the exact command to fix it - before anything touches the network.
+  - The console prints the SDK version, the phone's remote API version and the
+    minimum Chronus app version on every connect, e.g.
+        SDK 2.0.1 <-> phone remote API 2.0.0 (SDK needs Chronus app >= 2.2.1)
+  - If the phone answers but cannot supply what is needed, its OWN message is
+    shown along with the phone name and whether the Chronus app is in the
+    foreground. For example "the phone returned no scene camera parameters
+    (status=FAILED, message='Failed to get scene cam param')" means the phone
+    and the Wi-Fi are fine and the problem is the GLASSES - check they are
+    plugged into the phone and that Chronus shows a live scene preview.
+
+------------------------------------------------------------------------------
  CALIBRATION PROFILE AUTO-COPY  (calibration)  -- new, v1.1.0
 ------------------------------------------------------------------------------
 When a webcam calibration finishes, the profile is now ALSO copied
@@ -73,6 +124,10 @@ The "Done" dialog shows both output paths.
  NOTES
 ------------------------------------------------------------------------------
 - replayer.exe is unchanged from the 2026-07-21 build.
+- Keep the Chronus phone app up to date. This build's Sol SDK needs Chronus
+  2.2.1 or newer. The phone only reports its API version, which does not tell
+  the program the app version, so an out-of-date Chronus can pass every check
+  and still make individual features fail.
 - For Sol gaze, test different ArUco marker counts / sizes on the actual screen
   so the markers do not overlap each other or the stimulus area.
 - Detailed per-program documentation: VA_center_opt.md, calibration.md,

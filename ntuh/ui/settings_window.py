@@ -2538,6 +2538,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         # Operator monitoring window on the tester screen (OpenCV, like the 2D calib tester view).
         tester_win_name = "Tester View - Sol Accuracy Test"
         latest_scene = [None]   # (frame, step) from the worker; held so the view never blinks
+        # Freshness of the worker's scene camera, as (age_reported_by_child, when_we_heard_it).
+        # The child republishes the last homography at 15 Hz even when the scene stream is dead,
+        # so 'valid' alone cannot distinguish a live head pose from one frozen minutes ago; and if
+        # the child dies outright no message arrives at all, hence the local ageing term.
+        scene_age = [None]
+        SCENE_STALE_S = 1.0     # older than this -> the homography is frozen, refuse to record
         if dual_screen:
             try:
                 # KEEPRATIO: the canvas is now the scene camera (1328x1200), so plain WINDOW_NORMAL
@@ -2584,7 +2590,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         except Exception:
             _u32_keys = None
 
-        def build_tester_canvas(tgt, corr_pt, raw_pt, hom, collecting_now, n_collected):
+        def build_tester_canvas(tgt, corr_pt, raw_pt, hom, collecting_now, n_collected, scene_age_s):
             """Operator monitoring view: the subject's LIVE scene camera with the measurement drawn
             on top in camera space - target (red), offset-corrected gaze (green), raw gaze (gray),
             and the live accuracy/precision readouts. Mirrors the 2D-calib tester view; the frames
@@ -2647,16 +2653,33 @@ Controls: SPACE = Record point, Q = Cancel"""
             cv2.putText(canvas, f"Accuracy Test - point {idx + 1}/{len(targets)}  "
                                 f"({tgt['name']}, {tgt['ecc_deg']:.0f}deg)",
                         (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.64, (255, 255, 255), 2, cv2.LINE_AA)
-            hom_col = {"LIVE": (100, 255, 100), "CACHED": (100, 255, 255)}.get(hom, (100, 100, 255))
+            hom_col = {"LIVE": (100, 255, 100), "CACHED": (100, 255, 255),
+                       "STALE": (60, 60, 255)}.get(hom, (100, 100, 255))
             cv2.putText(canvas, f"Homography: {hom}", (12, 56),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.56, hom_col, 1, cv2.LINE_AA)
-            if collecting_now:
+            if hom == "STALE":
+                # "not started yet" and "was live, then froze" both block recording, but only the
+                # second one is alarming - don't cry wolf during the worker's normal startup.
+                s2 = ("SCENE VIDEO STALLED - recording blocked until it recovers" if got is not None
+                      else "waiting for scene video - recording blocked")
+                s2col = (60, 60, 255)
+            elif collecting_now:
                 s2, s2col = f"COLLECTING {n_collected}/{SAMPLES} - subject must hold fixation", (0, 255, 255)
             elif hom in ("LIVE", "CACHED"):
                 s2, s2col = "READY - when the subject fixates the target, press SPACE", (200, 255, 200)
             else:
                 s2, s2col = "waiting for ArUco markers (LIVE/CACHED)...", (150, 150, 255)
             cv2.putText(canvas, s2, (210, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.54, s2col, 1, cv2.LINE_AA)
+
+            # Stale-video banner. A held frame with live overlays painted on top looks completely
+            # normal - the gaze dot still moves, the readouts still tick - which is exactly how a
+            # 24 s freeze went unnoticed for a whole 21-point run. Say it, and say how old.
+            if hom == "STALE" and got is not None:
+                age_txt = f" {scene_age_s:.1f}s" if scene_age_s is not None else ""
+                cv2.rectangle(canvas, (0, 92), (W_img, 128), (0, 0, 150), -1)
+                cv2.putText(canvas, f"SCENE VIDEO STALLED{age_txt} - image, ArUco and head pose are frozen",
+                            (12, 118), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+                cv2.rectangle(canvas, (1, 1), (W_img - 2, H_img - 2), (0, 0, 220), 3)
 
             # accuracy = |gaze - target| now; precision = spread of what we have collected so far
             read = []
@@ -2711,12 +2734,6 @@ Controls: SPACE = Record point, Q = Cancel"""
                         running = False; aborted = True
                     _prev_space_async, _prev_q_async = _sd, _qd
 
-                if space_pressed and not collecting and running:
-                    if sol_projector.is_homography_valid():
-                        collecting = True; raw_samples, corr_samples = [], []
-                    else:
-                        print("[Accuracy] homography not ready; wait for LIVE/CACHED")
-
                 for g in sol_client.drain_gaze():
                     latest_gaze = g
                 if dual_screen:
@@ -2732,12 +2749,15 @@ Controls: SPACE = Record point, Q = Cancel"""
                         else:
                             sol_projector.homography_valid = bool(m.get('valid', False))
                         detected_marker_ids = m.get('ids', [])
+                        _fa = m.get('frame_age')
+                        scene_age[0] = (float(_fa), time.time()) if _fa is not None else None
                     elif t == 'pose':
                         _rv, _tv = m.get('rvec'), m.get('tvec')
                         sol_projector.set_pose(np.array(_rv, dtype=float) if _rv is not None else None,
                                                np.array(_tv, dtype=float) if _tv is not None else None,
                                                bool(m.get('valid', False)))
                     elif t == 'connected':
+                        sol_client.note_connected()   # recovered - don't count this crash forever
                         sol_client.resume()
                     elif t in ('error', 'connect_failed'):
                         # The worker has no console of its own; without this its startup diagnostic
@@ -2745,12 +2765,41 @@ Controls: SPACE = Record point, Q = Cancel"""
                         print(f"[Accuracy] worker {m.get('where', t)}: {m.get('error')}")
                 _ev = sol_client.poll_supervisor(time.time(), sol_projector.get_homography())
                 if _ev == 'crashed':
+                    print(f"[Accuracy] scene worker crashed (exit {sol_client.last_exitcode}); "
+                          f"respawning - expect several seconds with no scene video")
                     sol_projector.homography_valid = False; detected_marker_ids = []
+                    scene_age[0] = None
+                elif _ev == 'respawned':
+                    print("[Accuracy] scene worker respawned; waiting for it to reconnect")
                 elif _ev == 'failed':
                     print("[Accuracy] scene worker could not recover; aborting")
                     running = False; aborted = True
 
+                # How old is the newest scene frame? The child reports its own age; add the time
+                # since we heard from it so a dead child (no messages at all) also ages out.
+                _sa = scene_age[0]
+                scene_age_s = None if _sa is None else _sa[0] + (time.time() - _sa[1])
+                scene_stale = (scene_age_s is None) or (scene_age_s > SCENE_STALE_S)
+
                 tgt = targets[idx]
+
+                if space_pressed and not collecting and running:
+                    if scene_stale:
+                        _age_txt = "no data" if scene_age_s is None else f"{scene_age_s:.1f}s old"
+                        print(f"[Accuracy] scene video stalled ({_age_txt}) - the homography is "
+                              f"frozen, not recording; wait for it to recover")
+                    elif sol_projector.is_homography_valid():
+                        collecting = True; raw_samples, corr_samples = [], []
+                    else:
+                        print("[Accuracy] homography not ready; wait for LIVE/CACHED")
+
+                # Samples are gaze mapped THROUGH the homography, so a frozen head pose silently
+                # biases them while gaze keeps streaming and precision still looks healthy. Drop
+                # the partial point rather than bank it.
+                if collecting and scene_stale:
+                    print(f"[Accuracy] scene stalled mid-point ({tgt['name']}); discarding "
+                          f"{len(corr_samples)} sample(s) - repeat this point")
+                    collecting = False; raw_samples, corr_samples = [], []
 
                 # Live gaze -> screen (raw + offset-corrected), computed every frame so the tester
                 # view can show where the subject is looking right now (not only while recording).
@@ -2777,7 +2826,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                         collecting = False; idx += 1; latest_gaze = None
                         continue
 
-                if sol_projector.is_homography_valid(strict=True):
+                if scene_stale:
+                    hom = "STALE"          # frames stopped; whatever H we hold is frozen
+                elif sol_projector.is_homography_valid(strict=True):
                     hom = "LIVE"
                 elif sol_projector.is_homography_valid():
                     hom = "CACHED"
@@ -2815,7 +2866,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                 if dual_screen:
                     try:
                         cv2.imshow(tester_win_name,
-                                   build_tester_canvas(tgt, live_corr, live_raw, hom, collecting, len(corr_samples)))
+                                   build_tester_canvas(tgt, live_corr, live_raw, hom, collecting,
+                                                       len(corr_samples), scene_age_s))
                         cv2.waitKey(1)
                     except Exception as _e:
                         print(f"[Accuracy] tester view error: {_e}")
@@ -2909,6 +2961,17 @@ Controls: SPACE = Record point, Q = Cancel"""
         if not self.is_sol_connected: # Connect
             if not SDK_AVAILABLE:
                 messagebox.showerror("Error", "Sol SDK not available.")
+                return
+
+            # Check the installed Ganzin wheel before opening a socket. A 1.x wheel connects fine
+            # and then fails on the first reply it cannot parse, with an error that mentions
+            # neither the SDK nor the version - say it here instead.
+            from ntuh.sol.connector import check_sdk_version
+            _sdk_ok, _sdk_msg = check_sdk_version()
+            if not _sdk_ok:
+                print(f"[Sol] {_sdk_msg}")
+                messagebox.showerror("Ganzin Sol SDK version", _sdk_msg)
+                self.lbl_sol_status.configure(text="Wrong SDK version", foreground="red")
                 return
 
             self.btn_connect_sol.configure(state="disabled", text="Connecting...")

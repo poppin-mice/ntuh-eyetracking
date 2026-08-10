@@ -138,6 +138,14 @@ class SolPreviewClient:
         except Exception:
             pass
 
+    def note_connected(self):
+        """A fresh child reported CONNECTED - forget earlier crashes.
+
+        respawn_count is otherwise cleared only in start(), so N well-separated crashes that each
+        recovered still add up and trip MAX_RESPAWNS, aborting the caller's flow (a 21-point
+        accuracy test runs long enough for that to matter)."""
+        self.respawn_count = 0
+
     def resume(self):
         self._send(sol_ipc.RESUME_SCENE)
 

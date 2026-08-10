@@ -44,6 +44,25 @@ VA_center_opt
            Test Screen / Tester Screen moved from the Sol Calib tab's "Display Settings" to
            General -> Screen & Viewing: every flow uses them, not just Sol calib. Same saved
            settings keys, so existing settings files keep working.
+    1.2.1  Fix: when the Sol scene (front-camera) stream died mid accuracy-test, nothing said so.
+           The worker keeps republishing its LAST homography at 15 Hz and gaze keeps streaming, so
+           the tester view showed a frozen picture under a live gaze dot and a green "LIVE /
+           press SPACE" banner - a 24 s stall went unnoticed for a whole 21-point run, and every
+           point taken meanwhile was mapped through a frozen head pose (precision still looks
+           healthy, so saved reports cannot reveal it). The worker now times its newest decoded
+           frame and ships that age with each homography; the test shows Homography: STALE with a
+           red "SCENE VIDEO STALLED <age>" banner, refuses to start a point while stale, and
+           discards a point that goes stale mid-collection. Scene-stream subscribe / first-frame /
+           silent-end / error are now reported to the parent console (they were prints inside the
+           child, which has no console), as are worker crash and respawn. A recovered crash no
+           longer counts against MAX_RESPAWNS, so several across a long test can't abort it.
+           Also: Connect now verifies the installed Ganzin wheel is 2.x BEFORE opening a socket,
+           and names the version and the interpreter if it is not. A stale 1.x wheel used to
+           connect and then die on the first reply it could not parse, with
+           "'NoneType' object has no attribute 'camera_param'" - which mentions neither the SDK
+           nor the version. The phone's remote API version is logged next to the SDK's on every
+           connect, and a reachable-but-not-ready phone (glasses detached, Chronus backgrounded)
+           now reports its own FAILED message instead of that AttributeError.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -60,7 +79,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.2.0",
+    "VA_center_opt": "1.2.1",
     "calibration": "1.1.0",
     "replayer": "1.0.0",
 }
