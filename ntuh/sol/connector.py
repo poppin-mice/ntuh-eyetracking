@@ -77,12 +77,13 @@ def check_sdk_version():
     return True, f"Ganzin Sol SDK {ver} (requires {REQUIRED_SDK_MAJOR}.x) OK"
 
 
-def _require_result(resp, what):
+def _require_result(resp, what, hint="", context=""):
     """Return resp.result, or raise an error that names the endpoint and quotes the device.
 
     A reachable-but-not-ready phone (glasses not attached, Chronus backgrounded) answers with
     status=FAILED, an explanatory `message`, and result=None. Dereferencing that blindly is where
-    "'NoneType' object has no attribute 'camera_param'" came from.
+    "'NoneType' object has no attribute 'camera_param'" came from. `context` carries what we
+    already learned about the phone, so the operator can tell a phone problem from a glasses one.
     """
     result = getattr(resp, "result", None)
     if result is not None:
@@ -91,10 +92,10 @@ def _require_result(resp, what):
     status = getattr(status, "value", status)
     message = getattr(resp, "message", None)
     raise Exception(
-        f"the glasses returned no {what} (status={status}"
-        + (f", message={message!r}" if message else "")
-        + "). Check that the Sol glasses are attached to the phone, Chronus is in the foreground, "
-          "and the phone is on the same Wi-Fi, then press Connect again."
+        f"the phone returned no {what} (status={status}"
+        + (f", message={message!r}" if message else "") + ")"
+        + (f" [{context}]" if context else "")
+        + (f". {hint}" if hint else "")
     )
 
 # [Crash fix] Force SINGLE-THREADED scene-video decode.
@@ -306,8 +307,27 @@ class SolConnector:
                         f"Chronus app, so the major versions agree."
                     )
 
-                params_result = _require_result(params_resp, "scene camera parameters")
-                status_result = _require_result(status_resp, "device status")
+                # Phone status first. If it fails, the phone itself is the problem; if it succeeds,
+                # its fields are the context that explains a scene-camera failure below - the
+                # scene camera belongs to the GLASSES, so the phone can be perfectly healthy and
+                # still have nothing to hand over.
+                status_result = _require_result(
+                    status_resp, "device status",
+                    hint="The phone is reachable but did not report its status. Check that Chronus "
+                         "is running and on the same Wi-Fi, then press Connect again.")
+                phone_ctx = (f"phone={status_result.device_name!r}, "
+                             f"foreground={status_result.is_foreground}, "
+                             f"battery={status_result.device_battery_percentage}%")
+                if getattr(status_result, 'error_type', None):
+                    phone_ctx += f", device error_type={status_result.error_type!r}"
+                print(f"[SolConnector] {phone_ctx}")
+
+                params_result = _require_result(
+                    params_resp, "scene camera parameters", context=phone_ctx,
+                    hint="The phone answered, so this is the GLASSES, not the network: the scene "
+                         "camera is on the glasses and the phone has no intrinsics to hand over. "
+                         "Check the glasses are plugged into the phone and that Chronus shows a "
+                         "live scene preview, then press Connect again.")
                 camera_params = {
                     'cam_matrix': np.array(params_result.camera_param.intrinsic),
                     'dist_coeffs': np.array(params_result.camera_param.distort)
