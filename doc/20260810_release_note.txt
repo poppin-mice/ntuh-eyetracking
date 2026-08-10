@@ -1,0 +1,80 @@
+==============================================================================
+ NTUH Eye-Tracking Suite - Release Notes
+ Build date: 2026-08-10
+==============================================================================
+
+This release builds on the 2026-07-21 build (same three programs:
+VA_center_opt.exe, calibration.exe, replayer.exe). How to run, where data is
+saved, and the per-participant workflow are UNCHANGED - see the earlier release
+notes in this folder for those. Below are only the changes since 2026-07-21.
+
+------------------------------------------------------------------------------
+ VERSION NUMBERS
+------------------------------------------------------------------------------
+Each program shows its version in the window title bar:
+      VA_center_opt   v1.2.0   (changed this release)
+      calibration     v1.1.0   (changed this release)
+      replayer        v1.0.0   (unchanged)
+Please include the version shown in the title when reporting an issue.
+
+------------------------------------------------------------------------------
+ SOL CONNECTION FIX  (VA_center_opt)  -- fix, v1.1.1
+------------------------------------------------------------------------------
+If your Chronus phone app has been updated recently, the previous build could
+FAIL to connect to the Sol glasses with an error like
+"No mapping found for keys: frozenset({...})".
+
+  - Cause: the phone app moved to remote API 2.0.0 while the program still
+    shipped the older 1.2.2 SDK. This build ships the matching SDK 2.0.1.
+  - Connection errors now list EVERY failed initialization step, not just the
+    first one, so problems are easier to diagnose and report.
+  - Note: the SDK bundled in the program must match the Chronus app's remote
+    API version - if Chronus updates again and connecting fails, report it.
+
+------------------------------------------------------------------------------
+ FORCE-START A TRIAL WITH SPACE  (VA_center_opt)  -- new, v1.1.0
+------------------------------------------------------------------------------
+VA trials normally wait for stable, valid gaze data before starting. When that
+gate never clears (e.g. poor tracking on a difficult subject), the operator
+can now press SPACE (in the subject or the tester window) to start the trial
+immediately. The dashboard banner shows this hint. VF trials are unaffected.
+
+------------------------------------------------------------------------------
+ ACCURACY TEST: LIVE SCENE-CAMERA OPERATOR VIEW  (VA_center_opt)  -- new, v1.2.0
+------------------------------------------------------------------------------
+In the Sol gaze accuracy test, the operator-only window (on the configured
+Tester Screen) now shows the subject's LIVE full-resolution Sol scene camera
+instead of the gray schematic picture:
+
+  - The raw gaze (faint) and the offset-corrected gaze are drawn directly in
+    the camera image, with a line from the gaze marker to the real target
+    visible on the subject's screen in the video.
+  - Live accuracy and precision are shown in both pixels and degrees.
+  - The target is NOT redrawn on the operator view - you see the real one on
+    the subject's screen in the camera image.
+  - As before, this window appears ONLY when a separate Tester Screen is
+    configured; nothing is ever drawn on the subject's screen, and a
+    single-monitor setup behaves exactly as before.
+
+Settings change (v1.2.0): "Test Screen" and "Tester Screen" moved from the
+"Sol Calib" tab's Display Settings to  General -> Screen & Viewing,  because
+every flow uses them, not just Sol calibration. Saved settings files keep
+working - the stored keys are the same.
+
+------------------------------------------------------------------------------
+ CALIBRATION PROFILE AUTO-COPY  (calibration)  -- new, v1.1.0
+------------------------------------------------------------------------------
+When a webcam calibration finishes, the profile is now ALSO copied
+automatically to the sibling  VA_center_opt/calibration_profiles/  folder
+(release layout), so VA_center_opt can use it without the manual copy step.
+The "Done" dialog shows both output paths.
+
+------------------------------------------------------------------------------
+ NOTES
+------------------------------------------------------------------------------
+- replayer.exe is unchanged from the 2026-07-21 build.
+- For Sol gaze, test different ArUco marker counts / sizes on the actual screen
+  so the markers do not overlap each other or the stimulus area.
+- Detailed per-program documentation: VA_center_opt.md, calibration.md,
+  replayer.md (in this folder).
+==============================================================================
