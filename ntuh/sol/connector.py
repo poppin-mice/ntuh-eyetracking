@@ -34,10 +34,36 @@ VENDORED_WHEEL = "vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl"
 
 
 def installed_sdk_version():
-    """Version of the installed ganzin-sol-sdk distribution, or None if it cannot be determined."""
+    """Version of the Ganzin SDK actually imported, or None if it cannot be determined.
+
+    Prefers the package's own __version__ over importlib.metadata: metadata reads the .dist-info
+    directory, which can name a different version than the code on sys.path (that is exactly how
+    a 1.2.2 venv and a 2.0.1 Store-Python install got confused for each other).
+    """
+    try:
+        from ganzin.sol_sdk import __version__
+        if __version__:
+            return str(__version__)
+    except Exception:
+        pass
     try:
         from importlib import metadata
         return metadata.version("ganzin-sol-sdk")
+    except Exception:
+        return None
+
+
+def min_chronus_app_version():
+    """Minimum Chronus *app* release this SDK build needs, or None if the SDK does not say.
+
+    Distinct from the remote API version the phone reports, and not derivable from it. The SDK
+    only mentions it when the API majors/minors differ - a patch-only delta is treated as
+    compatible and stays silent - so an out-of-date Chronus can pass every version check and
+    still fail individual endpoints.
+    """
+    try:
+        from ganzin.sol_sdk import __min_chronus_app_version__
+        return str(__min_chronus_app_version__)
     except Exception:
         return None
 
@@ -299,7 +325,9 @@ class SolConnector:
                 _ver = getattr(version_resp, 'result', None)
                 device_api = getattr(_ver, 'remote_api_version', None) if _ver is not None else None
                 sdk_ver = installed_sdk_version()
-                print(f"[SolConnector] SDK {sdk_ver} <-> phone remote API {device_api}")
+                min_app = min_chronus_app_version()
+                print(f"[SolConnector] SDK {sdk_ver} <-> phone remote API {device_api}"
+                      + (f" (SDK needs Chronus app >= {min_app})" if min_app else ""))
                 if device_api and sdk_ver and str(device_api).split('.')[0] != str(sdk_ver).split('.')[0]:
                     raise Exception(
                         f"Sol remote API mismatch: the phone speaks {device_api} but the installed "
@@ -322,12 +350,18 @@ class SolConnector:
                     phone_ctx += f", device error_type={status_result.error_type!r}"
                 print(f"[SolConnector] {phone_ctx}")
 
+                # A too-old Chronus is the other prime suspect here and nothing above will catch
+                # it: __min_chronus_app_version__ is an APP release, the phone only reports its
+                # API version, and the SDK stays silent on a patch-only API delta.
+                _app_hint = (f" If the glasses ARE attached, check the Chronus app version - this "
+                             f"SDK needs {min_app} or newer, which is an app release the API "
+                             f"version above cannot tell us." if min_app else "")
                 params_result = _require_result(
                     params_resp, "scene camera parameters", context=phone_ctx,
                     hint="The phone answered, so this is the GLASSES, not the network: the scene "
                          "camera is on the glasses and the phone has no intrinsics to hand over. "
                          "Check the glasses are plugged into the phone and that Chronus shows a "
-                         "live scene preview, then press Connect again.")
+                         "live scene preview, then press Connect again." + _app_hint)
                 camera_params = {
                     'cam_matrix': np.array(params_result.camera_param.intrinsic),
                     'dist_coeffs': np.array(params_result.camera_param.distort)
