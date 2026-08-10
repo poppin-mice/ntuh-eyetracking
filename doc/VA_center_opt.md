@@ -186,3 +186,9 @@ Click "Start Practice" to run a practice session. Practice mode uses the same st
 | Sol glasses not connecting | Check IP/port, ensure glasses are on the same network |
 | Black screen | Press ESC, check camera and display settings |
 | Webcam disconnects mid-test | Program auto-reconnects (up to 5 attempts) |
+| "Wrong Ganzin Sol SDK version" dialog on Connect | The bundled SDK does not match this build. Running from source: `python -m pip install vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl` from the repo root — with the **same** interpreter you launch with (inside a venv use `python`, not `python3`). The dialog names the interpreter it found. |
+| "the phone returned no scene camera parameters" | The phone and Wi-Fi are fine — the scene camera is on the **glasses**. Check they are plugged into the phone and that Chronus shows a live scene preview. If they are attached, check the Chronus app is **2.2.1 or newer**. |
+| "the phone returned no device status" | Chronus is not answering. Check it is running, in the foreground, and on the same Wi-Fi as the PC. |
+| `Homography: STALE` / red "SCENE VIDEO STALLED" banner in the accuracy test | The Sol scene video stopped; the head pose is frozen, so recording is blocked on purpose. Wait — it usually recovers in a few seconds. Repeat the point you were on. |
+
+The console window logs the SDK version, the phone's remote API version and the minimum Chronus app version on every connect, plus each scene-stream (re)subscribe and any worker crash/respawn — quote those lines when reporting a connection or accuracy-test problem.

@@ -81,7 +81,7 @@ def check_sdk_version():
                        f"    python -m pip install {VENDORED_WHEEL}")
     ver = installed_sdk_version()
     if ver is None:
-        return True, "Ganzin Sol SDK version unknown (no distribution metadata) - continuing"
+        return True, "Ganzin Sol SDK version unknown (no __version__ or metadata) - continuing"
     try:
         major = int(str(ver).split(".")[0])
     except (ValueError, IndexError):
