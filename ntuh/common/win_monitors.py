@@ -5,6 +5,46 @@ dashboard, and the test loops. Extracted verbatim from VA_center_opt.py.
 """
 
 
+def set_dpi_aware():
+    """Opt the process into Per-Monitor V2 DPI awareness. Call once, before any window
+    is created.
+
+    Why not the old SetProcessDPIAware(): that is *System* DPI awareness, which pins the
+    process to the scale factor of the primary monitor at login. Every screen rect in this
+    repo comes from EnumDisplaySettings below, i.e. real physical pixels, so the two agree
+    only while the target monitor's scaling happens to equal that login-time system scale.
+    On a mixed-DPI setup (e.g. external @100% + laptop @150%, calibrating on the laptop)
+    DWM stretches our window by 1.5x and the right/bottom calibration points land off the
+    screen; in the other direction the window shrinks and the calibration profile is
+    silently recorded against wrong coordinates. Per-Monitor V2 makes window coordinates
+    physical pixels on every monitor, so they match EnumDisplaySettings.
+
+    Returns the mode that took effect ('per-monitor-v2' / 'per-monitor' / 'system' /
+    'none') - the fallbacks cover Windows older than 10 1703.
+    """
+    import ctypes
+    try:
+        user32 = ctypes.windll.user32
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == -4 (Windows 10 1703+)
+        user32.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        user32.SetProcessDpiAwarenessContext.restype = ctypes.c_bool
+        if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return "per-monitor-v2"
+    except Exception:
+        pass
+    try:
+        # PROCESS_PER_MONITOR_DPI_AWARE == 2 (Windows 8.1+); S_OK == 0
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            return "per-monitor"
+    except Exception:
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+        return "system"
+    except Exception:
+        return "none"
+
+
 def get_monitor_info_windows():
     """
     Get detailed monitor information on Windows using ctypes.

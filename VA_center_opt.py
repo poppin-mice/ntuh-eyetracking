@@ -6,10 +6,9 @@ multiprocessing 'spawn', which re-imports this module as __mp_main__ in the chil
 heavy GUI/SDK imports (pygame, tkinter, gazefollower, MediaPipe) ran at import time they
 would load into every child process. So ALL heavy imports + the global excepthook installs
 + the GUI lifecycle live inside main(), under the __main__ guard. Top level keeps only
-stdlib (sys, ctypes, multiprocessing) and the stdlib-only APP_DIR.
+stdlib (sys, multiprocessing) and the stdlib-only APP_DIR.
 """
 import sys
-import ctypes
 import multiprocessing
 
 from ntuh.common.app_env import APP_DIR
@@ -63,11 +62,11 @@ def main():
     sys.excepthook = global_exception_handler
     threading.excepthook = lambda args: global_exception_handler(args.exc_type, args.exc_value, args.exc_traceback)
 
-    # [FIX] DPI Awareness
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
+    # [FIX] DPI Awareness. Per-Monitor V2, so pygame/tk window coordinates are physical
+    # pixels on every monitor and match the EnumDisplaySettings rects the screen pickers
+    # and test loops use. The old System-aware call broke on mixed-DPI multi-monitor setups.
+    from ntuh.common.win_monitors import set_dpi_aware
+    print(f"[DPI] awareness = {set_dpi_aware()}")
 
     # [FIX] Switch keyboard to English so keystroke controls (q, SPACE, etc.) work
     kb_manager = KeyboardLayoutManager()

@@ -20,7 +20,7 @@ from gazefollower.camera import WebCamCamera
 # Shared NTUH helpers (screen enumeration, px<->cm, version). Kept as a top-level
 # import: calibration.py already pulls in the heavy GUI/SDK stack, so there is no
 # spawn/import-light constraint here (unlike VA_center_opt.py).
-from ntuh.common.win_monitors import get_monitor_info_windows
+from ntuh.common.win_monitors import get_monitor_info_windows, set_dpi_aware
 from ntuh.common.optics import px_to_cm
 from ntuh.common.keyboard_layout import KeyboardLayoutManager
 from ntuh.version import get_version
@@ -99,6 +99,26 @@ def _profile_dir(out_base, user_name: str, pts: int) -> Path:
         base = APP_DIR / base
     name = (user_name or "default").strip().replace(" ", "_")
     return base / f"{name}_{int(pts)}pt"
+
+
+# --------- Calibration target size cap ---------
+def target_size_cap(screen_w: int, screen_h: int):
+    """Largest (w, h) in px a calibration target image may be on a screen_w x screen_h screen.
+
+    gazefollower lays the calibration grid out in normalized coordinates computed from a
+    fixed 1920x1080 reference with a 50 px margin (gazefollower/misc/__init__.py:
+    generate_points), then multiplies by the real screen size. So the corner points sit
+    only 2.6% / 4.6% of the screen in from the edges, and the target image - drawn CENTRED
+    on the point, with no bounds check in the vendored backend - loses everything past the
+    edge. At the default 170x170 that is 49 px off each side on 1366x768 (29% of the image)
+    and 35 px on 1920x1080.
+
+    Half the image must therefore fit inside the margin. Capping the SIZE is the only safe
+    fix: nudging the image back into view would move its centre off the calibration point
+    and quietly poison the recorded gaze->screen mapping.
+    """
+    return (max(2, round(int(screen_w) * 50 / 1920) * 2),
+            max(2, round(int(screen_h) * 50 / 1080) * 2))
 
 
 # --------- 防止空白鍵/輸入法/事件卡住的輔助函式 ---------
@@ -436,9 +456,15 @@ class CalibGUI(tk.Tk):
                 return
             w_cm = px_to_cm(w_px, sw_cm, sw_px)
             h_cm = px_to_cm(h_px, sw_cm, sw_px)
-            self.lbl_img_cm.configure(text=f"= {w_cm:.2f} x {h_cm:.2f} cm  (on {sw_px}px-wide screen)")
+            text = f"= {w_cm:.2f} x {h_cm:.2f} cm  (on {sw_px}px-wide screen)"
+            # Warn while typing if the target would be clipped at the corner points.
+            cap_w, cap_h = target_size_cap(sw_px, self._selected_screen().get('height', 0))
+            too_big = w_px > cap_w or h_px > cap_h
+            if too_big:
+                text += f"   [!] max {cap_w} x {cap_h} px on this screen - will be capped"
+            self.lbl_img_cm.configure(text=text, foreground="red" if too_big else "gray")
         except Exception:
-            self.lbl_img_cm.configure(text="= -- cm")
+            self.lbl_img_cm.configure(text="= -- cm", foreground="gray")
 
     def _update_out_hint(self):
         if not hasattr(self, 'lbl_out_hint'):
@@ -571,11 +597,26 @@ class CalibGUI(tk.Tk):
 
     def _start(self):
         mon = self._selected_screen()
+        # Cap the target image so the corner points cannot clip it off the screen edge.
+        scr_w, scr_h = int(mon.get('width', 1920)), int(mon.get('height', 1080))
+        img_w, img_h = self._safe_int(self.cali_img_w, 170), self._safe_int(self.cali_img_h, 170)
+        cap_w, cap_h = target_size_cap(scr_w, scr_h)
+        if img_w > cap_w or img_h > cap_h:
+            new_w, new_h = min(img_w, cap_w), min(img_h, cap_h)
+            messagebox.showwarning(
+                "Calibration target too large",
+                f"A {img_w} x {img_h} px target does not fit on the {scr_w} x {scr_h} screen: "
+                f"the corner calibration points sit only {cap_w // 2} px from the left/right "
+                f"and {cap_h // 2} px from the top/bottom edge, so the image would be cut off.\n\n"
+                f"Using {new_w} x {new_h} px instead.")
+            self.cali_img_w.set(new_w)
+            self.cali_img_h.set(new_h)
+            img_w, img_h = new_w, new_h
         self.cfg = {
             "user": self.user.get().strip(),
             "pts":  int(self.pts.get()),
             "cali_img_path": self.cali_img_path.get().strip(),
-            "cali_img_size": (self._safe_int(self.cali_img_w, 170), self._safe_int(self.cali_img_h, 170)),
+            "cali_img_size": (img_w, img_h),
             "camera_id": self._safe_int(self.camera_idx, 0),
             "screen": mon,
             "scr_width_cm": self._safe_float(self.scr_width_cm, 53.0),
@@ -586,14 +627,14 @@ class CalibGUI(tk.Tk):
 
 
 import numpy as np
-import ctypes
 
 def main():
-    # [FIX] DPI Awareness for Windows 11 scaling
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
+    # [FIX] DPI Awareness for Windows 10/11 scaling. Must run before any window exists.
+    # Per-Monitor V2 (not the old System-aware call) so the pygame window we place at the
+    # selected monitor's EnumDisplaySettings origin is measured in the same physical pixels
+    # - otherwise DWM rescales it on a mixed-DPI setup and the calibration grid falls off
+    # the screen (or, when scaled down, is silently recorded at the wrong coordinates).
+    print(f"[DPI] awareness = {set_dpi_aware()}")
 
     # [FIX] Switch keyboard to English so keystroke controls (q, SPACE) work regardless
     # of IME state; restore on exit. atexit guarantees restore even on crash / sys.exit.

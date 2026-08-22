@@ -1,0 +1,89 @@
+==============================================================================
+ NTUH Eye-Tracking Suite - Release Notes
+ Build date: 2026-08-22
+==============================================================================
+
+This release builds on the 2026-08-10 build (same three programs:
+VA_center_opt.exe, calibration.exe, replayer.exe). How to run, where data is
+saved, and the per-participant workflow are UNCHANGED - see the earlier release
+notes in this folder for those. Below are only the changes since 2026-08-10.
+
+This build fixes ONE problem with TWO separate causes: the calibration target
+picture could be cut off, or the whole outer ring of calibration points could
+fall off the screen. Both were confirmed on Windows 10 and Windows 11.
+
+------------------------------------------------------------------------------
+ VERSION NUMBERS
+------------------------------------------------------------------------------
+Each program shows its version in the window title bar:
+      VA_center_opt   v1.2.2   (changed this release)
+      calibration     v1.1.1   (changed this release)
+      replayer        v1.0.0   (unchanged)
+Please include the version shown in the title when reporting an issue.
+
+------------------------------------------------------------------------------
+ CALIBRATION TARGET NO LONGER CUT OFF  (calibration)  -- fix, v1.1.1
+------------------------------------------------------------------------------
+The calibration points are placed very close to the screen edges, and the
+target picture is drawn CENTRED on each point. Nothing checked that the picture
+still fitted, so on the corner points its outer part was simply cut off by the
+screen edge. With the default 170 x 170 target:
+
+      1366 x 768    49 px lost on each side  (29% of the picture)
+      1920 x 1080   35 px lost on each side
+      2560 x 1440   18 px lost on each side
+      3840 x 2160   nothing lost
+
+The subject was therefore asked to look at a target whose visible shape (and
+visual centre) differed from corner to corner, which biases the profile.
+
+The program now caps the target size to what the SELECTED screen can show:
+
+      1366 x 768     72 x 72 px
+      1920 x 1080   100 x 100 px
+      2560 x 1440   134 x 134 px
+      2880 x 1800   150 x 166 px
+      3840 x 2160   200 x 200 px
+
+The size label in the config window turns RED as soon as you type a size that
+is too large, and a warning appears when you press "Start calibration", telling
+you the size actually used. If your saved setting was larger than the cap, it
+is reduced automatically - you do not have to do anything.
+
+Note: the picture is made smaller, never moved inwards. Moving it would put its
+centre somewhere other than the calibration point, which would silently record
+a WRONG profile - a much worse outcome than a smaller dot.
+
+------------------------------------------------------------------------------
+ MULTI-MONITOR / DISPLAY-SCALING FIX  (both programs)
+                              -- fix, calibration v1.1.1, VA_center_opt v1.2.2
+------------------------------------------------------------------------------
+IMPORTANT if you use TWO screens with DIFFERENT scaling percentages (Windows
+Settings -> Display -> "Scale and layout"), or if you change the scaling
+percentage after logging in.
+
+Both programs used to tell Windows they understood only ONE scaling value: the
+one the MAIN screen had when you logged in. But the screen sizes they work with
+are read as real, physical pixels. The two only agreed when the screen you
+actually used happened to have that same scaling.
+
+  - Example: external monitor at 100%, laptop at 150%, calibrating on the
+    LAPTOP. Windows stretched the program window by 1.5x, so the right-hand
+    column and bottom row of calibration points ended up completely OUTSIDE
+    the screen.
+  - The opposite case was worse because it was invisible: with the chosen
+    screen at a LOWER scaling than the main one, the window was shrunk, all
+    points stayed visible, and the calibration profile was quietly recorded
+    against the wrong coordinates.
+
+Both programs now use per-monitor scaling awareness, so a window placed on a
+monitor is measured in that monitor's real pixels. Nothing changes for a
+single-screen machine whose scaling was already set before you logged in.
+
+------------------------------------------------------------------------------
+ KNOWN ISSUE (not fixed in this build)
+------------------------------------------------------------------------------
+On a 1366 x 768 screen the CAMERA PREVIEW step (the four-panel view before
+calibration starts) still overflows the screen on all four sides - its layout
+is a fixed size inside the vendored library. It does not affect the calibration
+data; the workaround is to run the calibration program on a larger screen.

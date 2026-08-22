@@ -63,6 +63,14 @@ VA_center_opt
            nor the version. The phone's remote API version is logged next to the SDK's on every
            connect, and a reachable-but-not-ready phone (glasses detached, Chronus backgrounded)
            now reports its own FAILED message instead of that AttributeError.
+    1.2.2  Fix: DPI awareness. The app asked for the legacy System-DPI awareness, which pins it
+           to the primary monitor's login-time scale factor, while every screen rectangle it
+           uses comes from EnumDisplaySettings in real physical pixels. On a mixed-DPI setup
+           (e.g. external 100% + laptop 150%) DWM then rescaled the stimulus/tester windows, so
+           they no longer matched the monitor they were placed on. Now uses Per-Monitor V2
+           (SetProcessDpiAwarenessContext, with 8.1/legacy fallbacks) so window coordinates are
+           physical pixels on every monitor. No change on a single-monitor machine whose scaling
+           was already set at login.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -74,13 +82,26 @@ calibration
     1.1.0  A finished profile is now also copied to the sibling
            VA_center_opt/calibration_profiles/ folder (release layout), so it can be used
            without the manual copy step; the "Done" dialog shows both paths.
+    1.1.1  Fix: the calibration target image was cut off - or, on a mixed-DPI setup, the whole
+           corner points fell off the screen. Two independent causes. (a) gazefollower places
+           its calibration grid from a fixed 1920x1080 / 50 px reference, so the corner points
+           sit only 2.6% / 4.6% in from the edges while the target image is drawn centred on
+           them with no bounds check: the default 170x170 lost 49 px per side on 1366x768 (29%
+           of the image), 35 px on 1920x1080, 18 px on 2560x1440. The target size is now capped
+           to what the selected screen can show (the config window warns while you type and
+           again at launch). The image is capped, never nudged inwards - moving it would shift
+           its centre off the calibration point and corrupt the profile. (b) Same DPI-awareness
+           fix as VA_center_opt v1.2.2: with the old System-DPI call, calibrating on a monitor
+           whose scaling differs from the login-time primary made DWM rescale the window - the
+           right column / bottom row of points fell off screen, or (scaling down) the profile
+           was silently recorded against wrong coordinates.
 replayer
     1.0.0  Baseline: versioning introduced.
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.2.1",
-    "calibration": "1.1.0",
+    "VA_center_opt": "1.2.2",
+    "calibration": "1.1.1",
     "replayer": "1.0.0",
 }
 

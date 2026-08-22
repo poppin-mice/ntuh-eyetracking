@@ -20,7 +20,25 @@ The calibration program displays a series of targets on screen. The user looks a
 | Select Camera | Webcam device index | 0 |
 | Calibration points | Number of calibration targets: 5, 9, or 13 | 9 |
 | Calibration image | Optional custom target image (from `calibration_images/`) | (default dot) |
-| Image size (px) | Width x Height of the calibration target | 170 x 170 |
+| Image size (px) | Width x Height of the calibration target (capped per screen, see below) | 170 x 170 |
+
+### Target image size limit
+
+The corner calibration points sit close to the screen edges, and the target image is drawn
+**centred** on each point, so an image that is too large is cut off at the edge. The program
+caps the size to what the **selected screen** can show and tells you when it does - the size
+label turns red while you type, and a warning appears when you click *Start calibration*.
+
+| Screen | Largest target |
+|--------|----------------|
+| 1366 x 768 | 72 x 72 px |
+| 1920 x 1080 | 100 x 100 px |
+| 2560 x 1440 | 134 x 134 px |
+| 2880 x 1800 | 150 x 166 px |
+| 3840 x 2160 | 200 x 200 px |
+
+The image is shrunk, never moved inwards: shifting it would put its centre somewhere other
+than the calibration point and corrupt the recorded profile.
 
 ## Calibration Process
 

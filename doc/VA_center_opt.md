@@ -68,6 +68,11 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 | Screen Width (cm) | Physical width of the display monitor | 52.6 |
 | Viewing Distance (cm) | Distance from user's eyes to the screen | 50 |
 
+> **Note (v1.2.2):** Windows display **scaling** no longer has to match across monitors. The app now uses
+> per-monitor DPI awareness, so a window placed on the Test or Tester Screen is measured in that
+> monitor's real pixels. Before, a mixed-DPI setup (e.g. external 100% + laptop 150%) had its windows
+> silently stretched or shrunk by Windows, putting stimuli at the wrong size/position.
+
 > **Note:** Test Screen and Tester Screen used to live on the *Sol Calib* tab under *Display Settings*. They moved here because every flow uses them — the VA/VF test, Sol calibration and the accuracy test — not just Sol calibration. Saved settings carry over unchanged.
 
 ### General Tab - Inter-trial
