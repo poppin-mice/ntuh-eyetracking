@@ -657,13 +657,13 @@ class SettingsWindow(tk.Tk):
         # clinical workflow is untouched.
         catch_frame = ttk.Frame(grp_user)
         catch_frame.grid(row=r, column=0, columnspan=3, sticky="w", **pad); r += 1
-        ttk.Checkbutton(catch_frame, text="Negative Sample Collection Mode (catch trials)",
+        ttk.Checkbutton(catch_frame, text="Collect negative samples:",
                         variable=self.catch_enabled_var).pack(side="left")
-        ttk.Label(catch_frame, text="catch trials:", font=l_font).pack(side="left", padx=(12, 2))
         ttk.Spinbox(catch_frame, textvariable=self.catch_trials_var, from_=1, to=20,
-                    width=6).pack(side="left")
+                    width=6).pack(side="left", padx=(6, 2))
+        ttk.Label(catch_frame, text="catch trials", font=l_font).pack(side="left")
         ttk.Label(catch_frame,
-                  text="(VA only: unresolvable gratings, randomly placed; excluded from the score)",
+                  text="(VA only - gratings nobody can resolve, at random positions, excluded from the score)",
                   font=self.f_hint, foreground="gray").pack(side="left", padx=8)
 
         # ── Section 2a: VA Stimulus (shown when VA selected) ──
