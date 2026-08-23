@@ -40,6 +40,7 @@ PLAN = {
 # User-facing documentation, gathered into dist\manual\ so the professor has one
 # place to read how to use each program (the .exe folders stay clean).
 MANUAL_DOCS = [
+    os.path.join("doc", "20260823_release_note.txt"),
     os.path.join("doc", "20260810_release_note.txt"),
     os.path.join("doc", "20260721_release_note.txt"),
     os.path.join("doc", "20260705_release_note.txt"),
