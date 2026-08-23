@@ -20,7 +20,8 @@ from gazefollower.camera import WebCamCamera
 # Shared NTUH helpers (screen enumeration, px<->cm, version). Kept as a top-level
 # import: calibration.py already pulls in the heavy GUI/SDK stack, so there is no
 # spawn/import-light constraint here (unlike VA_center_opt.py).
-from ntuh.common.win_monitors import get_monitor_info_windows, set_dpi_awareness
+from ntuh.common.win_monitors import (get_monitor_info_windows, set_dpi_awareness,
+                                      screen_options, valid_screen_option)
 from ntuh.common.optics import px_to_cm
 from ntuh.common.keyboard_layout import KeyboardLayoutManager
 from ntuh.version import get_version
@@ -334,8 +335,7 @@ class CalibGUI(tk.Tk):
         self._update_out_hint()
 
     def _screen_options(self):
-        opts = [f"{m['index']}: {m['name']} ({m['width']}x{m['height']})" for m in self.monitors]
-        return opts if opts else ["0: Primary Display"]
+        return screen_options(self.monitors)
 
     def _selected_screen(self):
         """Return the selected monitor dict (falls back to the first / a 1080p default)."""
@@ -650,6 +650,25 @@ class CalibGUI(tk.Tk):
                 if cam_ok:
                     self.camera_idx.set(str(data['camera_id']))
             if 'cali_img_path' in data: self.cali_img_path.set(data['cali_img_path'])
+            if 'scr_width_cm' in data: self.scr_width_cm.set(str(data['scr_width_cm']))
+            if 'out_dir' in data: self.out_dir.set(data['out_dir'])
+
+            # The screen MUST be restored before the size: the size cap comes from the
+            # selected screen, and _sync_img_size clamps on every write. Restoring the size
+            # first clamped it against whatever screen was still selected (the first one),
+            # so a 134 px target saved for monitor 1 came back as monitor 0's 66 px cap.
+            #
+            # Re-resolve the saved screen against the monitors connected right now (see
+            # valid_screen_option): checking the index alone let a stale label through, so
+            # the combobox showed a screen that no longer exists while _selected_screen()
+            # resolved its index to a different monitor.
+            saved = str(data.get('screen', '')).strip()
+            if saved:
+                self.screen_var.set(valid_screen_option(saved, self._screen_options()))
+                if self.screen_var.get() != saved:
+                    print(f"[Calib settings] Saved screen {saved!r} is no longer connected; "
+                          f"using {self.screen_var.get()!r}")
+
             # cali_img_w/h are the pre-1.1.1 two-box keys; the smaller one is what actually
             # got rendered, so that is the single size we carry over.
             try:
@@ -657,16 +676,6 @@ class CalibGUI(tk.Tk):
                 self.cali_img_px.set(int(data.get('cali_img_px', min(old, default=100))))
             except Exception:
                 pass
-            if 'scr_width_cm' in data: self.scr_width_cm.set(str(data['scr_width_cm']))
-            if 'out_dir' in data: self.out_dir.set(data['out_dir'])
-            # Only restore the screen if that monitor index still exists.
-            if 'screen' in data and str(data['screen']).strip():
-                try:
-                    idx = int(str(data['screen']).split(':')[0].strip())
-                except Exception:
-                    idx = -1
-                if 0 <= idx < len(self.monitors):
-                    self.screen_var.set(data['screen'])
             print(f"[Calib settings] Loaded from {CALIB_CONFIG_FILE}")
         except Exception as e:
             print(f"[Calib settings] Failed to load: {e}")

@@ -28,7 +28,7 @@ from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
 from ntuh.common.pygame_utils import ensure_pygame_focus
-from ntuh.common.win_monitors import get_monitor_info_windows
+from ntuh.common.win_monitors import get_monitor_info_windows, screen_options, valid_screen_option
 from ntuh.ui.face_overlay import (
     draw_face_quality_overlay,
     _GUIDE_OVAL_SIZE_FRAC, _GUIDE_OVAL_BOTTOM_X_FRAC, _GUIDE_OVAL_BOTTOM_Y_FRAC,
@@ -729,20 +729,17 @@ class SettingsWindow(tk.Tk):
         # because every flow uses them (VA/VF test, Sol calib, accuracy test), not just Sol calib.
         # monitor_info_list is the cached list the screen-picking handlers read at run time.
         self.monitor_info_list = get_monitor_info_windows()
-        screen_options = [f"{mon['index']}: {mon['name']} ({mon['width']}x{mon['height']})"
-                          for mon in self.monitor_info_list]
-        if not screen_options:
-            screen_options = ["0: Primary Display"]
+        screen_opts = screen_options(self.monitor_info_list)
 
         ttk.Label(grp_screen, text="Test Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
-        self.cmb_test_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_user_screen_var, values=screen_options, state="readonly", width=30)
+        self.cmb_test_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_user_screen_var, values=screen_opts, state="readonly", width=30)
         self.cmb_test_screen.grid(row=r, column=1, sticky="w", **pad); r += 1
 
         # Operator-only monitor. When it differs from Test Screen, the tester views open on it.
         # No .current() here: the vars default to "0"/"1", which the ":"-split parsers already
         # read correctly, and forcing a selection would clobber values restored from settings.
         ttk.Label(grp_screen, text="Tester Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
-        self.cmb_tester_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_tester_screen_var, values=screen_options, state="readonly", width=30)
+        self.cmb_tester_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_tester_screen_var, values=screen_opts, state="readonly", width=30)
         self.cmb_tester_screen.grid(row=r, column=1, sticky="w", **pad); r += 1
 
         ttk.Label(grp_screen, text="Screen Width (cm):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
@@ -862,16 +859,10 @@ class SettingsWindow(tk.Tk):
         self.sol_preview_screen_var = tk.StringVar(value="0")
         # Get monitor info for dropdown
         preview_monitors = get_monitor_info_windows()
-        preview_screen_options = []
-        for mon in preview_monitors:
-            label = f"{mon['index']}: {mon['name']} ({mon['width']}x{mon['height']})"
-            preview_screen_options.append(label)
-        if not preview_screen_options:
-            preview_screen_options = ["0: Primary Display"]
-        self.cmb_preview_screen = ttk.Combobox(grp_preview, textvariable=self.sol_preview_screen_var, values=preview_screen_options, state="readonly", width=35)
+        preview_opts = screen_options(preview_monitors)
+        self.cmb_preview_screen = ttk.Combobox(grp_preview, textvariable=self.sol_preview_screen_var, values=preview_opts, state="readonly", width=35)
         self.cmb_preview_screen.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        if preview_screen_options:
-            self.cmb_preview_screen.current(0)
+        self.cmb_preview_screen.current(0)
         self.preview_monitor_info = preview_monitors  # Store for use in preview
 
         self.btn_preview_sol_gaze = ttk.Button(grp_preview, text="Preview Gaze", command=self.preview_sol_gaze, state="disabled")
@@ -3382,10 +3373,18 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'sol_offset_target_size' in data: self.sol_offset_target_size_var.set(str(data['sol_offset_target_size']))
             if 'sol_offset_num_points' in data: self.sol_offset_num_points_var.set(str(data['sol_offset_num_points']))
             if 'sol_offset_mode' in data: self.sol_offset_mode_var.set(str(data['sol_offset_mode']))
-            if 'sol_offset_user_screen' in data: self.sol_offset_user_screen_var.set(data['sol_offset_user_screen'])
-            if 'sol_offset_tester_screen' in data: self.sol_offset_tester_screen_var.set(data['sol_offset_tester_screen'])
+            # Screens are re-resolved against the monitors connected RIGHT NOW: a saved label
+            # can name a display that has since been unplugged, renamed or re-resolutioned,
+            # and restoring it blindly left the picker showing a screen that no longer exists
+            # while the tests silently ran on whatever monitor that index now points at.
+            test_opts = screen_options(getattr(self, 'monitor_info_list', []))
+            if 'sol_offset_user_screen' in data:
+                self.sol_offset_user_screen_var.set(valid_screen_option(data['sol_offset_user_screen'], test_opts))
+            if 'sol_offset_tester_screen' in data:
+                self.sol_offset_tester_screen_var.set(valid_screen_option(data['sol_offset_tester_screen'], test_opts))
             if 'sol_preview_screen' in data and hasattr(self, 'sol_preview_screen_var'):
-                self.sol_preview_screen_var.set(data['sol_preview_screen'])
+                self.sol_preview_screen_var.set(valid_screen_option(
+                    data['sol_preview_screen'], screen_options(getattr(self, 'preview_monitor_info', []))))
             if 'sol_quality_window' in data: self.sol_quality_window_var.set(str(data['sol_quality_window']))
             if 'webcam_oval_size' in data: self.webcam_oval_size_var.set(str(data['webcam_oval_size']))
             if 'webcam_oval_bottom_x' in data: self.webcam_oval_bottom_x_var.set(str(data['webcam_oval_bottom_x']))

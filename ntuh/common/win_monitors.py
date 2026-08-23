@@ -137,6 +137,37 @@ def get_monitor_info_windows():
     return monitors
 
 
+def screen_options(monitors):
+    """Screen-picker labels for a monitor list: "<index>: <name> (<w>x<h>)".
+
+    One formatter for every picker in the suite, so the labels a settings file stores and
+    the labels a later session offers cannot drift apart."""
+    return [f"{m['index']}: {m['name']} ({m['width']}x{m['height']})"
+            for m in monitors] or ["0: Primary Display"]
+
+
+def valid_screen_option(saved, options):
+    """Resolve a screen setting restored from a settings file to a CURRENT picker option.
+
+    Settings store the whole label, but monitors get unplugged, renamed and re-resolutioned
+    between sessions. Restoring the saved string blindly left a readonly combobox displaying
+    a screen that no longer exists, while the ':'-split index parsers silently resolved it to
+    a different monitor - so a test could run on a screen the operator never picked.
+
+    Exact match wins. Otherwise keep the index if it still exists (that is also what VA's
+    bare "0"/"1" defaults mean), refreshed to that monitor's current label; else fall back to
+    the first screen."""
+    if not options:
+        return saved
+    if saved in options:
+        return saved
+    try:
+        idx = int(str(saved).split(':')[0].strip())
+    except Exception:
+        idx = 0
+    return options[idx] if 0 <= idx < len(options) else options[0]
+
+
 def resolve_tester_rect(cfg):
     """Resolve the tester monitor rectangle (x,y,w,h) from cfg['sol_offset_tester_screen'].
     Falls back to the user screen offset slightly if the tester screen is unavailable."""

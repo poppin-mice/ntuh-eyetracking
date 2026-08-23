@@ -69,6 +69,14 @@ VA_center_opt
            physical pixels EnumDisplaySettings reports (targets pushed off the right/bottom
            edge when scaling up, silently mis-sized when scaling down). Now per-monitor
            V2 aware, with a fallback chain for pre-1703 Windows.
+           Fix: Test Screen / Tester Screen / Sol preview screen were restored from the
+           settings file without checking the display still exists. After unplugging,
+           renaming or re-resolutioning a monitor the picker showed a screen that was gone
+           while the ':'-split index parsers resolved it to whatever monitor now sits at
+           that index - so a test could run on a screen the operator never chose. All three
+           are now re-resolved against the connected monitors (shared with the calibration
+           app's picker), keeping the chosen index where it still exists and otherwise
+           falling back to the first screen.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
