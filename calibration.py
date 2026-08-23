@@ -3,7 +3,7 @@ import os, sys, time, json, shutil, logging
 from pathlib import Path
 import cv2
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, font as tkfont
 
 import pygame
 import gazefollower
@@ -205,6 +205,10 @@ class CalibGUI(tk.Tk):
         self.screen_var = tk.StringVar()
         self.scr_width_cm = tk.StringVar(value="53.0")
 
+        # GUI font size. Tk's named fonts are what every widget in this window resolves
+        # to, so retuning them restyles the whole GUI at once (_apply_font_size).
+        self.font_size = tk.IntVar(value=abs(tkfont.nametofont("TkDefaultFont").cget("size")) or 9)
+
         # Where the calibration profile is written (base folder; leaf is <user>_<pts>pt).
         self.out_dir = tk.StringVar(value=str(APP_DIR / "calibration_profiles"))
 
@@ -321,15 +325,22 @@ class CalibGUI(tk.Tk):
         self.lbl_out_hint = ttk.Label(grp_o, text="", foreground="gray")
         self.lbl_out_hint.grid(row=1, column=1, sticky="w", padx=8)
 
+        row_font = ttk.Frame(outer)
+        row_font.grid(row=4, column=0, sticky="w")
+        ttk.Label(row_font, text="GUI font size:").pack(side="left")
+        ttk.Spinbox(row_font, from_=7, to=20, textvariable=self.font_size,
+                    width=5).pack(side="left", padx=(6, 0))
+
         ttk.Button(outer, text="Start calibration",
-                   command=self._start).grid(row=4, column=0, pady=12)
+                   command=self._start).grid(row=5, column=0, pady=12)
         ttk.Label(outer,
                   text="During calibration:  SPACE = proceed / accept     R = redo     Q = quit",
-                  foreground="gray").grid(row=5, column=0, pady=(0, 4))
+                  foreground="gray").grid(row=6, column=0, pady=(0, 4))
 
         # Live-update the derived labels when inputs change.
         for var in (self.cali_img_px, self.scr_width_cm, self.screen_var):
             var.trace_add("write", lambda *a: self._sync_img_size())
+        self.font_size.trace_add("write", lambda *a: self._apply_font_size())
         for var in (self.out_dir, self.user, self.pts):
             var.trace_add("write", lambda *a: self._update_out_hint())
         self._update_out_hint()
@@ -542,6 +553,23 @@ class CalibGUI(tk.Tk):
         except Exception:
             self.lbl_img_cm.configure(text="= -- cm")
 
+    def _apply_font_size(self):
+        """Restyle the whole window by retuning Tk's named fonts.
+
+        Every widget here uses the ttk defaults, which resolve to TkDefaultFont (labels,
+        buttons, labelframe titles) and TkTextFont (entries, spinboxes, comboboxes), so
+        there is nothing to restyle per widget - Tk redraws on the font change itself.
+        geometry("") then re-fits the window to the new content WITHOUT moving it (unlike
+        _fit_window_to_content, which re-centres and would make the window jump on every
+        click of the spinner)."""
+        size = self._safe_int(self.font_size, 0)
+        if not 6 <= size <= 24:
+            return          # mid-edit empty/garbage value; the spinbox limits are 7..20
+        for name in ("TkDefaultFont", "TkTextFont"):
+            tkfont.nametofont(name).configure(size=size)
+        self.update_idletasks()
+        self.geometry("")
+
     def _update_out_hint(self):
         if not hasattr(self, 'lbl_out_hint'):
             return
@@ -608,6 +636,7 @@ class CalibGUI(tk.Tk):
             "screen": self.screen_var.get(),
             "scr_width_cm": _pos_num_str(self.scr_width_cm, "scr_width_cm", "53.0"),
             "out_dir": self.out_dir.get(),
+            "font_size": _int(self.font_size, "font_size", 9),
         }
 
     def _save_config(self):
@@ -628,7 +657,7 @@ class CalibGUI(tk.Tk):
     def _attach_autosave(self):
         for var in (self.user, self.pts, self.camera_idx, self.cali_img_path,
                     self.cali_img_px, self.screen_var,
-                    self.scr_width_cm, self.out_dir):
+                    self.scr_width_cm, self.out_dir, self.font_size):
             var.trace_add('write', self._schedule_save)
 
     def _load_config(self):
@@ -652,6 +681,9 @@ class CalibGUI(tk.Tk):
             if 'cali_img_path' in data: self.cali_img_path.set(data['cali_img_path'])
             if 'scr_width_cm' in data: self.scr_width_cm.set(str(data['scr_width_cm']))
             if 'out_dir' in data: self.out_dir.set(data['out_dir'])
+            if 'font_size' in data:
+                try: self.font_size.set(int(data['font_size']))   # trace applies it
+                except Exception: pass
 
             # The screen MUST be restored before the size: the size cap comes from the
             # selected screen, and _sync_img_size clamps on every write. Restoring the size

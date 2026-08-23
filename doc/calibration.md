@@ -21,6 +21,7 @@ The calibration program displays a series of targets on screen. The user looks a
 | Calibration points | Number of calibration targets: 5, 9, or 13 | 9 |
 | Calibration image | Optional custom target image (from `calibration_images/`) | (default dot) |
 | Image size (px) | Size of the calibration target, capped per screen (see below) | 100 |
+| GUI font size | Text size of this settings window; applies as you change it | system default |
 
 One number, not width x height: the target is always drawn to fit its box while keeping the
 image's own proportions, so a second dimension could never change what appears on screen.

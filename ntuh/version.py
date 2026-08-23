@@ -107,13 +107,21 @@ calibration
            that was really being drawn. Same DPI-awareness fix as VA_center_opt
            1.2.2: on a mixed-DPI setup the calibration window was stretched and the
            right/bottom points fell outside the visible screen.
+           Also fixed: the saved screen was restored by index only, so after a monitor was
+           unplugged, renamed or re-resolutioned the picker showed a display that no longer
+           existed while the calibration ran on whatever monitor now sat at that index.
+    1.2.0  A "GUI font size" spinner on the settings window, applied live as it changes and
+           remembered between runs - the settings text is small on the high-resolution
+           clinic screens (more so now that the app is per-monitor DPI aware and Windows no
+           longer stretches the window). It retunes Tk's named fonts, so the whole window
+           follows at once.
 replayer
     1.0.0  Baseline: versioning introduced.
 """
 
 APP_VERSIONS = {
     "VA_center_opt": "1.2.2",
-    "calibration": "1.1.1",
+    "calibration": "1.2.0",
     "replayer": "1.0.0",
 }
 
