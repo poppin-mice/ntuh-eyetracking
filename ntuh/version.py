@@ -169,12 +169,40 @@ calibration
            in-memory `results` list, which is gone with it.
 replayer
     1.0.0  Baseline: versioning introduced.
+    1.1.0  A "Font" spinner in the menu-bar corner, applied live and remembered between runs
+           (QSettings), matching the control the other two apps gained. Qt needed a different
+           mechanism than their Tk one: QApplication.setFont only reaches widgets created
+           after the call, so each live widget is set explicitly, and the six hardcoded
+           `font-size: 11/12px` stylesheet rules had to go first because a stylesheet beats
+           the widget font and pinned the list, status bar and hint labels to a fixed size.
+           The spinner sits at the bottom-left of the status bar; the status text became a
+           label because statusBar().showMessage() hides every widget added with addWidget(),
+           which would have made the spinner vanish on the first session load.
+           Each video block's title badge ("Screen"/"Webcam"/"Sol") and its "No <stream>"
+           placeholder are painted from the widget font instead of a hardcoded QFont, so they
+           follow the control too; the badge box is measured from that font rather than a
+           fixed 22px. Fixed alongside: the badge width was computed from the painter's
+           PREVIOUS font because fontMetrics() was read before setFont().
+           The timeline's validity strips, their SOL/CAM labels and the elapsed-time text are
+           derived from the font too, and the widget's height with them (was a hardcoded 84px
+           holding 10px strips and 7pt labels), so the labels grow without being clipped by
+           their strip.
+           The config panel moved into a QScrollArea: its five group boxes grow with the font
+           and used to push the window's minimum height past the screen - at 16pt and above,
+           a maximized window pushed the status bar off the bottom. Worst-case window minimum
+           across 7-20pt is now 419px instead of 956px. The panel's setFixedWidth(260) went
+           with it - pinned, it could neither shrink to the viewport (the vertical scrollbar
+           left 245px, so a horizontal one appeared) nor widen when the splitter was dragged
+           out. Width now comes from the splitter, floored so it cannot be dragged narrower
+           than the content.
+           Gaze-point labels keep their own size - they are drawn on the video canvas in video
+           coordinates and scale with it, not with the UI chrome.
 """
 
 APP_VERSIONS = {
     "VA_center_opt": "1.4.0",
     "calibration": "1.2.0",
-    "replayer": "1.0.0",
+    "replayer": "1.1.0",
 }
 
 

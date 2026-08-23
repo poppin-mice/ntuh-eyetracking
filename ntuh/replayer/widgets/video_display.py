@@ -118,18 +118,25 @@ class VideoDisplayWidget(QWidget):
                 p.drawText(vx + 13, vy + 4, lbl)
         else:
             p.setPen(QColor(100, 100, 100))
-            p.setFont(QFont("Arial", 14))
+            placeholder = QFont(self.font())      # chrome, not video overlay: follows the Font control
+            placeholder.setPointSize(self.font().pointSize() + 5)
+            p.setFont(placeholder)
             p.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"No {self.label}")
 
-        # Label badge
+        # Label badge ("Screen" / "Webcam" / "Sol"). Derived from the widget font so the Font
+        # control resizes it; a hardcoded QFont here ignored it. The badge box is measured
+        # from that font too, instead of a fixed 22px, so it grows with the text.
+        badge_font = QFont(self.font())
+        badge_font.setBold(True)
+        p.setFont(badge_font)
+        fm = p.fontMetrics()          # AFTER setFont: this used to measure the previous font
+        tw = fm.horizontalAdvance(self.label) + 12
+        th = fm.height() + 8
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(QColor(0, 0, 0, 140))
-        fm = p.fontMetrics()
-        p.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        tw = fm.horizontalAdvance(self.label) + 12
-        p.drawRoundedRect(4, 4, tw, 22, 4, 4)
+        p.drawRoundedRect(4, 4, tw, th, 4, 4)
         p.setPen(QColor(255, 255, 255))
-        p.drawText(10, 19, self.label)
+        p.drawText(10, 4 + 4 + fm.ascent(), self.label)
 
         # Drag highlight
         if self._drag_highlight:

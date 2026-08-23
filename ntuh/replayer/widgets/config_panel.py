@@ -35,7 +35,12 @@ class ConfigPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(260)
+        # No fixed width: the panel lives in a QScrollArea inside the main splitter, so its
+        # width comes from the splitter. Pinning it to 260 meant it could neither shrink to
+        # the viewport (a vertical scrollbar left only 245 px, so a horizontal scrollbar
+        # appeared) nor widen when the splitter was dragged out. The splitter's initial
+        # sizes still open it at 260.
+        self.setMinimumWidth(200)
         self._trial_meta = {}  # str(tnum) -> (cpd, side), for refreshing rows
 
         layout = QVBoxLayout(self)
@@ -48,7 +53,7 @@ class ConfigPanel(QWidget):
         self.open_btn.clicked.connect(self.open_folder_requested.emit)
         self.path_label = QLabel("No session loaded")
         self.path_label.setWordWrap(True)
-        self.path_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.path_label.setStyleSheet("color: #aaa;")
         gl.addWidget(self.open_btn)
         gl.addWidget(self.path_label)
         layout.addWidget(grp_session)
@@ -73,7 +78,7 @@ class ConfigPanel(QWidget):
         self.qual_label = QLabel("No session loaded")
         self.qual_label.setWordWrap(True)
         self.qual_label.setTextFormat(Qt.TextFormat.RichText)
-        self.qual_label.setStyleSheet("font-size: 11px;")
+        
         ql.addWidget(self.qual_label)
         layout.addWidget(grp_qual)
 
@@ -114,10 +119,10 @@ class ConfigPanel(QWidget):
         rv.addWidget(self.record_note_edit)
 
         self.review_progress_lbl = QLabel("Progress: – / –")
-        self.review_progress_lbl.setStyleSheet("font-size: 11px;")
+        
         rv.addWidget(self.review_progress_lbl)
         self.review_saved_lbl = QLabel("")
-        self.review_saved_lbl.setStyleSheet("color: #4CAF50; font-size: 11px;")
+        self.review_saved_lbl.setStyleSheet("color: #4CAF50;")
         rv.addWidget(self.review_saved_lbl)
         layout.addWidget(grp_review)
 
