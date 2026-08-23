@@ -20,7 +20,22 @@ The calibration program displays a series of targets on screen. The user looks a
 | Select Camera | Webcam device index | 0 |
 | Calibration points | Number of calibration targets: 5, 9, or 13 | 9 |
 | Calibration image | Optional custom target image (from `calibration_images/`) | (default dot) |
-| Image size (px) | Width x Height of the calibration target | 170 x 170 |
+| Image size (px) | Size of the calibration target, capped per screen (see below) | 100 |
+
+One number, not width x height: the target is always drawn to fit its box while keeping the
+image's own proportions, so a second dimension could never change what appears on screen.
+
+The corner targets sit close to the screen edge, and the image is drawn centred on each
+target, so an oversized image is cut off there. The size is therefore capped to what fits on
+the **selected screen** — the smaller of `screen width x 50 / 1920` and
+`screen height x 50 / 1080`, doubled — e.g. **100 px** at 1920x1080, **72 px** at 1366x768,
+**166 px** at 3200x2000, **200 px** at 4K. The cap is always shown next to the size box and
+the size can never exceed it: the up arrow stops there, typing a larger number snaps to it
+(the cap flashes red to show why), and a value restored from settings that is too big for the
+current screen is reduced on the spot. **Picking a calibration screen sets the size to that
+screen's cap**, so switching monitors gives you the largest target that fits; adjust it down
+afterwards if you want a smaller one. The target is never shifted inwards to fit: its centre
+must stay exactly on the calibration point.
 
 ## Calibration Process
 

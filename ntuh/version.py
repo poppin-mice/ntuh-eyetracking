@@ -63,6 +63,12 @@ VA_center_opt
            nor the version. The phone's remote API version is logged next to the SDK's on every
            connect, and a reachable-but-not-ready phone (glasses detached, Chronus backgrounded)
            now reports its own FAILED message instead of that AttributeError.
+    1.2.2  Fix: the app declared only legacy System-DPI awareness, so on a mixed-DPI
+           multi-monitor setup DWM stretched the fullscreen window by the ratio between the
+           selected screen's scale and the primary's. Stimulus geometry no longer matched the
+           physical pixels EnumDisplaySettings reports (targets pushed off the right/bottom
+           edge when scaling up, silently mis-sized when scaling down). Now per-monitor
+           V2 aware, with a fallback chain for pre-1703 Windows.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -74,13 +80,32 @@ calibration
     1.1.0  A finished profile is now also copied to the sibling
            VA_center_opt/calibration_profiles/ folder (release layout), so it can be used
            without the manual copy step; the "Done" dialog shows both paths.
+    1.1.1  Fix: the calibration target was clipped at the corner points on every screen
+           below 4K. gazefollower places the corner targets W*50/1920 x H*50/1080 px from
+           the screen edge, so the default 170x170 image lost 35 px per side at 1920x1080
+           and ~29% of its area at 1366x768. The requested size is now capped to twice
+           that margin for the selected screen (the image is never shifted inwards - its
+           center must stay on the calibration coordinate). The cap for the selected screen
+           is shown next to the size box and cannot be exceeded: the up arrow stops at it,
+           typing a larger number snaps to it, and a too-large value from saved settings is
+           reduced as soon as it is seen. Picking a calibration screen sets the size to that
+           screen's cap (restoring the remembered screen at startup does not).
+           The two "Image size" boxes became one: gazefollower draws the target aspect-fit
+           inside the w x h box, so the rendered size was always min(w, h) and editing the
+           larger dimension did nothing - e.g. on a 3200x2000 screen the per-axis cap was
+           166 x 186 and everything from 166 up looked identical. Default is now 100 px
+           (fits 1920x1080 exactly; the old 170 was clipped on every screen below 4K).
+           Settings saved by an earlier version carry over as min(width, height) - the size
+           that was really being drawn. Same DPI-awareness fix as VA_center_opt
+           1.2.2: on a mixed-DPI setup the calibration window was stretched and the
+           right/bottom points fell outside the visible screen.
 replayer
     1.0.0  Baseline: versioning introduced.
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.2.1",
-    "calibration": "1.1.0",
+    "VA_center_opt": "1.2.2",
+    "calibration": "1.1.1",
     "replayer": "1.0.0",
 }
 

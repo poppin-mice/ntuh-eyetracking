@@ -20,7 +20,7 @@ from gazefollower.camera import WebCamCamera
 # Shared NTUH helpers (screen enumeration, px<->cm, version). Kept as a top-level
 # import: calibration.py already pulls in the heavy GUI/SDK stack, so there is no
 # spawn/import-light constraint here (unlike VA_center_opt.py).
-from ntuh.common.win_monitors import get_monitor_info_windows
+from ntuh.common.win_monitors import get_monitor_info_windows, set_dpi_awareness
 from ntuh.common.optics import px_to_cm
 from ntuh.common.keyboard_layout import KeyboardLayoutManager
 from ntuh.version import get_version
@@ -101,6 +101,28 @@ def _profile_dir(out_base, user_name: str, pts: int) -> Path:
     return base / f"{name}_{int(pts)}pt"
 
 
+# --------- Calibration target size cap ---------
+def max_target_px(screen_w: int, screen_h: int) -> int:
+    """Largest calibration-target size in px that fits fully on this screen.
+
+    gazefollower's generate_points() lays the targets out on a 1920x1080 reference grid
+    with a fixed 50 px margin and returns NORMALIZED coordinates; CalibrationUI then
+    multiplies by the real screen size. So the corner targets end up only
+    W*50/1920 px from the left/right edge and H*50/1080 px from the top/bottom - e.g.
+    35.6 px horizontally at 1366x768, 50 px at 1920x1080. The image is drawn centered on
+    the point (draw_rect = target - size//2), so any half-size larger than that margin is
+    clipped away by the screen edge: the old 170x170 default lost ~29% at 1366x768.
+
+    The tighter of the two axes wins because the target is drawn square (aspect-fit into
+    the box), so a per-axis cap would let the looser axis be raised with no visible effect.
+
+    We cap the size rather than nudge the image inwards on purpose - the image center
+    must stay exactly on the calibration coordinate, or the recorded gaze labels no
+    longer match where the subject looked. Wrapper-side (the vendored gazefollower
+    package is not touched)."""
+    return min(2 * round(screen_w * 50 / 1920), 2 * round(screen_h * 50 / 1080))
+
+
 # --------- 防止空白鍵/輸入法/事件卡住的輔助函式 ---------
 def restore_event_filter():
     """恢復事件過濾器，清空殘留事件，釋放 grab。"""
@@ -159,6 +181,7 @@ class CalibGUI(tk.Tk):
 
         self._suppress_save = True   # don't autosave while we build/load
         self._save_timer = None
+        self._flash_timer = None     # pending "cap reached" red flash on the size box
 
         # --- State variables (defaults; overridden by _load_config below) ---
         self.user = tk.StringVar(value="anonymous")
@@ -167,8 +190,13 @@ class CalibGUI(tk.Tk):
 
         default_cali_dir = APP_DIR / "calibration_images"
         self.cali_img_path = tk.StringVar(value=str(default_cali_dir))
-        self.cali_img_w    = tk.IntVar(value=170)
-        self.cali_img_h    = tk.IntVar(value=170)
+        # ONE number, not width+height: gazefollower draws the target aspect-fit inside the
+        # w x h box it is given (PyGameUIBackend.draw_image), so the rendered size is
+        # min(w, h) and nothing is drawn in the leftover padding. A second dimension could
+        # never change what appears on screen - it only made the smaller value bind
+        # invisibly. Default 100 fits a 1920x1080 screen exactly (the old 170 was clipped
+        # on every screen below 4K).
+        self.cali_img_px = tk.IntVar(value=100)
 
         # Screen selection + physical width, used to (a) run calibration on the
         # chosen monitor and (b) convert the target image size px <-> cm.
@@ -196,7 +224,7 @@ class CalibGUI(tk.Tk):
         self._suppress_save = False
         self._attach_autosave()
 
-        self._update_img_cm_label()
+        self._sync_img_size()
         self._fit_window_to_content()
 
         self.cfg = None
@@ -237,6 +265,12 @@ class CalibGUI(tk.Tk):
         self.cmb_screen = ttk.Combobox(grp_s, textvariable=self.screen_var,
                                        values=screen_opts, state="readonly", width=34)
         self.cmb_screen.grid(row=0, column=1, sticky="ew", **pad)
+        # Picking a screen re-sizes the target to that screen's cap. Bound to the widget
+        # event, not a trace on screen_var, so it fires only on a real user selection -
+        # restoring the remembered screen at startup must not overwrite the remembered
+        # size (_sync_img_size still clamps that one if it is too big).
+        self.cmb_screen.bind("<<ComboboxSelected>>",
+                             lambda e: self.cali_img_px.set(self._img_px_cap()))
         if screen_opts and not self.screen_var.get():
             self.cmb_screen.current(0)
         ttk.Label(grp_s, text="Screen width (cm):").grid(row=1, column=0, sticky="w", **pad)
@@ -258,9 +292,17 @@ class CalibGUI(tk.Tk):
         ttk.Label(grp_t, text="Image size (px):").grid(row=1, column=0, sticky="w", **pad)
         row_sz = ttk.Frame(grp_t)
         row_sz.grid(row=1, column=1, sticky="w", **pad)
-        ttk.Spinbox(row_sz, from_=20, to=800, textvariable=self.cali_img_w, width=6).pack(side="left")
-        ttk.Label(row_sz, text=" x ").pack(side="left")
-        ttk.Spinbox(row_sz, from_=20, to=800, textvariable=self.cali_img_h, width=6).pack(side="left")
+        # Two independent guards on the same cap: `to` (re-set per screen in
+        # _sync_img_size) stops the up arrow, and key validation refuses a typed
+        # digit that would take the value over it. Tk enforces both, so the box cannot
+        # hold an out-of-range number.
+        self.spn_img_px = ttk.Spinbox(row_sz, from_=20, to=800,
+                                      textvariable=self.cali_img_px, width=6,
+                                      validate="key",
+                                      validatecommand=(self.register(self._validate_img_px), '%P'))
+        self.spn_img_px.pack(side="left")
+        self.lbl_img_max = ttk.Label(row_sz, text="", foreground="gray")
+        self.lbl_img_max.pack(side="left", padx=(8, 0))
         self.lbl_img_cm = ttk.Label(grp_t, text="= -- cm", foreground="gray")
         self.lbl_img_cm.grid(row=2, column=1, sticky="w", padx=8)
 
@@ -285,8 +327,8 @@ class CalibGUI(tk.Tk):
                   foreground="gray").grid(row=5, column=0, pady=(0, 4))
 
         # Live-update the derived labels when inputs change.
-        for var in (self.cali_img_w, self.cali_img_h, self.scr_width_cm, self.screen_var):
-            var.trace_add("write", lambda *a: self._update_img_cm_label())
+        for var in (self.cali_img_px, self.scr_width_cm, self.screen_var):
+            var.trace_add("write", lambda *a: self._sync_img_size())
         for var in (self.out_dir, self.user, self.pts):
             var.trace_add("write", lambda *a: self._update_out_hint())
         self._update_out_hint()
@@ -423,20 +465,80 @@ class CalibGUI(tk.Tk):
         except Exception:
             return default
 
-    def _update_img_cm_label(self):
+    def _img_px_cap(self) -> int:
+        """Target-size cap for the currently selected screen."""
+        mon = self._selected_screen()
+        return max_target_px(mon.get('width', 1920), mon.get('height', 1080))
+
+    def _validate_img_px(self, proposed: str) -> bool:
+        """Key validation for the target size box: digits only, never above the selected
+        screen's cap. An over-cap entry is refused AND the box snaps to the cap, so the
+        user is left with the largest legal size instead of a truncated fragment of what
+        they typed (the arrows are stopped separately by `to`).
+
+        Must never raise - Tk permanently disables validation if the callback errors."""
+        try:
+            if proposed == "":
+                return True          # allow clearing the box to retype
+            if not proposed.isdigit():
+                return False
+            if int(proposed) <= self._img_px_cap():
+                return True
+            # Deferred: Tk disables validation if the validatecommand edits the widget
+            # it is validating.
+            self.after_idle(self._snap_img_px_to_cap)
+            return False
+        except Exception:
+            return True
+
+    def _snap_img_px_to_cap(self):
+        """Put the cap in the size box and flash it red, so an over-cap entry reads as
+        'clamped to the limit' rather than a swallowed keystroke."""
+        try:
+            self.cali_img_px.set(self._img_px_cap())   # trace repaints the labels
+            self.spn_img_px.icursor("end")
+            self.lbl_img_max.configure(foreground="red")
+            if self._flash_timer is not None:
+                self.after_cancel(self._flash_timer)
+            self._flash_timer = self.after(1500, self._sync_img_size)
+        except Exception:
+            pass
+
+    def _sync_img_size(self):
+        """Re-derive everything that depends on the target size or the selected screen:
+        the cap, the spinbox ceiling, and the cm readout.
+
+        This is the single place the "size <= cap" invariant is enforced, so it holds no
+        matter how the value arrived - typed, spun, restored from settings saved on a
+        bigger screen, or left behind when the screen picker moves to a smaller monitor.
+        Every one of those routes through a trace on cali_img_px / screen_var."""
         if not hasattr(self, 'lbl_img_cm'):
             return
+        self._flash_timer = None
         try:
+            mon = self._selected_screen()
             sw_cm = self._safe_float(self.scr_width_cm, 0.0)
-            sw_px = self._selected_screen().get('width', 0)
-            w_px = self._safe_int(self.cali_img_w, 0)
-            h_px = self._safe_int(self.cali_img_h, 0)
-            if sw_cm <= 0 or sw_px <= 0 or w_px <= 0 or h_px <= 0:
+            sw_px = mon.get('width', 0)
+            px = self._safe_int(self.cali_img_px, 0)
+
+            # Cap sits next to the spinbox and is always shown. It depends only on the
+            # selected screen, so update it before the cm conversion's early return.
+            cap = max_target_px(sw_px or 1920, mon.get('height', 1080))
+            self.spn_img_px.configure(to=cap)
+            self.lbl_img_max.configure(text=f"Max {cap}px", foreground="gray")
+            if px > cap:
+                # Carry on with the clamped value: Tcl does NOT re-invoke a variable trace
+                # for a write made from inside that same trace, so this call is the only
+                # one that will run and it has to finish the job.
+                px = cap
+                self.cali_img_px.set(px)
+
+            if sw_cm <= 0 or sw_px <= 0 or px <= 0:
                 self.lbl_img_cm.configure(text="= -- cm")
                 return
-            w_cm = px_to_cm(w_px, sw_cm, sw_px)
-            h_cm = px_to_cm(h_px, sw_cm, sw_px)
-            self.lbl_img_cm.configure(text=f"= {w_cm:.2f} x {h_cm:.2f} cm  (on {sw_px}px-wide screen)")
+            cm = px_to_cm(px, sw_cm, sw_px)
+            self.lbl_img_cm.configure(
+                text=f"= {cm:.2f} x {cm:.2f} cm  (on {sw_px}px-wide screen)")
         except Exception:
             self.lbl_img_cm.configure(text="= -- cm")
 
@@ -502,8 +604,7 @@ class CalibGUI(tk.Tk):
             "pts": _int(self.pts, "pts", 9),
             "camera_id": _int(self.camera_idx, "camera_id", 0),
             "cali_img_path": self.cali_img_path.get(),
-            "cali_img_w": _int(self.cali_img_w, "cali_img_w", 170),
-            "cali_img_h": _int(self.cali_img_h, "cali_img_h", 170),
+            "cali_img_px": _int(self.cali_img_px, "cali_img_px", 100),
             "screen": self.screen_var.get(),
             "scr_width_cm": _pos_num_str(self.scr_width_cm, "scr_width_cm", "53.0"),
             "out_dir": self.out_dir.get(),
@@ -526,7 +627,7 @@ class CalibGUI(tk.Tk):
 
     def _attach_autosave(self):
         for var in (self.user, self.pts, self.camera_idx, self.cali_img_path,
-                    self.cali_img_w, self.cali_img_h, self.screen_var,
+                    self.cali_img_px, self.screen_var,
                     self.scr_width_cm, self.out_dir):
             var.trace_add('write', self._schedule_save)
 
@@ -549,12 +650,13 @@ class CalibGUI(tk.Tk):
                 if cam_ok:
                     self.camera_idx.set(str(data['camera_id']))
             if 'cali_img_path' in data: self.cali_img_path.set(data['cali_img_path'])
-            if 'cali_img_w' in data:
-                try: self.cali_img_w.set(int(data['cali_img_w']))
-                except Exception: pass
-            if 'cali_img_h' in data:
-                try: self.cali_img_h.set(int(data['cali_img_h']))
-                except Exception: pass
+            # cali_img_w/h are the pre-1.1.1 two-box keys; the smaller one is what actually
+            # got rendered, so that is the single size we carry over.
+            try:
+                old = [int(data[k]) for k in ('cali_img_w', 'cali_img_h') if k in data]
+                self.cali_img_px.set(int(data.get('cali_img_px', min(old, default=100))))
+            except Exception:
+                pass
             if 'scr_width_cm' in data: self.scr_width_cm.set(str(data['scr_width_cm']))
             if 'out_dir' in data: self.out_dir.set(data['out_dir'])
             # Only restore the screen if that monitor index still exists.
@@ -571,11 +673,12 @@ class CalibGUI(tk.Tk):
 
     def _start(self):
         mon = self._selected_screen()
+        px = self._safe_int(self.cali_img_px, 100)   # already <= cap, see _sync_img_size
         self.cfg = {
             "user": self.user.get().strip(),
             "pts":  int(self.pts.get()),
             "cali_img_path": self.cali_img_path.get().strip(),
-            "cali_img_size": (self._safe_int(self.cali_img_w, 170), self._safe_int(self.cali_img_h, 170)),
+            "cali_img_size": (px, px),
             "camera_id": self._safe_int(self.camera_idx, 0),
             "screen": mon,
             "scr_width_cm": self._safe_float(self.scr_width_cm, 53.0),
@@ -586,14 +689,12 @@ class CalibGUI(tk.Tk):
 
 
 import numpy as np
-import ctypes
 
 def main():
-    # [FIX] DPI Awareness for Windows 11 scaling
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
+    # [FIX] DPI Awareness: per-monitor V2, so the pygame window's coordinates are the
+    # same physical pixels get_monitor_info_windows() reports. Must run before any
+    # window exists (Tk or SDL), hence first thing in main().
+    set_dpi_awareness()
 
     # [FIX] Switch keyboard to English so keystroke controls (q, SPACE) work regardless
     # of IME state; restore on exit. atexit guarantees restore even on crash / sys.exit.

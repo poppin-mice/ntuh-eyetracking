@@ -5,6 +5,38 @@ dashboard, and the test loops. Extracted verbatim from VA_center_opt.py.
 """
 
 
+def set_dpi_awareness():
+    """Make this process per-monitor DPI aware (V2) *before* any window is created.
+
+    The legacy SetProcessDPIAware() is only System-DPI aware: the process gets the
+    primary monitor's scale factor at login, and DWM bitmap-stretches windows shown on
+    any monitor with a different scale. get_monitor_info_windows() reports physical
+    pixels (EnumDisplaySettings), so on a mixed-DPI setup those coordinates and the
+    window's own coordinate space disagree - a fullscreen window placed on a 150%
+    laptop screen is stretched 1.5x and its right/bottom content falls off the display.
+    Per-Monitor V2 makes window coordinates physical pixels on every monitor.
+
+    Falls through PER_MONITOR_AWARE (Win8.1) and the legacy call on older Windows.
+    """
+    import ctypes
+    try:
+        # Win10 1703+. -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except Exception:
+        pass
+    try:
+        # Win8.1+. 2 = PROCESS_PER_MONITOR_DPI_AWARE; returns an HRESULT (0 = S_OK).
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) == 0:
+            return
+    except Exception:
+        pass
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 def get_monitor_info_windows():
     """
     Get detailed monitor information on Windows using ctypes.
