@@ -62,7 +62,11 @@ class Recorder:
             "trial_number", "cpd", "side",
             "start_timestamp", "end_timestamp",
             "result", "stim_x", "stim_y",
-            "eval_source"
+            "eval_source",
+            # normal | catch. Catch trials show a grating too fine to resolve, so the subject
+            # cannot find the target: the gaze between these timestamps is the negative
+            # ("non-target fixation") sample set the ML pipeline labels from.
+            "trial_type"
         ])
 
         self.frame_count = 0
@@ -101,14 +105,14 @@ class Recorder:
 
     def log_trial_event(self, trial_number, cpd, side,
                         start_timestamp, end_timestamp,
-                        result, stim_x, stim_y, eval_source=""):
+                        result, stim_x, stim_y, eval_source="", trial_type="normal"):
         """Log a trial event to trial_events.csv."""
         try:
             self.trial_csv_writer.writerow([
                 trial_number, cpd, side,
                 start_timestamp, end_timestamp,
                 result, stim_x, stim_y,
-                eval_source
+                eval_source, trial_type
             ])
             self.trial_csv_file.flush()
         except Exception as e:

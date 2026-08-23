@@ -210,6 +210,10 @@ class SettingsWindow(tk.Tk):
         # >= threshold valid data in the rolling gaze-quality window.
         self.require_valid_start_var = tk.BooleanVar(value=False)
         self.valid_start_threshold_var = tk.StringVar(value="80")
+        # Catch trials (negative-sample collection). OFF by default: clinical runs must be
+        # unaffected unless someone deliberately turns this on for data collection.
+        self.catch_enabled_var = tk.BooleanVar(value=False)
+        self.catch_trials_var = tk.StringVar(value="3")
 
         # [NEW] Paper Color Mode - gray bg, black/white grating, white border
         self.paper_color_var = tk.BooleanVar(value=False)
@@ -647,6 +651,19 @@ class SettingsWindow(tk.Tk):
         ttk.Spinbox(gate_frame, textvariable=self.valid_start_threshold_var, from_=0, to=100,
                     increment=5, width=6).pack(side="left")
         ttk.Label(gate_frame, text="(enabled trackers, in the gaze-quality window)",
+                  font=self.f_hint, foreground="gray").pack(side="left", padx=8)
+
+        # Catch trials: research-only negative-sample collection. Default OFF so the normal
+        # clinical workflow is untouched.
+        catch_frame = ttk.Frame(grp_user)
+        catch_frame.grid(row=r, column=0, columnspan=3, sticky="w", **pad); r += 1
+        ttk.Checkbutton(catch_frame, text="Negative Sample Collection Mode (catch trials)",
+                        variable=self.catch_enabled_var).pack(side="left")
+        ttk.Label(catch_frame, text="catch trials:", font=l_font).pack(side="left", padx=(12, 2))
+        ttk.Spinbox(catch_frame, textvariable=self.catch_trials_var, from_=1, to=20,
+                    width=6).pack(side="left")
+        ttk.Label(catch_frame,
+                  text="(VA only: unresolvable gratings, randomly placed; excluded from the score)",
                   font=self.f_hint, foreground="gray").pack(side="left", padx=8)
 
         # ── Section 2a: VA Stimulus (shown when VA selected) ──
@@ -3227,6 +3244,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'webcam_oval_bottom_y': self.safe_get_float(self.webcam_oval_bottom_y_var, 0.84),
             'require_valid_start': self.require_valid_start_var.get(),
             'valid_start_threshold': self.safe_get_float(self.valid_start_threshold_var, 80.0),
+            'catch_enabled': self.catch_enabled_var.get(),
+            'catch_trials': self.safe_get_int(self.catch_trials_var, 3),
 
             # [NEW] Practice mode and Paper color
             'practice_mode': practice_mode,
@@ -3309,6 +3328,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'webcam_oval_bottom_y': self.webcam_oval_bottom_y_var.get(),
             'require_valid_start': self.require_valid_start_var.get(),
             'valid_start_threshold': self.valid_start_threshold_var.get(),
+            'catch_enabled': self.catch_enabled_var.get(),
+            'catch_trials': self.catch_trials_var.get(),
 
             # Stimulus settings
             'gaze_color': self.gaze_color_var.get(),
@@ -3397,6 +3418,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.webcam_oval_bottom_y_var,
             self.require_valid_start_var,
             self.valid_start_threshold_var,
+            self.catch_enabled_var, self.catch_trials_var,
             self.rec_resolution_var, self.rec_webcam_var, self.rec_sol_data_var,
             self.rec_sol_raw_video_var,
             self.camera_idx_var, self.show_gaze_marker_var, self.paper_color_var,
@@ -3483,6 +3505,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'webcam_oval_bottom_y' in data: self.webcam_oval_bottom_y_var.set(str(data['webcam_oval_bottom_y']))
             if 'require_valid_start' in data: self.require_valid_start_var.set(bool(data['require_valid_start']))
             if 'valid_start_threshold' in data: self.valid_start_threshold_var.set(str(data['valid_start_threshold']))
+            if 'catch_enabled' in data: self.catch_enabled_var.set(bool(data['catch_enabled']))
+            if 'catch_trials' in data: self.catch_trials_var.set(str(data['catch_trials']))
 
             if 'gaze_color' in data: self.gaze_color_var.set(data['gaze_color'])
             if 'gaze_radius' in data: self.gaze_radius_var.set(str(data['gaze_radius']))

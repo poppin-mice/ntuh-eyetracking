@@ -24,7 +24,8 @@ from ntuh.common.optics import to_rgb_tuple, mean_color_rgb
 from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import resolve_tester_rect
 from ntuh.vavf.stimuli import (
-    DO_BLUR, Staircase, generate_grating_oriented_patch, get_va_result_cpd, prepare_patch_grid,
+    CATCH_CYCLES_PER_PX, DO_BLUR, Staircase, catch_trial_cpd,
+    generate_grating_oriented_patch, get_va_result_cpd, prepare_patch_grid,
 )
 from ntuh.tracking.sol_quality import (
     DashboardState, SolQualityTracker, build_summary_lines, build_quality_summary,
@@ -407,6 +408,29 @@ def run_test(cfg, sol_context=None):
     # Staircase
     stair = Staircase(start=2.0, step=2.0, minv=2.0, maxv=20.0)
 
+    # --- Catch trials (negative-sample collection; OFF by default) ---
+    # A catch trial renders the target at a frequency nobody can resolve, so the subject has
+    # no target to find and the gaze recorded in that window is a negative sample. It looks
+    # and scores exactly like a normal trial to the subject, but never touches the staircase
+    # or the VA score.
+    catch_cpd = catch_trial_cpd(W, cfg.get('screen_width_deg', 0.0))
+    catch_remaining = int(cfg.get('catch_trials', 0)) if cfg.get('catch_enabled') else 0
+    if catch_remaining and catch_cpd <= stair.maxv:
+        # Nothing above the staircase ceiling is renderable here, so a "catch" would be an
+        # ordinary hard trial. Refuse rather than silently collect mislabelled samples.
+        print(f"[Catch] DISABLED: display can only render {catch_cpd:.1f} cpd without aliasing, "
+              f"which is not above the {stair.maxv:.0f} cpd staircase ceiling. "
+              f"Move the subject closer or use a higher-resolution screen.")
+        catch_remaining = 0
+    # Random positions among the early trials; the staircase length is not known in advance,
+    # so whatever is left over is forced in before the test ends (see the loop below).
+    CATCH_WINDOW = 12
+    catch_at = set(random.sample(range(2, 2 + CATCH_WINDOW),
+                                 min(catch_remaining, CATCH_WINDOW))) if catch_remaining else set()
+    if catch_remaining:
+        print(f"[Catch] {catch_remaining} catch trial(s) at {catch_cpd:.1f} cpd "
+              f"({CATCH_CYCLES_PER_PX} cycles/px), scheduled at trials {sorted(catch_at)}")
+
     # [FIX] Calculate safe stimulus positions to avoid ArUco markers
     # Uses actual marker rectangles to compute minimum distance from stimulus circle
     MARKER_GAP_PX = 20  # Required gap between stimulus edge and nearest marker
@@ -458,7 +482,6 @@ def run_test(cfg, sol_context=None):
         # No Sol markers, use original positions
         centers = {'left': (W // 4, H // 2), 'right': (3 * W // 4, H // 2)}
     clock   = pygame.time.Clock()
-    results = []
 
     # Background Surface
     def build_bg_surface(rad):
@@ -800,13 +823,23 @@ def run_test(cfg, sol_context=None):
     status_font = pygame.font.SysFont(None, 30)
     feedback_font = pygame.font.SysFont(None, 100)
     trial_number = 0
-    while not stair.done():
+    while True:
+      # The staircase decides when the test ends, EXCEPT that any catch trials it finished
+      # before we could schedule are forced in first - they are the point of the session.
+      if stair.done():
+          if catch_remaining <= 0:
+              break
+          is_catch = True
+          print(f"[Catch] staircase finished with {catch_remaining} catch trial(s) left - "
+                f"forcing them in before completion")
+      else:
+          is_catch = catch_remaining > 0 and (trial_number + 1) in catch_at
       try:  # [FIX] Wrap entire trial in try-except for crash debugging
         trial_number += 1
-        print(f"[Trial] Starting trial {trial_number}")
+        print(f"[Trial] Starting trial {trial_number}{' (CATCH)' if is_catch else ''}")
 
         side  = random.choice(['left', 'right'])
-        cpd   = float(stair.freq)
+        cpd   = catch_cpd if is_catch else float(stair.freq)
         cs    = cpd * cfg['screen_width_deg']
         rad   = int(cfg['radius'])
         diam  = rad * 2
@@ -1201,7 +1234,8 @@ def run_test(cfg, sol_context=None):
             result="PASS" if passed else "FAIL",
             stim_x=stim_cx,
             stim_y=stim_cy,
-            eval_source=cfg.get('eval_source', 'Webcam')
+            eval_source=cfg.get('eval_source', 'Webcam'),
+            trial_type="catch" if is_catch else "normal"
         )
 
         # Pass/Fail Feedback
@@ -1252,8 +1286,15 @@ def run_test(cfg, sol_context=None):
             clock.tick(30)
 
         # Feedback
-        stair.update(passed)
-        results.append({'cpd': cpd, 'res': "PASS" if passed else "FAIL"})
+        # A catch trial is unresolvable by construction, so its PASS/FAIL says nothing about
+        # acuity: it must not move the staircase or reach the score. It is already in
+        # trial_events.csv, which is what the ML pipeline reads.
+        if is_catch:
+            catch_remaining -= 1
+            print(f"[Catch] trial {trial_number} logged ({'PASS' if passed else 'FAIL'}); "
+                  f"{catch_remaining} left. Staircase and score untouched.")
+        else:
+            stair.update(passed)
         
         # Interval
         # Interval
@@ -1282,8 +1323,12 @@ def run_test(cfg, sol_context=None):
             pass
 
         # Try to continue with next trial
-        stair.update(False)  # Mark as failed
-        results.append({'cpd': float(stair.freq), 'res': "ERROR"})
+        if is_catch:
+            # Consume it even on error: a forced catch trial runs only because the staircase
+            # is already done, so leaving the counter up would loop here forever.
+            catch_remaining -= 1
+        else:
+            stair.update(False)  # Mark as failed
         print(f"[TRIAL ERROR] Attempting to continue to next trial...")
 
     # Stop background ArUco detection (per-test resource), but keep Sol connection alive
@@ -1326,17 +1371,9 @@ def run_test(cfg, sol_context=None):
         print("[Data Quality] " + ", ".join(
             f"{lbl} {('%.0f%%' % pct) if pct is not None else 'N/A'}" for lbl, pct, _k in summary_lines))
 
-    # Final Result & CSV
+    # Final Result
     final_cpd = float(stair.freq)
     va_score  = get_va_result_cpd(final_cpd)
-    
-    # Save Summary CSV
-    try:
-        import pandas as pd
-        pd.DataFrame(results).to_csv(f"VA_output/VA_{cfg['user_name']}_opt.csv", index=False, encoding='utf-8-sig')
-        print(f"Summary saved to VA_output/VA_{cfg['user_name']}_opt.csv")
-    except Exception as e:
-        print(f"Failed to save summary CSV: {e}")
 
     # Result Screen
     result_font = pygame.font.SysFont(None, 80)

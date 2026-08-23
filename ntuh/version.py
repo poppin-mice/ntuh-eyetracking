@@ -151,12 +151,28 @@ calibration
            clinic screens (more so now that the app is per-monitor DPI aware and Windows no
            longer stretches the window). It retunes Tk's named fonts, so the whole window
            follows at once.
+    1.4.0  Negative Sample Collection Mode (VA only, OFF by default): inserts N "catch"
+           trials at random positions among the normal trials. A catch trial renders the
+           grating too fine to resolve, so the subject has no findable target and the gaze in
+           that window is a negative ("non-target fixation") sample for the ML pipeline. The
+           trial looks and scores like a normal one to the subject but never reaches the
+           staircase or the VA score; trial_events.csv gains a trial_type column
+           (normal/catch) that the pipeline labels from. The catch frequency is derived, not
+           configured - the highest the display renders without aliasing (0.4 cycles/px,
+           under the 0.5 Nyquist limit) - and the mode refuses to run when that is not above
+           the 20 cpd staircase ceiling (a 1080p screen at 50 cm manages only 13.8 cpd) so it
+           cannot silently collect mislabelled samples. Catch trials still owed when the
+           staircase ends early are forced in before completion, and one that raises consumes
+           its slot rather than looping forever.
+           Removed the per-test VA_<user>_opt.csv summary: it duplicated trial_events.csv in a
+           less useful form (no timestamps, no trial_type) and was the only reader of the
+           in-memory `results` list, which is gone with it.
 replayer
     1.0.0  Baseline: versioning introduced.
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.3.0",
+    "VA_center_opt": "1.4.0",
     "calibration": "1.2.0",
     "replayer": "1.0.0",
 }

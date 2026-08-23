@@ -39,6 +39,26 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Webcam |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
 
+**Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
+VA only. Inserts *N* **catch trials** at random positions among the normal trials. A catch trial
+renders the target grating far too fine for anyone to resolve, so the target circle and the
+uniform baseline circle look identical and the subject has no target to find: the gaze recorded
+between that trial's timestamps is a *negative* ("non-target fixation") sample. It looks, feels
+and scores exactly like a normal trial to the subject, but **never touches the staircase or the
+VA score** — it only appears in `trial_events.csv` with `trial_type=catch`, which is what the ML
+pipeline uses to label `webcam_gaze_data.csv` and the video frames. If the staircase finishes
+before all *N* have been shown, the remainder are forced in immediately before the test ends.
+
+The catch frequency is derived, not configured: it is the highest the display can render without
+aliasing (0.4 cycles/px, safely under the 0.5 Nyquist limit), i.e.
+`0.4 x screen_width_px / screen_FOV_deg`. Push past Nyquist and the grating folds back into a
+coarse moire that is *more* visible, which would defeat the purpose.
+
+> **Requires a fine enough display.** If that derived frequency is not above the 20 cpd staircase
+> ceiling, a "catch" trial would just be an ordinary hard trial, so the mode **refuses to run** and
+> says so on the console. At a 50 cm viewing distance that rules out 1080p (13.8 cpd); 3200x2000
+> gives 23.0 cpd and 4K gives 25.6 cpd. Increasing the viewing distance also raises it.
+
 **Font** (bottom bar, next to the Start buttons): text size of this settings window. It
 applies as you change it and is remembered between runs. The default is picked from the
 screen height; raise it if the settings text is small on a high-resolution clinic monitor.
@@ -160,7 +180,7 @@ VA_output/
     sol_quality_metrics.json    - Per-source validity % (whole test + trials)
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
-    trial_events.csv            - Per-trial start/end, CPD, side, result
+    trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
     review_labels.json          - Created later by replayer (review labels)
 ```
 
@@ -169,12 +189,8 @@ VA_output/
 
 ### Results CSV
 
-Trial-by-trial VA results are saved as a separate CSV at the top level:
-
-```
-VA_output/
-  VA_{username}_opt.csv         - CPD and pass/fail per trial
-```
+Trial-by-trial VA results live in the session's `trial_events.csv` (CPD, side, pass/fail,
+timestamps and `trial_type`).
 
 Gaze data is recorded continuously during all phases (stimulus, feedback, inter-trial).
 
