@@ -1,0 +1,120 @@
+==============================================================================
+ NTUH Eye-Tracking Suite - Release Notes
+ Build date: 2026-08-23
+==============================================================================
+
+This release builds on the 2026-08-10 build (same three programs:
+VA_center_opt.exe, calibration.exe, replayer.exe). How to run, where data is
+saved, and the per-participant workflow are UNCHANGED - see the earlier release
+notes in this folder for those. Below are only the changes since 2026-08-10.
+
+------------------------------------------------------------------------------
+ VERSION NUMBERS
+------------------------------------------------------------------------------
+Each program shows its version in the window title bar:
+      VA_center_opt   v1.4.0   (changed this release)
+      calibration     v1.2.0   (changed this release)
+      replayer        v1.1.0   (changed this release)
+Please include the version shown in the title when reporting an issue.
+
+------------------------------------------------------------------------------
+ NEGATIVE SAMPLE COLLECTION MODE  (VA_center_opt)  -- new, v1.4.0
+------------------------------------------------------------------------------
+For the ML data-collection effort. A new option on the General tab (under the
+quality gate): "Collect negative samples: N catch trials". OFF by default,
+VA tests only:
+
+  - When enabled, N "catch" trials are inserted at random positions among the
+    normal trials. A catch trial draws the target grating far too fine for
+    anyone to resolve, so the target circle and the blank circle look
+    identical - the subject has no target to find, and the gaze recorded
+    during that trial is a NEGATIVE ("not looking at a target") training
+    sample.
+  - To the subject a catch trial looks, feels and scores exactly like a
+    normal trial. It never affects the staircase or the VA score.
+  - trial_events.csv gains a "trial_type" column (normal/catch); the ML
+    pipeline uses it to label the gaze data and video frames. Do NOT read a
+    catch trial's pass/fail as meaningful - a chance "PASS" is expected
+    sometimes.
+  - The mode needs a fine enough display: the catch grating must be finer
+    than the 20 cpd staircase ceiling WITHOUT exceeding what the screen can
+    physically render. If the screen cannot manage that (e.g. 1080p at 50 cm),
+    the mode refuses to run and says so on the console. 3200x2000 and 4K
+    screens are fine; increasing the viewing distance also helps.
+
+Also: the separate VA_<user>_opt.csv summary file is no longer written. It
+duplicated trial_events.csv with less information (no timestamps, no
+trial_type) - use trial_events.csv.
+
+------------------------------------------------------------------------------
+ MIXED-DPI / SCALING FIX  (VA_center_opt v1.2.2, calibration v1.1.1)
+------------------------------------------------------------------------------
+On a multi-monitor setup where the monitors use different Windows scaling
+percentages (e.g. laptop 150% + external 100%), the fullscreen stimulus /
+calibration window could be stretched beyond the selected screen - targets
+near the right/bottom edge landed OUTSIDE the visible area ("the calibration
+image drops out of the screen"), or the whole picture was silently mis-sized.
+Both programs are now per-monitor DPI aware, so the window always matches the
+selected screen's real pixels regardless of scaling settings.
+
+Related fix in both programs: a Subject/Examiner/calibration screen restored
+from saved settings is now checked against the monitors actually connected.
+Previously, after unplugging or reconfiguring a monitor, the picker could show
+a screen that no longer existed while the test silently ran on whatever
+monitor now sat at that position.
+
+------------------------------------------------------------------------------
+ CALIBRATION TARGET NO LONGER CLIPPED  (calibration)  -- fix, v1.1.1
+------------------------------------------------------------------------------
+The corner calibration targets sit close to the screen edge, and the old
+default 170x170 image was cut off there on every screen below 4K (about 29%
+of the image lost at 1366x768). Now:
+
+  - There is ONE "Image size" box (the target is always drawn square-fit, so
+    the second number never did anything). Default is 100 px.
+  - The size is capped to what fits the SELECTED screen; the cap is shown
+    next to the box and cannot be exceeded (typing a larger number snaps back
+    to it). Picking a calibration screen sets the size to that screen's cap.
+  - The target is never shifted inwards to "make it fit" - its centre must
+    stay exactly on the calibration point, so oversize is capped instead.
+
+------------------------------------------------------------------------------
+ SCREEN NAMES: SUBJECT / EXAMINER  (VA_center_opt)  -- v1.3.0
+------------------------------------------------------------------------------
+On General -> Screen & Viewing, "Test Screen" is now called "Subject Screen"
+and "Tester Screen" is now called "Examiner Screen" (examiner listed first).
+Labels only - saved settings files keep working unchanged.
+
+  - The Sol tab's separate "Preview Gaze Mapping -> Screen" picker is gone:
+    the gaze preview and the Accuracy Test now run on the Subject Screen,
+    the screen the subject is actually tested on. (It was a second copy of
+    the same setting that could silently point at a different monitor.)
+  - With a single display connected, operator-only windows no longer open on
+    top of the stimulus - no examiner view opens at all, and the Examiner
+    Screen picker is disabled until a second display is attached.
+
+------------------------------------------------------------------------------
+ ADJUSTABLE TEXT SIZE IN ALL THREE PROGRAMS  -- new
+------------------------------------------------------------------------------
+The settings/UI text was small on high-resolution clinic screens - more so now
+that the windows are per-monitor DPI aware and Windows no longer stretches
+them. Each program now has a "Font" size control, applied live as you change
+it and remembered between runs:
+
+  - VA_center_opt (v1.3.0): on the settings window's bottom button bar.
+  - calibration  (v1.2.0): "GUI font size" on the settings window.
+  - replayer     (v1.1.0): bottom-left of the status bar. The left config
+    panel scrolls when the font makes it taller than the window. Gaze-point
+    labels on the video keep their own size - they scale with the video, not
+    with the UI text.
+
+------------------------------------------------------------------------------
+ NOTES
+------------------------------------------------------------------------------
+- The catch-trial mode is for data-collection sessions; leave it OFF for
+  ordinary clinical VA screening.
+- Keep the Chronus phone app up to date (this build's Sol SDK needs Chronus
+  2.2.1 or newer, unchanged from the previous build).
+- Detailed per-program documentation: VA_center_opt.md, calibration.md,
+  replayer.md (in this folder).
+==============================================================================

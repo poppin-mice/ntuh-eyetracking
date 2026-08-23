@@ -25,7 +25,7 @@ This package contains three programs for eye-tracking visual acuity experiments.
 3. Collect results from the `VA_output/` folder (next to `VA_center_opt.exe`)
 4. (Optional) Use `replayer.exe` to review **and label** recordings
 
-> **Latest changes:** see [20260607_release_note.txt](20260607_release_note.txt) for what is
+> **Latest changes:** see [20260823_release_note.txt](20260823_release_note.txt) for what is
 > new in the current build and how to use it.
 
 ## Data location
