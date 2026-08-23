@@ -564,18 +564,27 @@ class SettingsWindow(tk.Tk):
             return True
         except ValueError: return False
 
+    def test_screen_monitor(self):
+        """The monitor dict for the Subject Screen picked on the General tab.
+
+        The Sol gaze preview uses this too - it draws ArUco markers on the screen the
+        subject will actually be tested on, so a separate picker for it was one more thing
+        to keep in sync (and to get wrong)."""
+        monitors = getattr(self, 'monitor_info_list', None) or get_monitor_info_windows()
+        if not monitors:
+            return {'index': 0, 'width': 1920, 'height': 1080, 'x': 0, 'y': 0}
+        try:
+            idx = int(str(self.sol_offset_user_screen_var.get()).split(':')[0].strip())
+        except Exception:
+            idx = 0
+        if not 0 <= idx < len(monitors):
+            idx = 0
+        return monitors[idx]
+
     def _get_test_screen_width_px(self):
         """Pixel width of the currently selected test (user) screen, for px<->cm conversion."""
         try:
-            monitors = getattr(self, 'preview_monitor_info', None) or get_monitor_info_windows()
-            idx = 0
-            try:
-                idx = int(str(self.sol_offset_user_screen_var.get()).split(':')[0].strip())
-            except Exception:
-                idx = 0
-            if idx < 0 or idx >= len(monitors):
-                idx = 0
-            return monitors[idx].get('width', 0)
+            return self.test_screen_monitor().get('width', 0)
         except Exception:
             return 0
 
@@ -751,16 +760,28 @@ class SettingsWindow(tk.Tk):
         self.monitor_info_list = get_monitor_info_windows()
         screen_opts = screen_options(self.monitor_info_list)
 
-        ttk.Label(grp_screen, text="Test Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        # Operator-only monitor. When it differs from the Subject Screen, the examiner views
+        # open on it. No .current() on either: the vars default to "0"/"1", which the
+        # ":"-split parsers already read correctly, and forcing a selection would clobber
+        # values restored from settings. The saved keys keep their original
+        # sol_offset_user_screen / sol_offset_tester_screen names so existing settings load.
+        # Disabled with a single display: there is no second monitor to put examiner views on,
+        # and every examiner view is suppressed anyway (resolve_tester_rect). The variable is
+        # left untouched so the operator's choice survives until a second display is attached.
+        single_display = len(self.monitor_info_list) < 2
+        ttk.Label(grp_screen, text="Examiner Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        self.cmb_tester_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_tester_screen_var,
+                                              values=screen_opts, width=30,
+                                              state="disabled" if single_display else "readonly")
+        self.cmb_tester_screen.grid(row=r, column=1, sticky="w", **pad)
+        if single_display:
+            ttk.Label(grp_screen, text="(single display - no examiner views)",
+                      font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", **pad)
+        r += 1
+
+        ttk.Label(grp_screen, text="Subject Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         self.cmb_test_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_user_screen_var, values=screen_opts, state="readonly", width=30)
         self.cmb_test_screen.grid(row=r, column=1, sticky="w", **pad); r += 1
-
-        # Operator-only monitor. When it differs from Test Screen, the tester views open on it.
-        # No .current() here: the vars default to "0"/"1", which the ":"-split parsers already
-        # read correctly, and forcing a selection would clobber values restored from settings.
-        ttk.Label(grp_screen, text="Tester Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
-        self.cmb_tester_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_tester_screen_var, values=screen_opts, state="readonly", width=30)
-        self.cmb_tester_screen.grid(row=r, column=1, sticky="w", **pad); r += 1
 
         ttk.Label(grp_screen, text="Screen Width (cm):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         ttk.Spinbox(grp_screen, textvariable=self.scr_width_cm_var, from_=10, to=300, increment=0.5, font=e_font, width=10).grid(row=r, column=1, sticky="w", **pad); r += 1
@@ -874,17 +895,8 @@ class SettingsWindow(tk.Tk):
         grp_preview = ttk.LabelFrame(parent, text="Preview Gaze Mapping"); grp_preview.pack(fill="x", padx=10, pady=5)
         ttk.Label(grp_preview, text="Test Sol gaze projection on screen with ArUco markers.", font=self.f_body).grid(row=0, column=0, columnspan=4, sticky="w", **pad)
 
-        # Screen selection for preview
-        ttk.Label(grp_preview, text="Screen:", font=l_font).grid(row=1, column=0, sticky="w", **pad)
-        self.sol_preview_screen_var = tk.StringVar(value="0")
-        # Get monitor info for dropdown
-        preview_monitors = get_monitor_info_windows()
-        preview_opts = screen_options(preview_monitors)
-        self.cmb_preview_screen = ttk.Combobox(grp_preview, textvariable=self.sol_preview_screen_var, values=preview_opts, state="readonly", width=35)
-        self.cmb_preview_screen.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        self.cmb_preview_screen.current(0)
-        self.preview_monitor_info = preview_monitors  # Store for use in preview
-
+        # No screen picker here: the preview runs on the General tab's Subject Screen, the
+        # one the subject is actually tested on (test_screen_monitor).
         self.btn_preview_sol_gaze = ttk.Button(grp_preview, text="Preview Gaze", command=self.preview_sol_gaze, state="disabled")
         self.btn_preview_sol_gaze.grid(row=2, column=0, **pad)
 
@@ -1249,20 +1261,22 @@ Controls: SPACE = Record point, Q = Cancel"""
             screen_w, screen_h, screen_width_m
         )
 
-        # Get tester screen info for monitoring window
-        tester_screen_str = self.sol_offset_tester_screen_var.get()
+        # Examiner monitoring window - only when there IS a separate examiner screen.
+        # It used to clamp an unusable index to monitor 0, which dropped the operator
+        # window on top of the subject's calibration screen.
         try:
-            tester_screen_idx = int(tester_screen_str.split(':')[0].strip())
-        except:
+            tester_screen_idx = int(self.sol_offset_tester_screen_var.get().split(':')[0].strip())
+        except Exception:
             tester_screen_idx = 1  # Default to second screen
 
         monitors = getattr(self, 'monitor_info_list', None) or get_monitor_info_windows()
-        if tester_screen_idx >= len(monitors):
-            tester_screen_idx = 0
-
-        tester_screen = monitors[tester_screen_idx]
-        tester_x = tester_screen.get('x', 0)
-        tester_y = tester_screen.get('y', 0)
+        show_tester = (len(monitors) > 1 and 0 <= tester_screen_idx < len(monitors)
+                       and tester_screen_idx != self.test_screen_monitor().get('index', 0))
+        if show_tester:
+            tester_x = monitors[tester_screen_idx].get('x', 0)
+            tester_y = monitors[tester_screen_idx].get('y', 0)
+        else:
+            print("[2D Cal] No separate Examiner Screen - monitoring window suppressed.")
 
         # Setup user screen window - use NOFRAME instead of FULLSCREEN for multi-monitor support
         os_module.environ['SDL_VIDEO_WINDOW_POS'] = f"{screen_x},{screen_y}"
@@ -1285,11 +1299,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         except Exception as e:
             print(f"[2D Cal] Could not bring window to front: {e}")
 
-        # Setup tester monitoring window (OpenCV)
-        tester_win_name = "Tester View - Sol 2D Calibration"
-        cv2.namedWindow(tester_win_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(tester_win_name, 800, 600)
-        cv2.moveWindow(tester_win_name, tester_x + 50, tester_y + 50)
+        # Setup examiner monitoring window (OpenCV)
+        tester_win_name = "Examiner View - Sol 2D Calibration"
+        if show_tester:
+            cv2.namedWindow(tester_win_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(tester_win_name, 800, 600)
+            cv2.moveWindow(tester_win_name, tester_x + 50, tester_y + 50)
 
         clock = pygame.time.Clock()
         font = pygame.font.SysFont(None, 36)
@@ -1312,6 +1327,13 @@ Controls: SPACE = Record point, Q = Cancel"""
         # Minimum frames to wait for stable homography
         MIN_FRAMES_FOR_HOMOGRAPHY = 100
         frame_count = 0
+        total_scene_frames = 0   # scene frames actually pulled from the queue (diagnostic)
+        # The Sol scene stream can die mid-calibration (the SDK's H.264 decode is crash-prone).
+        # ArUco then keeps re-detecting the LAST frame, so markers/"CALIBRATED" still look
+        # healthy while nothing can ever change - the calibration just hangs. Same failure the
+        # accuracy test got a STALE banner for in v1.2.1; this is the calibration's version.
+        last_scene_t = None
+        SCENE_STALE_S = 2.0
 
         # Load target image for pygame display
         target_surface = None
@@ -1435,9 +1457,11 @@ Controls: SPACE = Record point, Q = Cancel"""
 
                 # Get latest scene frame and submit for ArUco detection
                 # Limit to 10 items per frame to prevent long delays when queue builds up
+                scene_frames_this_loop = 0
                 for _ in range(10):
                     try:
                         frame = self.sol_scene_queue.get_nowait()
+                        scene_frames_this_loop += 1
                         if hasattr(frame, 'img') and frame.img is not None:
                             latest_frame = frame.img
                         elif hasattr(frame, 'get_buffer'):
@@ -1459,9 +1483,28 @@ Controls: SPACE = Record point, Q = Cancel"""
 
                 # Count frames
                 frame_count += 1
+                total_scene_frames += scene_frames_this_loop
+                if scene_frames_this_loop:
+                    last_scene_t = time.time()
+                scene_age_s = None if last_scene_t is None else time.time() - last_scene_t
+                scene_stale = scene_age_s is None or scene_age_s > SCENE_STALE_S
 
                 # Check homography status and quality (strict mode for calibration)
                 homography_ready = sol_projector.is_homography_valid(strict=True)
+
+                # Periodic diagnostic, same as the 3D calibrator has. "Waiting for ArUco
+                # markers" has three very different causes - no scene frames reaching us, frames
+                # but no markers detected, or markers but too few for a strict homography - and
+                # the status bar cannot tell them apart.
+                try:
+                    n_ids = len(sol_projector.get_detected_marker_ids() or [])
+                except Exception:
+                    n_ids = -1
+                if frame_count % 60 == 1:
+                    print(f"[2D Cal DEBUG] loop={frame_count} scene_frames={total_scene_frames} "
+                          f"scene_age={'never' if scene_age_s is None else f'{scene_age_s:.1f}s'} "
+                          f"markers_detected={n_ids} homography_strict={homography_ready} "
+                          f"homography_any={sol_projector.is_homography_valid()}")
                 homography_good = False
                 if homography_ready:
                     H_screen_to_image = sol_projector.get_screen_to_image_homography()
@@ -1488,8 +1531,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                     else:
                         target_pos_camera = None
 
-                # === TESTER MONITORING WINDOW ===
-                if latest_frame is not None:
+                # === EXAMINER MONITORING WINDOW ===
+                if show_tester and latest_frame is not None:
                     tester_view = latest_frame.copy()
 
                     # Draw current gaze point (blue circle)
@@ -1547,7 +1590,12 @@ Controls: SPACE = Record point, Q = Cancel"""
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
 
                     cv2.imshow(tester_win_name, tester_view)
-                    cv2.waitKey(1)
+
+                # Pump OpenCV's event loop every frame, examiner window or not. This process
+                # keeps other HighGUI windows alive (webcam preview), and this waitKey used to
+                # run unconditionally - it was inside the examiner block only by accident of
+                # where the imshow sat.
+                cv2.waitKey(1)
 
                 # === USER SCREEN (Pygame) ===
                 win.fill((50, 50, 50))
@@ -1593,7 +1641,14 @@ Controls: SPACE = Record point, Q = Cancel"""
                 point_num = calibrator.current_point_index + 1
                 total_points = len(calibrator.positions)
 
-                if collecting_samples:
+                if scene_stale:
+                    # Checked FIRST: with a dead stream the markers/homography readouts below
+                    # describe a frozen frame and would send the operator chasing marker sizes.
+                    status_color = (255, 80, 80)
+                    detect_text = ("SCENE VIDEO STALLED"
+                                   + (" - no frames yet" if scene_age_s is None else f" {scene_age_s:.0f}s")
+                                   + " - reconnect Sol / restart Chronus, then calibrate again")
+                elif collecting_samples:
                     status_color = (255, 255, 100)  # Yellow
                     detect_text = f"COLLECTING... {len(collected_gaze_samples)}/{SAMPLES_TO_COLLECT} - Keep looking at target!"
                 elif homography_good:
@@ -1604,7 +1659,13 @@ Controls: SPACE = Record point, Q = Cancel"""
                     detect_text = f"Stabilizing homography... ({frame_count}/{MIN_FRAMES_FOR_HOMOGRAPHY})"
                 else:
                     status_color = (255, 100, 100)
-                    detect_text = "Waiting for ArUco markers..."
+                    # Show the count, not just "waiting": a homography needs 4 markers
+                    # (projector.py), and the usual reason it never gets there is that the
+                    # markers are too small for the camera to resolve on a dense panel -
+                    # which the operator can only fix by raising Pattern Size (px).
+                    detect_text = (f"Waiting for ArUco markers... {n_ids}/4 detected"
+                                   + ("  - markers too small? raise Sol tab > Pattern Size (px)"
+                                      if 0 < n_ids < 4 else ""))
 
                 pygame.draw.rect(win, (30, 30, 30), (0, screen_h - 50, screen_w, 50))
 
@@ -1659,7 +1720,10 @@ Controls: SPACE = Record point, Q = Cancel"""
             except Exception as e:
                 print(f"[2D Cal] Error stopping ArUco: {e}")
             try:
-                cv2.destroyWindow(tester_win_name)
+                # Only if it was created - destroying a window that never existed raises, and
+                # that aborted the block before destroyAllWindows() could run.
+                if show_tester:
+                    cv2.destroyWindow(tester_win_name)
                 cv2.destroyAllWindows()
             except Exception as e:
                 print(f"[2D Cal] Error destroying windows: {e}")
@@ -1845,21 +1909,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         selected_dict_id = aruco_dict_map.get(aruco_dict_key, cv2.aruco.DICT_4X4_250)
         adict = cv2.aruco.getPredefinedDictionary(selected_dict_id)
 
-        # Get screen info from selection
-        monitors = getattr(self, 'preview_monitor_info', None) or get_monitor_info_windows()
-        if not monitors:
-            monitors = [{'index': 0, 'width': 1920, 'height': 1080, 'x': 0, 'y': 0}]
-
-        # Parse selected screen index from dropdown (format: "0: Model Name (1920x1080)")
-        try:
-            screen_idx = int(self.sol_preview_screen_var.get().split(':')[0].strip())
-        except:
-            screen_idx = 0
-        screen_idx = min(screen_idx, len(monitors) - 1)
-        screen = monitors[screen_idx]
+        # The preview runs on the Subject Screen (General tab), not a picker of its own.
+        screen = self.test_screen_monitor()
         screen_w, screen_h = screen['width'], screen['height']
         screen_x, screen_y = screen.get('x', 0), screen.get('y', 0)
-        print(f"[Sol Preview] Using screen {screen_idx}: {screen_w}x{screen_h} at ({screen_x}, {screen_y})")
+        print(f"[Sol Preview] Using test screen {screen.get('index', 0)}: "
+              f"{screen_w}x{screen_h} at ({screen_x}, {screen_y})")
 
         # Create ArUco markers
         sol_cfg_for_assets = {
@@ -2435,30 +2490,24 @@ Controls: SPACE = Record point, Q = Cancel"""
         selected_dict_id = aruco_dict_map.get(self.sol_aruco_dict_var.get(), cv2.aruco.DICT_4X4_250)
         adict = cv2.aruco.getPredefinedDictionary(selected_dict_id)
 
-        monitors = getattr(self, 'preview_monitor_info', None) or get_monitor_info_windows()
-        if not monitors:
-            monitors = [{'index': 0, 'width': 1920, 'height': 1080, 'x': 0, 'y': 0}]
-        try:
-            screen_idx = int(self.sol_preview_screen_var.get().split(':')[0].strip())
-        except Exception:
-            screen_idx = 0
-        screen_idx = min(screen_idx, len(monitors) - 1)
-        screen = monitors[screen_idx]
+        screen = self.test_screen_monitor()
         screen_w, screen_h = screen['width'], screen['height']
         screen_x, screen_y = screen.get('x', 0), screen.get('y', 0)
 
-        # Tester (operator) monitor: a monitoring window that mirrors the user screen with the live
-        # gaze dot, so the operator can tell whether the subject is fixating the target BEFORE
-        # recording. Deliberately kept OFF the subject's screen so they cannot chase the dot (which
-        # would bias the accuracy measurement). Reuses the calib's tester-screen selector.
+        # Examiner (operator) monitor: a monitoring window that mirrors the subject screen with
+        # the live gaze dot, so the operator can tell whether the subject is fixating the target
+        # BEFORE recording. Deliberately kept OFF the subject's screen so they cannot chase the
+        # dot (which would bias the accuracy measurement) - hence no fallback to monitor 0.
+        monitors = getattr(self, 'monitor_info_list', None) or get_monitor_info_windows()
         try:
             tester_idx = int(self.sol_offset_tester_screen_var.get().split(':')[0].strip())
         except Exception:
             tester_idx = 1
-        if tester_idx >= len(monitors):
-            tester_idx = 0
-        dual_screen = (tester_idx != screen_idx) and len(monitors) > 1
+        dual_screen = (len(monitors) > 1 and 0 <= tester_idx < len(monitors)
+                       and tester_idx != screen.get('index', 0))
         tester_mon = monitors[tester_idx] if dual_screen else None
+        if not dual_screen:
+            print("[Accuracy Test] No separate Examiner Screen - examiner view suppressed.")
 
         sol_cfg_for_assets = {
             'marker_k': self.safe_get_int(self.sol_marker_k_var, 6),
@@ -2547,7 +2596,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             print(f"[Accuracy] could not bring window to front: {_e}")
 
         # Operator monitoring window on the tester screen (OpenCV, like the 2D calib tester view).
-        tester_win_name = "Tester View - Sol Accuracy Test"
+        tester_win_name = "Examiner View - Sol Accuracy Test"
         latest_scene = [None]   # (frame, step) from the worker; held so the view never blinks
         # Freshness of the worker's scene camera, as (age_reported_by_child, when_we_heard_it).
         # The child republishes the last homography at 15 Hz even when the scene stream is dead,
@@ -3161,7 +3210,10 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_gaze_smooth': self.safe_get_float(self.sol_gaze_smooth_var, 0.15),
             'sol_gaze_method': self.sol_gaze_method_var.get(),  # "3D" or "2D"
             'sol_quality_window': self.safe_get_float(self.sol_quality_window_var, 3.0),
+            # Both screens: resolve_tester_rect compares them to decide whether any
+            # examiner view may open at all.
             'sol_offset_tester_screen': self.sol_offset_tester_screen_var.get(),
+            'sol_offset_user_screen': self.sol_offset_user_screen_var.get(),
 
             # Recording
             'rec_resolution': self.rec_resolution_var.get(),
@@ -3251,7 +3303,6 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_offset_mode': self.sol_offset_mode_var.get(),
             'sol_offset_user_screen': self.sol_offset_user_screen_var.get(),
             'sol_offset_tester_screen': self.sol_offset_tester_screen_var.get(),
-            'sol_preview_screen': self.sol_preview_screen_var.get() if hasattr(self, 'sol_preview_screen_var') else "0",
             'sol_quality_window': self.sol_quality_window_var.get(),
             'webcam_oval_size': self.webcam_oval_size_var.get(),
             'webcam_oval_bottom_x': self.webcam_oval_bottom_x_var.get(),
@@ -3356,8 +3407,6 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.vf_rotate_var, self.vf_rot_speed_var,
             self.vf_max_deg_h_var, self.vf_max_deg_v_var,
         ]
-        if hasattr(self, 'sol_preview_screen_var'):
-            tracked_vars.append(self.sol_preview_screen_var)
         tracked_vars.append(self.ui_font_size_var)
         for var in tracked_vars:
             var.trace_add('write', self._schedule_auto_save)
@@ -3428,9 +3477,6 @@ Controls: SPACE = Record point, Q = Cancel"""
                 self.sol_offset_user_screen_var.set(valid_screen_option(data['sol_offset_user_screen'], test_opts))
             if 'sol_offset_tester_screen' in data:
                 self.sol_offset_tester_screen_var.set(valid_screen_option(data['sol_offset_tester_screen'], test_opts))
-            if 'sol_preview_screen' in data and hasattr(self, 'sol_preview_screen_var'):
-                self.sol_preview_screen_var.set(valid_screen_option(
-                    data['sol_preview_screen'], screen_options(getattr(self, 'preview_monitor_info', []))))
             if 'sol_quality_window' in data: self.sol_quality_window_var.set(str(data['sol_quality_window']))
             if 'webcam_oval_size' in data: self.webcam_oval_size_var.set(str(data['webcam_oval_size']))
             if 'webcam_oval_bottom_x' in data: self.webcam_oval_bottom_x_var.set(str(data['webcam_oval_bottom_x']))

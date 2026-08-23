@@ -348,12 +348,16 @@ def run_test(cfg, sol_context=None):
     dash_state = DashboardState()
     dashboard = None
     try:
+        # tester_rect None = no separate examiner screen. The dashboard still RUNS in that
+        # case (it is the only sampler of webcam validity, which the quality gate and the
+        # end-of-test metrics need) - it just draws no window. See TesterDashboard.pump.
+        tester_rect = resolve_tester_rect(cfg)
         if cfg.get('enable_webcam') or cfg.get('enable_sol'):
-            tester_rect = resolve_tester_rect(cfg)
             dashboard = TesterDashboard(gf, sol_quality, dash_state, cfg, tester_rect=tester_rect,
                                         session_dir=getattr(recorder, 'session_dir', None))
             dashboard.start()
-            print(f"[Dashboard] Tester dashboard started (tester rect: {tester_rect})")
+            print(f"[Dashboard] Examiner dashboard started (rect: {tester_rect})" if tester_rect
+                  else "[Dashboard] No separate Examiner Screen - collecting quality, no window.")
     except Exception as e:
         print(f"[Dashboard] Failed to start tester dashboard: {e}")
         dashboard = None

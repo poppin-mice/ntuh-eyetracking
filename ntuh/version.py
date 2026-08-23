@@ -90,6 +90,29 @@ VA_center_opt
            ignores a style-level -font for Entry/Combobox/Spinbox and about half of those
            widgets here carry no explicit font. 15 hardcoded ("Arial", 9/10/12) sizes are
            gone with it.
+           The Sol tab's "Preview Gaze Mapping -> Screen" picker is gone: the gaze preview
+           and the Accuracy Test now run on General -> Screen & Viewing -> Test Screen, the
+           screen the subject is actually tested on. It was a second, separately remembered
+           copy of the same setting that silently defaulted to screen 0, so a preview or an
+           accuracy test could run on a different monitor than the test itself. The saved
+           'sol_preview_screen' key is dropped and ignored.
+           General -> Screen & Viewing: "Test Screen" is renamed "Subject Screen" and
+           "Tester Screen" is renamed "Examiner Screen", and the examiner one is now listed
+           first. Labels only - the saved keys (sol_offset_user_screen /
+           sol_offset_tester_screen) are unchanged, so existing settings files load as they
+           did.
+           Fix: with only one display connected, operator-only windows still opened - on the
+           subject's screen, on top of the stimulus. The Sol 2D-calibration monitoring window
+           was never gated at all, and the VA/VF tester dashboard placed itself via a rect
+           that clamped an unusable examiner index to monitor 0. resolve_tester_rect now
+           returns None whenever there is no separate examiner screen (one display, examiner
+           == subject, or a stale index) and every examiner view honours that; the Examiner
+           Screen picker is disabled on a single display, without touching the saved value so
+           the choice survives until a second display is attached. The dashboard object still
+           RUNS in that case and only draws no window: it is the only sampler of webcam
+           validity (sol_quality.add_webcam), which the "wait for stable valid data" gate and
+           the end-of-test quality metrics both read. Stopping it outright left the gate
+           waiting forever, so every trial had to be force-started with SPACE.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in

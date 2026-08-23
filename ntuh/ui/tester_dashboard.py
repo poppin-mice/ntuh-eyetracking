@@ -113,7 +113,20 @@ class TesterDashboard:
     def pump(self):
         """Call from the MAIN thread to display the latest canvas. Cheap: one imshow + waitKey.
         Safe no-op until the worker has produced a frame. Throttled to ~25 Hz so calling it from
-        the 60 fps stimulus loop adds negligible overhead."""
+        the 60 fps stimulus loop adds negligible overhead.
+
+        With no examiner screen (tester_rect None) this shows nothing, but the worker thread
+        keeps running: it is the ONLY place webcam validity is sampled
+        (sol_quality.add_webcam in _render_webcam_panel), which the quality gate and the
+        end-of-test metrics both depend on. Stopping it entirely left the gate waiting
+        forever, so every trial had to be force-started with SPACE."""
+        if not self.tester_rect:
+            # Still pump HighGUI: this used to happen every pump via the imshow path, and the
+            # VA/VF loops call nothing else that does. Cheap (no window -> immediate return).
+            try:
+                return cv2.waitKey(1) & 0xFF
+            except Exception:
+                return -1
         now = time.time()
         if now - self._last_pump < 0.04:
             return -1

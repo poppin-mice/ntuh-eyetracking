@@ -191,22 +191,28 @@ def valid_screen_option(saved, options):
 
 
 def resolve_tester_rect(cfg):
-    """Resolve the tester monitor rectangle (x,y,w,h) from cfg['sol_offset_tester_screen'].
-    Falls back to the user screen offset slightly if the tester screen is unavailable."""
+    """Examiner monitor rectangle (x, y, w, h), or None when there is no separate one.
+
+    None means "open no examiner views at all", and callers must honour that. It happens
+    when only one display is connected, when the Examiner Screen resolves to the same
+    monitor as the Subject Screen, or when the saved index no longer exists. This used to
+    clamp to monitor 0 instead, which put an operator-only window straight on top of the
+    subject's stimulus."""
     try:
         monitors = get_monitor_info_windows()
     except Exception:
         monitors = []
-    if not monitors:
+    if len(monitors) < 2:
         return None
-    idx = 0
-    raw = str(cfg.get('sol_offset_tester_screen', '')).strip()
-    if raw:
+
+    def _idx(key, default):
         try:
-            idx = int(raw.split(':')[0].strip())
+            return int(str(cfg.get(key, '')).split(':')[0].strip())
         except Exception:
-            idx = 0
-    if idx >= len(monitors) or idx < 0:
-        idx = 0
+            return default
+
+    idx = _idx('sol_offset_tester_screen', 1)
+    if not 0 <= idx < len(monitors) or idx == _idx('sol_offset_user_screen', 0):
+        return None
     m = monitors[idx]
     return (m.get('x', 0), m.get('y', 0), m.get('width', 1920), m.get('height', 1080))
