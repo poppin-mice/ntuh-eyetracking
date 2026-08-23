@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QRadioButton, QButtonGroup,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QMimeData, pyqtSignal, QPoint,
+    Qt, QTimer, QMimeData, pyqtSignal, QPoint, QEvent,
 )
 from PyQt6.QtGui import (
     QImage, QPainter, QColor, QPen, QBrush, QFont, QDrag, QAction,
@@ -27,7 +27,7 @@ class TimelineWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(84)
+        self.setFixedHeight(self._preferred_height())
         self.setMouseTracking(True)
 
         self._duration = 0.0
@@ -111,8 +111,25 @@ class TimelineWidget(QWidget):
                 i = j
         # Source label (left edge, over the strip)
         p.setPen(QColor(235, 235, 235))
-        p.setFont(QFont("Consolas", 7, QFont.Weight.Bold))
+        p.setFont(QFont("Consolas", max(6, self.font().pointSize() - 2), QFont.Weight.Bold))
         p.drawText(margin + 3, y + sh - 2, label)
+
+    # -- Layout (font-derived) ----------------------------------------------
+    # The strips, their SOL/CAM labels and the widget height used to be hardcoded pixels
+    # (10px strips inside a fixed 84px widget, 7pt labels), so the Font control could not
+    # reach them. Deriving them from the font keeps the labels legible AND inside the strip.
+
+    def _strip_h(self):
+        return max(10, self.fontMetrics().height() + 2)
+
+    def _preferred_height(self):
+        # bar top + bar + gap + two strips + gap + one line of time text + padding
+        return 16 + 13 + 3 + 2 * self._strip_h() + 2 + 4 + self.fontMetrics().height() + 4
+
+    def changeEvent(self, e):
+        if e.type() == QEvent.Type.FontChange:
+            self.setFixedHeight(self._preferred_height())
+        super().changeEvent(e)
 
     # -- Coordinate helpers -------------------------------------------------
 
@@ -166,9 +183,10 @@ class TimelineWidget(QWidget):
             p.drawRoundedRect(x1, bar_y, tw, bar_h, 2, 2)
 
         # Validity strips (Sol + Webcam), below the trial bar
+        strip_h = self._strip_h()
         strip_y0 = bar_y + bar_h + 3
-        self._draw_strip(p, self._sol_band, strip_y0, 10, margin, usable, "SOL")
-        self._draw_strip(p, self._wc_band, strip_y0 + 12, 10, margin, usable, "CAM")
+        self._draw_strip(p, self._sol_band, strip_y0, strip_h, margin, usable, "SOL")
+        self._draw_strip(p, self._wc_band, strip_y0 + strip_h + 2, strip_h, margin, usable, "CAM")
 
         # Progress fill
         if self._duration > 0:
@@ -185,11 +203,11 @@ class TimelineWidget(QWidget):
 
             # Playhead line through the validity strips (alignment)
             p.setPen(QPen(QColor(255, 255, 255, 170), 1))
-            p.drawLine(px, bar_y, px, bar_y + bar_h + 3 + 22)
+            p.drawLine(px, bar_y, px, bar_y + bar_h + 3 + 2 * self._strip_h() + 2)
 
         # Time text
         p.setPen(QColor(200, 200, 200))
-        p.setFont(QFont("Consolas", 9))
+        p.setFont(QFont("Consolas", max(6, self.font().pointSize())))
         cur = self._format_time(self._current_time)
         dur = self._format_time(self._duration)
         p.drawText(margin, h - 4, f"{cur} / {dur}")

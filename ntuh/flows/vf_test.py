@@ -184,12 +184,15 @@ def run_vf_test(cfg, sol_context=None):
     dash_state = DashboardState()
     dashboard = None
     try:
+        # tester_rect None = no separate examiner screen; the dashboard still runs headless
+        # so webcam validity keeps being sampled. See TesterDashboard.pump.
+        tester_rect = resolve_tester_rect(cfg)
         if cfg.get('enable_webcam') or cfg.get('enable_sol'):
-            tester_rect = resolve_tester_rect(cfg)
             dashboard = TesterDashboard(gf, sol_quality, dash_state, cfg, tester_rect=tester_rect,
                                         session_dir=getattr(recorder, 'session_dir', None))
             dashboard.start()
-            print(f"[VF Dashboard] Tester dashboard started (tester rect: {tester_rect})")
+            print(f"[VF Dashboard] Examiner dashboard started (rect: {tester_rect})" if tester_rect
+                  else "[VF Dashboard] No separate Examiner Screen - collecting quality, no window.")
     except Exception as e:
         print(f"[VF Dashboard] Failed to start tester dashboard: {e}")
         dashboard = None

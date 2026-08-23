@@ -66,6 +66,10 @@ The left panel also shows a **Data Quality** group (per-source valid %, whole te
 trials only) and the timeline shows colour-coded **Sol / webcam validity strips**. The
 trial list automatically highlights the trial currently under the playhead.
 
+**Font** (bottom-left of the status bar): text size of the replayer window. It applies as you change it and
+is remembered between runs. The video and timeline overlays are drawn onto the video canvas and
+keep their own scale.
+
 ## Review & Labeling (human-in-the-loop)
 
 The replayer can record a reviewer's verdict for training-data curation. In the left panel:

@@ -6,13 +6,14 @@ multiprocessing 'spawn', which re-imports this module as __mp_main__ in the chil
 heavy GUI/SDK imports (pygame, tkinter, gazefollower, MediaPipe) ran at import time they
 would load into every child process. So ALL heavy imports + the global excepthook installs
 + the GUI lifecycle live inside main(), under the __main__ guard. Top level keeps only
-stdlib (sys, ctypes, multiprocessing) and the stdlib-only APP_DIR.
+stdlib (sys, multiprocessing) and the stdlib-only APP_DIR / DPI helper.
 """
 import sys
-import ctypes
 import multiprocessing
 
 from ntuh.common.app_env import APP_DIR
+# stdlib-only (ctypes inside the function), so it stays import-light for spawn children.
+from ntuh.common.win_monitors import set_dpi_awareness
 # Keyboard layout management (switch to English + restore, with crash recovery) now
 # lives in ntuh.common.keyboard_layout, shared with the calibration tool. It is
 # stdlib-only, so it stays import-light for the multiprocessing 'spawn' children.
@@ -63,11 +64,9 @@ def main():
     sys.excepthook = global_exception_handler
     threading.excepthook = lambda args: global_exception_handler(args.exc_type, args.exc_value, args.exc_traceback)
 
-    # [FIX] DPI Awareness
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
+    # [FIX] DPI Awareness: per-monitor V2, so window coordinates are the same physical
+    # pixels get_monitor_info_windows() reports (mixed-DPI multi-monitor safe).
+    set_dpi_awareness()
 
     # [FIX] Switch keyboard to English so keystroke controls (q, SPACE, etc.) work
     kb_manager = KeyboardLayoutManager()

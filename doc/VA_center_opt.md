@@ -8,7 +8,7 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 
 ## What's new (2026-07-21)
 
-- **Accuracy-test tester view**: the Sol gaze **Accuracy Test** now opens an operator-only monitoring window on the configured **Tester Screen**, showing a schematic of the subject's screen with the target (red), the subject's **live gaze dot** (green), and the live **target→gaze offset** in px/deg. Watch the dot settle on the target, then press SPACE to record. The dot is shown **only** on the tester screen (never on the subject's screen, so it cannot be chased). SPACE/Q work regardless of which window has focus. Falls back to the previous single-window behavior with one monitor. See **Sol Calib Tab** below.
+- **Accuracy-test tester view**: the Sol gaze **Accuracy Test** now opens an operator-only monitoring window on the configured **Examiner Screen**, showing a schematic of the subject's screen with the target (red), the subject's **live gaze dot** (green), and the live **target→gaze offset** in px/deg. Watch the dot settle on the target, then press SPACE to record. The dot is shown **only** on the examiner screen (never on the subject's screen, so it cannot be chased). SPACE/Q work regardless of which window has focus. Falls back to the previous single-window behavior with one monitor. See **Sol Calib Tab** below.
 
 ## What's new (2026-06-07)
 
@@ -39,6 +39,31 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Webcam |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
 
+**Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
+VA only. Inserts *N* **catch trials** at random positions among the normal trials. A catch trial
+renders the target grating far too fine for anyone to resolve, so the target circle and the
+uniform baseline circle look identical and the subject has no target to find: the gaze recorded
+between that trial's timestamps is a *negative* ("non-target fixation") sample. It looks, feels
+and scores exactly like a normal trial to the subject, but **never touches the staircase or the
+VA score** — it only appears in `trial_events.csv` with `trial_type=catch`, which is what the ML
+pipeline uses to label `webcam_gaze_data.csv` and the video frames. If the staircase finishes
+before all *N* have been shown, the remainder are forced in immediately before the test ends.
+
+The catch frequency is derived, not configured: it is the highest the display can render without
+aliasing (0.4 cycles/px, safely under the 0.5 Nyquist limit), i.e.
+`0.4 x screen_width_px / screen_FOV_deg`. Push past Nyquist and the grating folds back into a
+coarse moire that is *more* visible, which would defeat the purpose.
+
+> **Requires a fine enough display.** If that derived frequency is not above the 20 cpd staircase
+> ceiling, a "catch" trial would just be an ordinary hard trial, so the mode **refuses to run** and
+> says so on the console. At a 50 cm viewing distance that rules out 1080p (13.8 cpd); 3200x2000
+> gives 23.0 cpd and 4K gives 25.6 cpd. Increasing the viewing distance also raises it.
+
+**Font** (bottom bar, next to the Start buttons): text size of this settings window. It
+applies as you change it and is remembered between runs. The default is picked from the
+screen height; raise it if the settings text is small on a high-resolution clinic monitor.
+The tabs scroll, so a larger font never pushes controls out of reach.
+
 ### General Tab - Stimulus
 
 | Setting | Description | Default |
@@ -63,12 +88,12 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Test Screen | Monitor the subject sees (stimuli, calibration targets) | 0 (primary) |
-| Tester Screen | Operator-only monitor. When it differs from Test Screen, the tester views open there | 1 (secondary) |
+| Examiner Screen | Operator-only monitor. When it differs from the Subject Screen, the examiner views open there. **Disabled with a single display**, where no examiner view opens at all | 1 (secondary) |
+| Subject Screen | Monitor the subject sees (stimuli, calibration targets) | 0 (primary) |
 | Screen Width (cm) | Physical width of the display monitor | 52.6 |
 | Viewing Distance (cm) | Distance from user's eyes to the screen | 50 |
 
-> **Note:** Test Screen and Tester Screen used to live on the *Sol Calib* tab under *Display Settings*. They moved here because every flow uses them — the VA/VF test, Sol calibration and the accuracy test — not just Sol calibration. Saved settings carry over unchanged.
+> **Note:** Subject Screen and Examiner Screen (formerly *Test Screen* / *Tester Screen*) used to live on the *Sol Calib* tab under *Display Settings*. They moved here because every flow uses them — the VA/VF test, Sol calibration and the accuracy test — not just Sol calibration. Saved settings carry over unchanged.
 
 ### General Tab - Inter-trial
 
@@ -112,9 +137,9 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 **Accuracy Test** (button in *Preview Gaze Mapping*): measures Sol gaze accuracy + precision before and after the loaded 2D offset, over concentric-ring + corner targets, and saves a CSV/JSON report plus heatmap/by-angle PNGs under `accuracy_test/`. The subject fixates each target and the operator presses **SPACE** (ESC/Q aborts).
 
-- Set the accuracy test's subject screen with *Preview Gaze Mapping → Screen*, and the operator's monitoring screen with *General → Screen & Viewing → Tester Screen*. When these are two different monitors, a **tester view** opens on the Tester Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
+- The accuracy test and the gaze preview both run on the subject screen set at *General → Screen & Viewing → **Subject Screen***, and the operator's monitoring screen is *General → Screen & Viewing → Examiner Screen*. When these are two different monitors, an **examiner view** opens on the Examiner Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
 - The camera picture appears as soon as frames arrive; the target and corrected-gaze markers need a valid homography, so until the ArUco markers are found you see the video with the raw gaze only and a "no homography yet" note.
-- The tester view is shown only on the Tester Screen; the subject never sees a gaze dot (so they cannot chase it and bias the measurement). With a single monitor the test runs as before, without a tester window.
+- The examiner view is shown only on the Examiner Screen; the subject never sees a gaze dot (so they cannot chase it and bias the measurement). With a single monitor the test runs as before, without a tester window.
 - **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
 
 ### Recording Tab
@@ -155,7 +180,7 @@ VA_output/
     sol_quality_metrics.json    - Per-source validity % (whole test + trials)
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
-    trial_events.csv            - Per-trial start/end, CPD, side, result
+    trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
     review_labels.json          - Created later by replayer (review labels)
 ```
 
@@ -164,12 +189,8 @@ VA_output/
 
 ### Results CSV
 
-Trial-by-trial VA results are saved as a separate CSV at the top level:
-
-```
-VA_output/
-  VA_{username}_opt.csv         - CPD and pass/fail per trial
-```
+Trial-by-trial VA results live in the session's `trial_events.csv` (CPD, side, pass/fail,
+timestamps and `trial_type`).
 
 Gaze data is recorded continuously during all phases (stimulus, feedback, inter-trial).
 

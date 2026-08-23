@@ -102,6 +102,29 @@ def generate_grating_oriented_patch(freq_cycles_per_screen, xx, yy, angle_deg, w
     return out
 
 
+# ---------- Catch trials (negative-sample collection) ----------
+# Nyquist: a sampled grating carries no information above 0.5 cycles per pixel. Push past it
+# and the pattern folds back into a coarse, very visible moire - the opposite of what a catch
+# trial needs. Stay under it with a margin.
+CATCH_CYCLES_PER_PX = 0.4
+
+
+def catch_trial_cpd(screen_width_px, screen_width_deg, cycles_per_px=CATCH_CYCLES_PER_PX):
+    """Spatial frequency (cpd) for a catch trial: above any subject's acuity, below aliasing.
+
+    The grating is drawn as cs = cpd * screen_width_deg cycles across screen_width_px pixels,
+    so cycles/px = cpd * screen_width_deg / screen_width_px. Inverting that at `cycles_per_px`
+    gives the highest frequency the display can actually render - which is also the least
+    visible one, so the target circle and the uniform baseline circle look the same.
+
+    Returns 0.0 when the viewing geometry is unknown, which the caller must treat as
+    "cannot run catch trials" rather than as a frequency.
+    """
+    if screen_width_px <= 0 or screen_width_deg <= 0:
+        return 0.0
+    return float(cycles_per_px) * float(screen_width_px) / float(screen_width_deg)
+
+
 # ---------- Staircase (cpd) ----------
 class Staircase:
     def __init__(self, start, step, minv, maxv):

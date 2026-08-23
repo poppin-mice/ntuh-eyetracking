@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, colorchooser, filedialog, messagebox
+from tkinter import ttk, colorchooser, filedialog, messagebox, font as tkfont
 
 import cv2
 import numpy as np
@@ -28,7 +28,7 @@ from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
 from ntuh.common.pygame_utils import ensure_pygame_focus
-from ntuh.common.win_monitors import get_monitor_info_windows
+from ntuh.common.win_monitors import get_monitor_info_windows, screen_options, valid_screen_option
 from ntuh.ui.face_overlay import (
     draw_face_quality_overlay,
     _GUIDE_OVAL_SIZE_FRAC, _GUIDE_OVAL_BOTTOM_X_FRAC, _GUIDE_OVAL_BOTTOM_Y_FRAC,
@@ -111,8 +111,25 @@ class SettingsWindow(tk.Tk):
         self.ui_font_size = font_size  # Store for later use
         # Dynamic padding based on screen size
         self.ui_pad = {'padx': 5 if screen_height <= 1080 else 10, 'pady': 2 if screen_height <= 1080 else 5}
-        LABEL_FONT = ("Arial", font_size)
-        ENTRY_FONT = ("Arial", font_size)
+        # Live font objects. The ttk styles below and every per-widget `font=` in this
+        # window point at these, so the "Font" spinner only has to resize the objects -
+        # Tk re-measures and redraws the widgets itself (_apply_ui_font). The offsets
+        # keep the relative sizes the UI was designed with (hints smaller, headings and
+        # the big action buttons larger).
+        self.ui_fonts = {
+            'body':        tkfont.Font(family="Arial", size=font_size),
+            'hint':        tkfont.Font(family="Arial", size=font_size - 1),
+            'hint_italic': tkfont.Font(family="Arial", size=font_size - 1, slant="italic"),
+            'head':        tkfont.Font(family="Arial", size=font_size + 1, weight="bold"),
+            'big':         tkfont.Font(family="Arial", size=font_size + 4, weight="bold"),
+        }
+        self.f_body, self.f_hint = self.ui_fonts['body'], self.ui_fonts['hint']
+        self.f_hint_italic, self.f_head = self.ui_fonts['hint_italic'], self.ui_fonts['head']
+        self.f_big = self.ui_fonts['big']
+        self.ui_font_size_var = tk.IntVar(value=font_size)
+
+        LABEL_FONT = self.f_body
+        ENTRY_FONT = self.f_body
 
         # 預設校正資料夾
         self.default_calib_dir = APP_DIR / "calibration_profiles"
@@ -193,6 +210,10 @@ class SettingsWindow(tk.Tk):
         # >= threshold valid data in the rolling gaze-quality window.
         self.require_valid_start_var = tk.BooleanVar(value=False)
         self.valid_start_threshold_var = tk.StringVar(value="80")
+        # Catch trials (negative-sample collection). OFF by default: clinical runs must be
+        # unaffected unless someone deliberately turns this on for data collection.
+        self.catch_enabled_var = tk.BooleanVar(value=False)
+        self.catch_trials_var = tk.StringVar(value="3")
 
         # [NEW] Paper Color Mode - gray bg, black/white grating, white border
         self.paper_color_var = tk.BooleanVar(value=False)
@@ -236,23 +257,18 @@ class SettingsWindow(tk.Tk):
 
         # --- Consistent ttk styling ---
         style = ttk.Style()
-        heading_size = font_size + 1
-        big_font_size = font_size + 4
 
-        # Widget fonts - consistent across the entire UI
-        style.configure("TLabel", font=("Arial", font_size))
-        style.configure("TCheckbutton", font=("Arial", font_size))
-        style.configure("TButton", font=("Arial", font_size))
-        style.configure("TSpinbox", font=("Arial", font_size))
-        style.configure("TCombobox", font=("Arial", font_size))
-        style.configure("TEntry", font=("Arial", font_size))
-        style.configure("TRadiobutton", font=("Arial", font_size))
+        # Widget fonts - consistent across the entire UI. These reference the live font
+        # objects, so the Font spinner resizes everything without a restyling pass.
+        for cls in ("TLabel", "TCheckbutton", "TButton", "TSpinbox",
+                    "TCombobox", "TEntry", "TRadiobutton"):
+            style.configure(cls, font=self.f_body)
         # LabelFrame headings - slightly larger and bold
-        style.configure("TLabelframe.Label", font=("Arial", heading_size, "bold"))
+        style.configure("TLabelframe.Label", font=self.f_head)
         # Notebook tabs
-        style.configure("TNotebook.Tab", font=("Arial", font_size), padding=[10, 4])
+        style.configure("TNotebook.Tab", font=self.f_body, padding=[10, 4])
         # Big action buttons
-        style.configure("Big.TButton", font=("Arial", big_font_size, "bold"), padding=8)
+        style.configure("Big.TButton", font=self.f_big, padding=8)
 
         # --- Layout: pack buttons FIRST so they always show ---
         btn_frame = ttk.Frame(self)
@@ -264,6 +280,14 @@ class SettingsWindow(tk.Tk):
         self.btn_start.pack(side="right", padx=10)
         self.btn_practice = ttk.Button(btn_frame, text="Start Practice", command=self.on_start_practice, state="disabled", style="Big.TButton")
         self.btn_practice.pack(side="right", padx=10)
+
+        # Font size lives on the button bar, not in a tab, so it is reachable from
+        # whichever tab is too small to read.
+        ttk.Label(btn_frame, text="Font:").pack(side="left")
+        ttk.Spinbox(btn_frame, from_=7, to=20, width=4,
+                    textvariable=self.ui_font_size_var).pack(side="left", padx=(4, 0))
+        self.ui_font_size_var.trace_add("write", lambda *a: self._apply_ui_font())
+        self._apply_ui_font()   # pull the named fonts up to the screen-derived size too
 
         # --- Notebook (fills remaining space) ---
         self.notebook = ttk.Notebook(self)
@@ -392,7 +416,7 @@ class SettingsWindow(tk.Tk):
         ttk.Spinbox(grp_guide, textvariable=self.webcam_oval_bottom_x_var, from_=0.0, to=1.0, increment=0.02, width=6).pack(side="left", padx=2)
         ttk.Label(grp_guide, text="Bottom Y:", font=label_font).pack(side="left", padx=(12, 2))
         ttk.Spinbox(grp_guide, textvariable=self.webcam_oval_bottom_y_var, from_=0.0, to=1.0, increment=0.02, width=6).pack(side="left", padx=2)
-        ttk.Label(grp_guide, text="(fractions of the camera frame)", font=("Arial", 9), foreground="gray").pack(side="left", padx=8)
+        ttk.Label(grp_guide, text="(fractions of the camera frame)", font=self.f_hint, foreground="gray").pack(side="left", padx=8)
         
 
 
@@ -544,18 +568,27 @@ class SettingsWindow(tk.Tk):
             return True
         except ValueError: return False
 
+    def test_screen_monitor(self):
+        """The monitor dict for the Subject Screen picked on the General tab.
+
+        The Sol gaze preview uses this too - it draws ArUco markers on the screen the
+        subject will actually be tested on, so a separate picker for it was one more thing
+        to keep in sync (and to get wrong)."""
+        monitors = getattr(self, 'monitor_info_list', None) or get_monitor_info_windows()
+        if not monitors:
+            return {'index': 0, 'width': 1920, 'height': 1080, 'x': 0, 'y': 0}
+        try:
+            idx = int(str(self.sol_offset_user_screen_var.get()).split(':')[0].strip())
+        except Exception:
+            idx = 0
+        if not 0 <= idx < len(monitors):
+            idx = 0
+        return monitors[idx]
+
     def _get_test_screen_width_px(self):
         """Pixel width of the currently selected test (user) screen, for px<->cm conversion."""
         try:
-            monitors = getattr(self, 'preview_monitor_info', None) or get_monitor_info_windows()
-            idx = 0
-            try:
-                idx = int(str(self.sol_offset_user_screen_var.get()).split(':')[0].strip())
-            except Exception:
-                idx = 0
-            if idx < 0 or idx >= len(monitors):
-                idx = 0
-            return monitors[idx].get('width', 0)
+            return self.test_screen_monitor().get('width', 0)
         except Exception:
             return 0
 
@@ -618,7 +651,20 @@ class SettingsWindow(tk.Tk):
         ttk.Spinbox(gate_frame, textvariable=self.valid_start_threshold_var, from_=0, to=100,
                     increment=5, width=6).pack(side="left")
         ttk.Label(gate_frame, text="(enabled trackers, in the gaze-quality window)",
-                  font=("Arial", 9), foreground="gray").pack(side="left", padx=8)
+                  font=self.f_hint, foreground="gray").pack(side="left", padx=8)
+
+        # Catch trials: research-only negative-sample collection. Default OFF so the normal
+        # clinical workflow is untouched.
+        catch_frame = ttk.Frame(grp_user)
+        catch_frame.grid(row=r, column=0, columnspan=3, sticky="w", **pad); r += 1
+        ttk.Checkbutton(catch_frame, text="Collect negative samples:",
+                        variable=self.catch_enabled_var).pack(side="left")
+        ttk.Spinbox(catch_frame, textvariable=self.catch_trials_var, from_=1, to=20,
+                    width=6).pack(side="left", padx=(6, 2))
+        ttk.Label(catch_frame, text="catch trials", font=l_font).pack(side="left")
+        ttk.Label(catch_frame,
+                  text="(VA only - gratings nobody can resolve, at random positions, excluded from the score)",
+                  font=self.f_hint, foreground="gray").pack(side="left", padx=8)
 
         # ── Section 2a: VA Stimulus (shown when VA selected) ──
         self.grp_va_stim = ttk.LabelFrame(parent, text="VA Stimulus")
@@ -729,21 +775,30 @@ class SettingsWindow(tk.Tk):
         # because every flow uses them (VA/VF test, Sol calib, accuracy test), not just Sol calib.
         # monitor_info_list is the cached list the screen-picking handlers read at run time.
         self.monitor_info_list = get_monitor_info_windows()
-        screen_options = [f"{mon['index']}: {mon['name']} ({mon['width']}x{mon['height']})"
-                          for mon in self.monitor_info_list]
-        if not screen_options:
-            screen_options = ["0: Primary Display"]
+        screen_opts = screen_options(self.monitor_info_list)
 
-        ttk.Label(grp_screen, text="Test Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
-        self.cmb_test_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_user_screen_var, values=screen_options, state="readonly", width=30)
+        # Operator-only monitor. When it differs from the Subject Screen, the examiner views
+        # open on it. No .current() on either: the vars default to "0"/"1", which the
+        # ":"-split parsers already read correctly, and forcing a selection would clobber
+        # values restored from settings. The saved keys keep their original
+        # sol_offset_user_screen / sol_offset_tester_screen names so existing settings load.
+        # Disabled with a single display: there is no second monitor to put examiner views on,
+        # and every examiner view is suppressed anyway (resolve_tester_rect). The variable is
+        # left untouched so the operator's choice survives until a second display is attached.
+        single_display = len(self.monitor_info_list) < 2
+        ttk.Label(grp_screen, text="Examiner Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        self.cmb_tester_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_tester_screen_var,
+                                              values=screen_opts, width=30,
+                                              state="disabled" if single_display else "readonly")
+        self.cmb_tester_screen.grid(row=r, column=1, sticky="w", **pad)
+        if single_display:
+            ttk.Label(grp_screen, text="(single display - no examiner views)",
+                      font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", **pad)
+        r += 1
+
+        ttk.Label(grp_screen, text="Subject Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        self.cmb_test_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_user_screen_var, values=screen_opts, state="readonly", width=30)
         self.cmb_test_screen.grid(row=r, column=1, sticky="w", **pad); r += 1
-
-        # Operator-only monitor. When it differs from Test Screen, the tester views open on it.
-        # No .current() here: the vars default to "0"/"1", which the ":"-split parsers already
-        # read correctly, and forcing a selection would clobber values restored from settings.
-        ttk.Label(grp_screen, text="Tester Screen:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
-        self.cmb_tester_screen = ttk.Combobox(grp_screen, textvariable=self.sol_offset_tester_screen_var, values=screen_options, state="readonly", width=30)
-        self.cmb_tester_screen.grid(row=r, column=1, sticky="w", **pad); r += 1
 
         ttk.Label(grp_screen, text="Screen Width (cm):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         ttk.Spinbox(grp_screen, textvariable=self.scr_width_cm_var, from_=10, to=300, increment=0.5, font=e_font, width=10).grid(row=r, column=1, sticky="w", **pad); r += 1
@@ -834,8 +889,8 @@ class SettingsWindow(tk.Tk):
         gaze_methods = ["3D", "2D"]
         self.cmb_gaze_method = ttk.Combobox(grp_gaze, textvariable=self.sol_gaze_method_var, values=gaze_methods, state="readonly", width=20)
         self.cmb_gaze_method.grid(row=0, column=1, **pad)
-        ttk.Label(grp_gaze, text="3D: Ray-plane intersection (uses gaze_3d)", font=("Arial", 9), foreground="gray").grid(row=1, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(grp_gaze, text="2D: Homography mapping (uses gaze_2d)", font=("Arial", 9), foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_gaze, text="3D: Ray-plane intersection (uses gaze_3d)", font=self.f_hint, foreground="gray").grid(row=1, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_gaze, text="2D: Homography mapping (uses gaze_2d)", font=self.f_hint, foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", **pad)
         self.btn_clear_homography = ttk.Button(grp_gaze, text="Clear Homography Cache", command=self._clear_homography_cache)
         self.btn_clear_homography.grid(row=0, column=2, **pad)
 
@@ -851,29 +906,14 @@ class SettingsWindow(tk.Tk):
         ttk.Label(grp_q, text="Quality Window (s):", font=l_font).grid(row=0, column=0, sticky="w", **pad)
         ttk.Spinbox(grp_q, textvariable=self.sol_quality_window_var, from_=0.5, to=30.0, increment=0.5, font=e_font, width=8).grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(grp_q, text="Rolling window for the live missing-data-rate shown on the tester dashboard during the test.",
-                  font=("Arial", 9), foreground="gray").grid(row=1, column=0, columnspan=4, sticky="w", **pad)
+                  font=self.f_hint, foreground="gray").grid(row=1, column=0, columnspan=4, sticky="w", **pad)
 
         # Preview Gaze Mapping
         grp_preview = ttk.LabelFrame(parent, text="Preview Gaze Mapping"); grp_preview.pack(fill="x", padx=10, pady=5)
-        ttk.Label(grp_preview, text="Test Sol gaze projection on screen with ArUco markers.", font=("Arial", 10)).grid(row=0, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(grp_preview, text="Test Sol gaze projection on screen with ArUco markers.", font=self.f_body).grid(row=0, column=0, columnspan=4, sticky="w", **pad)
 
-        # Screen selection for preview
-        ttk.Label(grp_preview, text="Screen:", font=l_font).grid(row=1, column=0, sticky="w", **pad)
-        self.sol_preview_screen_var = tk.StringVar(value="0")
-        # Get monitor info for dropdown
-        preview_monitors = get_monitor_info_windows()
-        preview_screen_options = []
-        for mon in preview_monitors:
-            label = f"{mon['index']}: {mon['name']} ({mon['width']}x{mon['height']})"
-            preview_screen_options.append(label)
-        if not preview_screen_options:
-            preview_screen_options = ["0: Primary Display"]
-        self.cmb_preview_screen = ttk.Combobox(grp_preview, textvariable=self.sol_preview_screen_var, values=preview_screen_options, state="readonly", width=35)
-        self.cmb_preview_screen.grid(row=1, column=1, columnspan=2, sticky="w", **pad)
-        if preview_screen_options:
-            self.cmb_preview_screen.current(0)
-        self.preview_monitor_info = preview_monitors  # Store for use in preview
-
+        # No screen picker here: the preview runs on the General tab's Subject Screen, the
+        # one the subject is actually tested on (test_screen_monitor).
         self.btn_preview_sol_gaze = ttk.Button(grp_preview, text="Preview Gaze", command=self.preview_sol_gaze, state="disabled")
         self.btn_preview_sol_gaze.grid(row=2, column=0, **pad)
 
@@ -883,7 +923,7 @@ class SettingsWindow(tk.Tk):
         self.btn_sol_accuracy_test = ttk.Button(grp_preview, text="Accuracy Test", command=self.run_sol_accuracy_test, state="disabled")
         self.btn_sol_accuracy_test.grid(row=2, column=2, **pad)
 
-        ttk.Label(grp_preview, text="Press Q or ESC to exit preview", font=("Arial", 9), foreground="gray").grid(row=3, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(grp_preview, text="Press Q or ESC to exit preview", font=self.f_hint, foreground="gray").grid(row=3, column=0, columnspan=4, sticky="w", **pad)
 
     def build_sol_offset_tab(self, parent, l_font, e_font):
         """Build the Sol Offset Calibration tab (simplified, auto-detects 2D/3D method)."""
@@ -893,9 +933,9 @@ class SettingsWindow(tk.Tk):
         method_frame = ttk.Frame(parent)
         method_frame.pack(fill="x", padx=10, pady=5)
         ttk.Label(method_frame, text="Current Gaze Method:", font=l_font).pack(side="left")
-        self.lbl_current_gaze_method = ttk.Label(method_frame, text="3D", font=("Arial", 12, "bold"), foreground="blue")
+        self.lbl_current_gaze_method = ttk.Label(method_frame, text="3D", font=self.f_big, foreground="blue")
         self.lbl_current_gaze_method.pack(side="left", padx=10)
-        ttk.Label(method_frame, text="(Set in Sol Settings tab)", font=("Arial", 9), foreground="gray").pack(side="left")
+        ttk.Label(method_frame, text="(Set in Sol Settings tab)", font=self.f_hint, foreground="gray").pack(side="left")
 
         # Target Settings
         grp_target = ttk.LabelFrame(parent, text="Calibration Settings")
@@ -932,20 +972,20 @@ class SettingsWindow(tk.Tk):
         grp_status.pack(fill="x", padx=10, pady=5)
 
         # 3D offset status
-        ttk.Label(grp_status, text="3D Offset:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(grp_status, text="3D Offset:", font=self.f_head).grid(row=0, column=0, sticky="w", **pad)
         self.lbl_sol_offset_pitch = ttk.Label(grp_status, text="Pitch: --", font=l_font)
         self.lbl_sol_offset_pitch.grid(row=0, column=1, sticky="w", **pad)
         self.lbl_sol_offset_yaw = ttk.Label(grp_status, text="Yaw: --", font=l_font)
         self.lbl_sol_offset_yaw.grid(row=0, column=2, sticky="w", **pad)
 
         # 2D offset status
-        ttk.Label(grp_status, text="2D Offset:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(grp_status, text="2D Offset:", font=self.f_head).grid(row=1, column=0, sticky="w", **pad)
         self.lbl_sol_2d_offset_status = ttk.Label(grp_status, text="Not calibrated", font=l_font)
         self.lbl_sol_2d_offset_status.grid(row=1, column=1, sticky="w", **pad)
-        self.lbl_sol_2d_offset_points = ttk.Label(grp_status, text="", font=("Arial", 10))
+        self.lbl_sol_2d_offset_points = ttk.Label(grp_status, text="", font=self.f_body)
         self.lbl_sol_2d_offset_points.grid(row=1, column=2, sticky="w", **pad)
 
-        self.lbl_sol_offset_timestamp = ttk.Label(grp_status, text="Last Calibrated: Never", font=("Arial", 10))
+        self.lbl_sol_offset_timestamp = ttk.Label(grp_status, text="Last Calibrated: Never", font=self.f_body)
         self.lbl_sol_offset_timestamp.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
 
         # Buttons
@@ -985,7 +1025,7 @@ class SettingsWindow(tk.Tk):
 
 Controls: SPACE = Record point, Q = Cancel"""
 
-        ttk.Label(grp_instr, text=instr_text, font=("Arial", 10), justify="left").pack(anchor="w", **pad)
+        ttk.Label(grp_instr, text=instr_text, font=self.f_body, justify="left").pack(anchor="w", **pad)
 
         # Bind gaze method variable to update display
         self.sol_gaze_method_var.trace_add("write", lambda *args: self._update_gaze_method_display())
@@ -1238,20 +1278,22 @@ Controls: SPACE = Record point, Q = Cancel"""
             screen_w, screen_h, screen_width_m
         )
 
-        # Get tester screen info for monitoring window
-        tester_screen_str = self.sol_offset_tester_screen_var.get()
+        # Examiner monitoring window - only when there IS a separate examiner screen.
+        # It used to clamp an unusable index to monitor 0, which dropped the operator
+        # window on top of the subject's calibration screen.
         try:
-            tester_screen_idx = int(tester_screen_str.split(':')[0].strip())
-        except:
+            tester_screen_idx = int(self.sol_offset_tester_screen_var.get().split(':')[0].strip())
+        except Exception:
             tester_screen_idx = 1  # Default to second screen
 
         monitors = getattr(self, 'monitor_info_list', None) or get_monitor_info_windows()
-        if tester_screen_idx >= len(monitors):
-            tester_screen_idx = 0
-
-        tester_screen = monitors[tester_screen_idx]
-        tester_x = tester_screen.get('x', 0)
-        tester_y = tester_screen.get('y', 0)
+        show_tester = (len(monitors) > 1 and 0 <= tester_screen_idx < len(monitors)
+                       and tester_screen_idx != self.test_screen_monitor().get('index', 0))
+        if show_tester:
+            tester_x = monitors[tester_screen_idx].get('x', 0)
+            tester_y = monitors[tester_screen_idx].get('y', 0)
+        else:
+            print("[2D Cal] No separate Examiner Screen - monitoring window suppressed.")
 
         # Setup user screen window - use NOFRAME instead of FULLSCREEN for multi-monitor support
         os_module.environ['SDL_VIDEO_WINDOW_POS'] = f"{screen_x},{screen_y}"
@@ -1274,11 +1316,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         except Exception as e:
             print(f"[2D Cal] Could not bring window to front: {e}")
 
-        # Setup tester monitoring window (OpenCV)
-        tester_win_name = "Tester View - Sol 2D Calibration"
-        cv2.namedWindow(tester_win_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(tester_win_name, 800, 600)
-        cv2.moveWindow(tester_win_name, tester_x + 50, tester_y + 50)
+        # Setup examiner monitoring window (OpenCV)
+        tester_win_name = "Examiner View - Sol 2D Calibration"
+        if show_tester:
+            cv2.namedWindow(tester_win_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(tester_win_name, 800, 600)
+            cv2.moveWindow(tester_win_name, tester_x + 50, tester_y + 50)
 
         clock = pygame.time.Clock()
         font = pygame.font.SysFont(None, 36)
@@ -1301,6 +1344,13 @@ Controls: SPACE = Record point, Q = Cancel"""
         # Minimum frames to wait for stable homography
         MIN_FRAMES_FOR_HOMOGRAPHY = 100
         frame_count = 0
+        total_scene_frames = 0   # scene frames actually pulled from the queue (diagnostic)
+        # The Sol scene stream can die mid-calibration (the SDK's H.264 decode is crash-prone).
+        # ArUco then keeps re-detecting the LAST frame, so markers/"CALIBRATED" still look
+        # healthy while nothing can ever change - the calibration just hangs. Same failure the
+        # accuracy test got a STALE banner for in v1.2.1; this is the calibration's version.
+        last_scene_t = None
+        SCENE_STALE_S = 2.0
 
         # Load target image for pygame display
         target_surface = None
@@ -1424,9 +1474,11 @@ Controls: SPACE = Record point, Q = Cancel"""
 
                 # Get latest scene frame and submit for ArUco detection
                 # Limit to 10 items per frame to prevent long delays when queue builds up
+                scene_frames_this_loop = 0
                 for _ in range(10):
                     try:
                         frame = self.sol_scene_queue.get_nowait()
+                        scene_frames_this_loop += 1
                         if hasattr(frame, 'img') and frame.img is not None:
                             latest_frame = frame.img
                         elif hasattr(frame, 'get_buffer'):
@@ -1448,9 +1500,28 @@ Controls: SPACE = Record point, Q = Cancel"""
 
                 # Count frames
                 frame_count += 1
+                total_scene_frames += scene_frames_this_loop
+                if scene_frames_this_loop:
+                    last_scene_t = time.time()
+                scene_age_s = None if last_scene_t is None else time.time() - last_scene_t
+                scene_stale = scene_age_s is None or scene_age_s > SCENE_STALE_S
 
                 # Check homography status and quality (strict mode for calibration)
                 homography_ready = sol_projector.is_homography_valid(strict=True)
+
+                # Periodic diagnostic, same as the 3D calibrator has. "Waiting for ArUco
+                # markers" has three very different causes - no scene frames reaching us, frames
+                # but no markers detected, or markers but too few for a strict homography - and
+                # the status bar cannot tell them apart.
+                try:
+                    n_ids = len(sol_projector.get_detected_marker_ids() or [])
+                except Exception:
+                    n_ids = -1
+                if frame_count % 60 == 1:
+                    print(f"[2D Cal DEBUG] loop={frame_count} scene_frames={total_scene_frames} "
+                          f"scene_age={'never' if scene_age_s is None else f'{scene_age_s:.1f}s'} "
+                          f"markers_detected={n_ids} homography_strict={homography_ready} "
+                          f"homography_any={sol_projector.is_homography_valid()}")
                 homography_good = False
                 if homography_ready:
                     H_screen_to_image = sol_projector.get_screen_to_image_homography()
@@ -1477,8 +1548,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                     else:
                         target_pos_camera = None
 
-                # === TESTER MONITORING WINDOW ===
-                if latest_frame is not None:
+                # === EXAMINER MONITORING WINDOW ===
+                if show_tester and latest_frame is not None:
                     tester_view = latest_frame.copy()
 
                     # Draw current gaze point (blue circle)
@@ -1536,7 +1607,12 @@ Controls: SPACE = Record point, Q = Cancel"""
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
 
                     cv2.imshow(tester_win_name, tester_view)
-                    cv2.waitKey(1)
+
+                # Pump OpenCV's event loop every frame, examiner window or not. This process
+                # keeps other HighGUI windows alive (webcam preview), and this waitKey used to
+                # run unconditionally - it was inside the examiner block only by accident of
+                # where the imshow sat.
+                cv2.waitKey(1)
 
                 # === USER SCREEN (Pygame) ===
                 win.fill((50, 50, 50))
@@ -1582,7 +1658,14 @@ Controls: SPACE = Record point, Q = Cancel"""
                 point_num = calibrator.current_point_index + 1
                 total_points = len(calibrator.positions)
 
-                if collecting_samples:
+                if scene_stale:
+                    # Checked FIRST: with a dead stream the markers/homography readouts below
+                    # describe a frozen frame and would send the operator chasing marker sizes.
+                    status_color = (255, 80, 80)
+                    detect_text = ("SCENE VIDEO STALLED"
+                                   + (" - no frames yet" if scene_age_s is None else f" {scene_age_s:.0f}s")
+                                   + " - reconnect Sol / restart Chronus, then calibrate again")
+                elif collecting_samples:
                     status_color = (255, 255, 100)  # Yellow
                     detect_text = f"COLLECTING... {len(collected_gaze_samples)}/{SAMPLES_TO_COLLECT} - Keep looking at target!"
                 elif homography_good:
@@ -1593,7 +1676,13 @@ Controls: SPACE = Record point, Q = Cancel"""
                     detect_text = f"Stabilizing homography... ({frame_count}/{MIN_FRAMES_FOR_HOMOGRAPHY})"
                 else:
                     status_color = (255, 100, 100)
-                    detect_text = "Waiting for ArUco markers..."
+                    # Show the count, not just "waiting": a homography needs 4 markers
+                    # (projector.py), and the usual reason it never gets there is that the
+                    # markers are too small for the camera to resolve on a dense panel -
+                    # which the operator can only fix by raising Pattern Size (px).
+                    detect_text = (f"Waiting for ArUco markers... {n_ids}/4 detected"
+                                   + ("  - markers too small? raise Sol tab > Pattern Size (px)"
+                                      if 0 < n_ids < 4 else ""))
 
                 pygame.draw.rect(win, (30, 30, 30), (0, screen_h - 50, screen_w, 50))
 
@@ -1648,7 +1737,10 @@ Controls: SPACE = Record point, Q = Cancel"""
             except Exception as e:
                 print(f"[2D Cal] Error stopping ArUco: {e}")
             try:
-                cv2.destroyWindow(tester_win_name)
+                # Only if it was created - destroying a window that never existed raises, and
+                # that aborted the block before destroyAllWindows() could run.
+                if show_tester:
+                    cv2.destroyWindow(tester_win_name)
                 cv2.destroyAllWindows()
             except Exception as e:
                 print(f"[2D Cal] Error destroying windows: {e}")
@@ -1834,21 +1926,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         selected_dict_id = aruco_dict_map.get(aruco_dict_key, cv2.aruco.DICT_4X4_250)
         adict = cv2.aruco.getPredefinedDictionary(selected_dict_id)
 
-        # Get screen info from selection
-        monitors = getattr(self, 'preview_monitor_info', None) or get_monitor_info_windows()
-        if not monitors:
-            monitors = [{'index': 0, 'width': 1920, 'height': 1080, 'x': 0, 'y': 0}]
-
-        # Parse selected screen index from dropdown (format: "0: Model Name (1920x1080)")
-        try:
-            screen_idx = int(self.sol_preview_screen_var.get().split(':')[0].strip())
-        except:
-            screen_idx = 0
-        screen_idx = min(screen_idx, len(monitors) - 1)
-        screen = monitors[screen_idx]
+        # The preview runs on the Subject Screen (General tab), not a picker of its own.
+        screen = self.test_screen_monitor()
         screen_w, screen_h = screen['width'], screen['height']
         screen_x, screen_y = screen.get('x', 0), screen.get('y', 0)
-        print(f"[Sol Preview] Using screen {screen_idx}: {screen_w}x{screen_h} at ({screen_x}, {screen_y})")
+        print(f"[Sol Preview] Using test screen {screen.get('index', 0)}: "
+              f"{screen_w}x{screen_h} at ({screen_x}, {screen_y})")
 
         # Create ArUco markers
         sol_cfg_for_assets = {
@@ -2366,7 +2449,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         _on_sol_rec_change()  # Init state
         r += 1
 
-        ttk.Label(grp_rec, text="* Screen Recording is enabled if Webcam or Sol is recorded.", font=("Arial", 9, "italic")).grid(row=r, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_rec, text="* Screen Recording is enabled if Webcam or Sol is recorded.", font=self.f_hint_italic).grid(row=r, column=0, columnspan=2, sticky="w", **pad)
 
 
     def parse_rgb(self, s, default=(127,127,127)):
@@ -2424,30 +2507,24 @@ Controls: SPACE = Record point, Q = Cancel"""
         selected_dict_id = aruco_dict_map.get(self.sol_aruco_dict_var.get(), cv2.aruco.DICT_4X4_250)
         adict = cv2.aruco.getPredefinedDictionary(selected_dict_id)
 
-        monitors = getattr(self, 'preview_monitor_info', None) or get_monitor_info_windows()
-        if not monitors:
-            monitors = [{'index': 0, 'width': 1920, 'height': 1080, 'x': 0, 'y': 0}]
-        try:
-            screen_idx = int(self.sol_preview_screen_var.get().split(':')[0].strip())
-        except Exception:
-            screen_idx = 0
-        screen_idx = min(screen_idx, len(monitors) - 1)
-        screen = monitors[screen_idx]
+        screen = self.test_screen_monitor()
         screen_w, screen_h = screen['width'], screen['height']
         screen_x, screen_y = screen.get('x', 0), screen.get('y', 0)
 
-        # Tester (operator) monitor: a monitoring window that mirrors the user screen with the live
-        # gaze dot, so the operator can tell whether the subject is fixating the target BEFORE
-        # recording. Deliberately kept OFF the subject's screen so they cannot chase the dot (which
-        # would bias the accuracy measurement). Reuses the calib's tester-screen selector.
+        # Examiner (operator) monitor: a monitoring window that mirrors the subject screen with
+        # the live gaze dot, so the operator can tell whether the subject is fixating the target
+        # BEFORE recording. Deliberately kept OFF the subject's screen so they cannot chase the
+        # dot (which would bias the accuracy measurement) - hence no fallback to monitor 0.
+        monitors = getattr(self, 'monitor_info_list', None) or get_monitor_info_windows()
         try:
             tester_idx = int(self.sol_offset_tester_screen_var.get().split(':')[0].strip())
         except Exception:
             tester_idx = 1
-        if tester_idx >= len(monitors):
-            tester_idx = 0
-        dual_screen = (tester_idx != screen_idx) and len(monitors) > 1
+        dual_screen = (len(monitors) > 1 and 0 <= tester_idx < len(monitors)
+                       and tester_idx != screen.get('index', 0))
         tester_mon = monitors[tester_idx] if dual_screen else None
+        if not dual_screen:
+            print("[Accuracy Test] No separate Examiner Screen - examiner view suppressed.")
 
         sol_cfg_for_assets = {
             'marker_k': self.safe_get_int(self.sol_marker_k_var, 6),
@@ -2536,7 +2613,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             print(f"[Accuracy] could not bring window to front: {_e}")
 
         # Operator monitoring window on the tester screen (OpenCV, like the 2D calib tester view).
-        tester_win_name = "Tester View - Sol Accuracy Test"
+        tester_win_name = "Examiner View - Sol Accuracy Test"
         latest_scene = [None]   # (frame, step) from the worker; held so the view never blinks
         # Freshness of the worker's scene camera, as (age_reported_by_child, when_we_heard_it).
         # The child republishes the last homography at 15 Hz even when the scene stream is dead,
@@ -3150,7 +3227,10 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_gaze_smooth': self.safe_get_float(self.sol_gaze_smooth_var, 0.15),
             'sol_gaze_method': self.sol_gaze_method_var.get(),  # "3D" or "2D"
             'sol_quality_window': self.safe_get_float(self.sol_quality_window_var, 3.0),
+            # Both screens: resolve_tester_rect compares them to decide whether any
+            # examiner view may open at all.
             'sol_offset_tester_screen': self.sol_offset_tester_screen_var.get(),
+            'sol_offset_user_screen': self.sol_offset_user_screen_var.get(),
 
             # Recording
             'rec_resolution': self.rec_resolution_var.get(),
@@ -3164,6 +3244,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'webcam_oval_bottom_y': self.safe_get_float(self.webcam_oval_bottom_y_var, 0.84),
             'require_valid_start': self.require_valid_start_var.get(),
             'valid_start_threshold': self.safe_get_float(self.valid_start_threshold_var, 80.0),
+            'catch_enabled': self.catch_enabled_var.get(),
+            'catch_trials': self.safe_get_int(self.catch_trials_var, 3),
 
             # [NEW] Practice mode and Paper color
             'practice_mode': practice_mode,
@@ -3240,13 +3322,14 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_offset_mode': self.sol_offset_mode_var.get(),
             'sol_offset_user_screen': self.sol_offset_user_screen_var.get(),
             'sol_offset_tester_screen': self.sol_offset_tester_screen_var.get(),
-            'sol_preview_screen': self.sol_preview_screen_var.get() if hasattr(self, 'sol_preview_screen_var') else "0",
             'sol_quality_window': self.sol_quality_window_var.get(),
             'webcam_oval_size': self.webcam_oval_size_var.get(),
             'webcam_oval_bottom_x': self.webcam_oval_bottom_x_var.get(),
             'webcam_oval_bottom_y': self.webcam_oval_bottom_y_var.get(),
             'require_valid_start': self.require_valid_start_var.get(),
             'valid_start_threshold': self.valid_start_threshold_var.get(),
+            'catch_enabled': self.catch_enabled_var.get(),
+            'catch_trials': self.catch_trials_var.get(),
 
             # Stimulus settings
             'gaze_color': self.gaze_color_var.get(),
@@ -3262,6 +3345,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             'color_light': self.color_light_var.get(),
             'color_dark': self.color_dark_var.get(),
             'bg_color': self.bg_color_var.get(),
+            'ui_font_size': self.ui_font_size_var.get(),
             'scr_width_cm': self.scr_width_cm_var.get(),
             'view_dist_cm': self.view_dist_cm_var.get(),
             'interval_img_path': self.interval_img_path_var.get(),
@@ -3334,6 +3418,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.webcam_oval_bottom_y_var,
             self.require_valid_start_var,
             self.valid_start_threshold_var,
+            self.catch_enabled_var, self.catch_trials_var,
             self.rec_resolution_var, self.rec_webcam_var, self.rec_sol_data_var,
             self.rec_sol_raw_video_var,
             self.camera_idx_var, self.show_gaze_marker_var, self.paper_color_var,
@@ -3344,10 +3429,33 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.vf_rotate_var, self.vf_rot_speed_var,
             self.vf_max_deg_h_var, self.vf_max_deg_v_var,
         ]
-        if hasattr(self, 'sol_preview_screen_var'):
-            tracked_vars.append(self.sol_preview_screen_var)
+        tracked_vars.append(self.ui_font_size_var)
         for var in tracked_vars:
             var.trace_add('write', self._schedule_auto_save)
+
+    def _apply_ui_font(self):
+        """Resize the window's fonts in place.
+
+        Every ttk style and every per-widget `font=` here points at these objects, so Tk
+        re-measures and redraws on its own - there is no restyling pass and no rebuild.
+        The tabs are ScrollableFrames, so a larger font just scrolls rather than pushing
+        content out of reach."""
+        try:
+            size = int(self.ui_font_size_var.get())
+        except Exception:
+            return          # mid-edit empty/garbage value
+        if not 6 <= size <= 24:
+            return
+        self.ui_font_size = size
+        for key, delta in (('body', 0), ('hint', -1), ('hint_italic', -1),
+                           ('head', 1), ('big', 4)):
+            self.ui_fonts[key].configure(size=size + delta)
+        # About half the Entry/Spinbox/Combobox widgets here carry no explicit font and
+        # fall back to Tk's named fonts - and the vista theme IGNORES a style-level -font
+        # for exactly those three classes, so the style entries above cannot reach them.
+        # Moving the named fonts is what actually resizes them.
+        for name in ("TkDefaultFont", "TkTextFont"):
+            tkfont.nametofont(name).configure(size=size)
 
     def _auto_load_settings(self):
         """Silently load settings from file on startup."""
@@ -3382,16 +3490,23 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'sol_offset_target_size' in data: self.sol_offset_target_size_var.set(str(data['sol_offset_target_size']))
             if 'sol_offset_num_points' in data: self.sol_offset_num_points_var.set(str(data['sol_offset_num_points']))
             if 'sol_offset_mode' in data: self.sol_offset_mode_var.set(str(data['sol_offset_mode']))
-            if 'sol_offset_user_screen' in data: self.sol_offset_user_screen_var.set(data['sol_offset_user_screen'])
-            if 'sol_offset_tester_screen' in data: self.sol_offset_tester_screen_var.set(data['sol_offset_tester_screen'])
-            if 'sol_preview_screen' in data and hasattr(self, 'sol_preview_screen_var'):
-                self.sol_preview_screen_var.set(data['sol_preview_screen'])
+            # Screens are re-resolved against the monitors connected RIGHT NOW: a saved label
+            # can name a display that has since been unplugged, renamed or re-resolutioned,
+            # and restoring it blindly left the picker showing a screen that no longer exists
+            # while the tests silently ran on whatever monitor that index now points at.
+            test_opts = screen_options(getattr(self, 'monitor_info_list', []))
+            if 'sol_offset_user_screen' in data:
+                self.sol_offset_user_screen_var.set(valid_screen_option(data['sol_offset_user_screen'], test_opts))
+            if 'sol_offset_tester_screen' in data:
+                self.sol_offset_tester_screen_var.set(valid_screen_option(data['sol_offset_tester_screen'], test_opts))
             if 'sol_quality_window' in data: self.sol_quality_window_var.set(str(data['sol_quality_window']))
             if 'webcam_oval_size' in data: self.webcam_oval_size_var.set(str(data['webcam_oval_size']))
             if 'webcam_oval_bottom_x' in data: self.webcam_oval_bottom_x_var.set(str(data['webcam_oval_bottom_x']))
             if 'webcam_oval_bottom_y' in data: self.webcam_oval_bottom_y_var.set(str(data['webcam_oval_bottom_y']))
             if 'require_valid_start' in data: self.require_valid_start_var.set(bool(data['require_valid_start']))
             if 'valid_start_threshold' in data: self.valid_start_threshold_var.set(str(data['valid_start_threshold']))
+            if 'catch_enabled' in data: self.catch_enabled_var.set(bool(data['catch_enabled']))
+            if 'catch_trials' in data: self.catch_trials_var.set(str(data['catch_trials']))
 
             if 'gaze_color' in data: self.gaze_color_var.set(data['gaze_color'])
             if 'gaze_radius' in data: self.gaze_radius_var.set(str(data['gaze_radius']))
@@ -3406,6 +3521,9 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'color_light' in data: self.color_light_var.set(data['color_light'])
             if 'color_dark' in data: self.color_dark_var.set(data['color_dark'])
             if 'bg_color' in data: self.bg_color_var.set(data['bg_color'])
+            if 'ui_font_size' in data:
+                try: self.ui_font_size_var.set(int(data['ui_font_size']))   # trace applies it
+                except Exception: pass
             if 'scr_width_cm' in data: self.scr_width_cm_var.set(str(data['scr_width_cm']))
             if 'view_dist_cm' in data: self.view_dist_cm_var.set(str(data['view_dist_cm']))
             if 'interval_img_path' in data: self.interval_img_path_var.set(data['interval_img_path'])

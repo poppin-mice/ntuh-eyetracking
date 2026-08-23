@@ -12,10 +12,10 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QPushButton, QLabel, QCheckBox, QListWidget, QListWidgetItem,
     QFileDialog, QStatusBar, QMenuBar, QGroupBox, QFrame,
-    QLineEdit, QRadioButton, QButtonGroup,
+    QLineEdit, QRadioButton, QButtonGroup, QSpinBox, QScrollArea,
 )
 from PyQt6.QtCore import (
-    Qt, QTimer, QMimeData, pyqtSignal, QPoint,
+    Qt, QTimer, QMimeData, pyqtSignal, QPoint, QSettings,
 )
 from PyQt6.QtGui import (
     QImage, QPainter, QColor, QPen, QBrush, QFont, QDrag, QAction,
@@ -64,9 +64,21 @@ class ReplayerApp(QMainWindow):
         # -- Main splitter (Config | Videos) --------------------------------
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Config panel
+        # Config panel, inside a scroll area. Its five group boxes grow with the font, and
+        # a plain child would push the window's minimum height past the screen - at 16 pt the
+        # status bar dropped off the bottom of a maximized window. Scrolling caps the demand.
         self.config_panel = ConfigPanel()
-        self.main_splitter.addWidget(self.config_panel)
+        cfg_scroll = QScrollArea()
+        cfg_scroll.setWidget(self.config_panel)
+        cfg_scroll.setWidgetResizable(True)
+        cfg_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        cfg_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Floor the pane at the panel's own minimum plus the vertical scrollbar, so the
+        # splitter cannot be dragged narrower than the content and force a horizontal
+        # scrollbar. Vertical scrolling is the point; horizontal is just awkward.
+        cfg_scroll.setMinimumWidth(self.config_panel.minimumWidth()
+                                   + cfg_scroll.verticalScrollBar().sizeHint().width() + 4)
+        self.main_splitter.addWidget(cfg_scroll)
 
         # Video area splitter (Main | Side stack)
         self.video_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -100,7 +112,19 @@ class ReplayerApp(QMainWindow):
         root_layout.addWidget(self.timeline)
 
         # -- Status bar -----------------------------------------------------
-        self.statusBar().showMessage("Ready — Open a session folder to begin")
+        sb = self.statusBar()
+        self._font_spin = QSpinBox()
+        self._font_spin.setRange(7, 20)
+        self._font_spin.setPrefix("Font ")
+        self._font_spin.setToolTip("Text size of this window")
+        self._font_spin.setValue(self._saved_font_size())
+        self._font_spin.valueChanged.connect(self._apply_font_size)
+        sb.addWidget(self._font_spin)
+        # The status text is a widget, not showMessage(): showMessage() hides every widget
+        # added with addWidget(), which would make the Font spinner vanish on the first
+        # session load and never come back.
+        self._status_label = QLabel("Ready — Open a session folder to begin")
+        sb.addWidget(self._status_label, 1)
 
         # -- Wiring ---------------------------------------------------------
         self.engine.time_changed.connect(self._on_time_changed)
@@ -153,18 +177,57 @@ class ReplayerApp(QMainWindow):
             QPushButton:pressed { background: #555; }
             QCheckBox { spacing: 6px; color: #ccc; }
             QListWidget { background: #2a2a2a; border: 1px solid #444; border-radius: 4px;
-                          color: #ddd; font-family: Consolas; font-size: 12px; }
+                          color: #ddd; font-family: Consolas; }
             QListWidget::item:selected { background: #0078d4; }
             QLabel { color: #ccc; }
             QSplitter::handle { background: #444; }
             QSplitter::handle:horizontal { width: 3px; }
             QSplitter::handle:vertical { height: 3px; }
-            QStatusBar { background: #252525; color: #888; font-size: 11px; }
+            QStatusBar { background: #252525; color: #888; }
             QMenuBar { background: #2a2a2a; color: #ccc; }
             QMenuBar::item:selected { background: #0078d4; }
             QMenu { background: #2a2a2a; color: #ccc; border: 1px solid #555; }
             QMenu::item:selected { background: #0078d4; }
         """)
+        self._apply_font_size(self._font_spin.value())
+
+    # -- Font size ----------------------------------------------------------
+
+    _SETTINGS = ("NTUH", "EyeTrackingReplayer")
+
+    def _saved_font_size(self):
+        try:
+            return int(QSettings(*self._SETTINGS).value("ui_font_size",
+                                                        QApplication.font().pointSize()))
+        except Exception:
+            return QApplication.font().pointSize()
+
+    def _apply_font_size(self, size):
+        """Resize every widget in the window and remember the choice.
+
+        QApplication.setFont alone only reaches widgets created AFTER the call - existing
+        ones keep the font they already resolved - so each live widget is set explicitly.
+        The stylesheet must also carry no `font-size`: those rules beat the widget font and
+        used to pin the list, status bar and hint labels to a fixed px size.
+
+        Painter fonts in the timeline/video overlays are deliberately left out: they are
+        drawn onto the video canvas and sized to it, not to the UI chrome.
+        """
+        size = int(size)
+        if not 6 <= size <= 24:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        f = app.font()
+        f.setPointSize(size)
+        app.setFont(f)                      # widgets created later
+        for w in app.allWidgets():          # ...and the ones already up
+            w.setFont(f)
+        try:
+            QSettings(*self._SETTINGS).setValue("ui_font_size", size)
+        except Exception:
+            pass
 
     # -- Session loading ----------------------------------------------------
 
@@ -174,9 +237,9 @@ class ReplayerApp(QMainWindow):
         if not d:
             return
         if self.engine.load_session(d):
-            self.statusBar().showMessage(f"Loaded: {os.path.basename(d)}")
+            self._status_label.setText(f"Loaded: {os.path.basename(d)}")
         else:
-            self.statusBar().showMessage("Failed to load session — no valid timestamps found")
+            self._status_label.setText("Failed to load session — no valid timestamps found")
 
     def _on_session_loaded(self):
         self.config_panel.set_session_path(self.engine.session_dir)
