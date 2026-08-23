@@ -75,8 +75,21 @@ VA_center_opt
            while the ':'-split index parsers resolved it to whatever monitor now sits at
            that index - so a test could run on a screen the operator never chose. All three
            are now re-resolved against the connected monitors (shared with the calibration
-           app's picker), keeping the chosen index where it still exists and otherwise
-           falling back to the first screen.
+           app's picker), matched on the saved display's INDEX rather than on the whole
+           saved label: the label also carries the monitor name and resolution, both of
+           which Windows can report differently after a resolution or aspect-ratio change,
+           and either used to invalidate the match and move the selection to another
+           display. The choice is now just re-labelled, and only a display that is really
+           gone falls back to the first screen.
+    1.3.0  A "Font" spinner on the settings window's button bar (always reachable, whichever
+           tab is open), applied live and remembered between runs. The settings text is small
+           on the high-resolution clinic screens, more so now that the app is per-monitor DPI
+           aware and Windows no longer stretches the window. The ttk styles and every
+           per-widget font= now share five live font objects, so resizing those restyles the
+           window with no rebuild; the Tk named fonts move too, because the vista theme
+           ignores a style-level -font for Entry/Combobox/Spinbox and about half of those
+           widgets here carry no explicit font. 15 hardcoded ("Arial", 9/10/12) sizes are
+           gone with it.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -120,7 +133,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.2.2",
+    "VA_center_opt": "1.3.0",
     "calibration": "1.2.0",
     "replayer": "1.0.0",
 }

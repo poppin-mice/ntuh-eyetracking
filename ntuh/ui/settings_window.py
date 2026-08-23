@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, colorchooser, filedialog, messagebox
+from tkinter import ttk, colorchooser, filedialog, messagebox, font as tkfont
 
 import cv2
 import numpy as np
@@ -111,8 +111,25 @@ class SettingsWindow(tk.Tk):
         self.ui_font_size = font_size  # Store for later use
         # Dynamic padding based on screen size
         self.ui_pad = {'padx': 5 if screen_height <= 1080 else 10, 'pady': 2 if screen_height <= 1080 else 5}
-        LABEL_FONT = ("Arial", font_size)
-        ENTRY_FONT = ("Arial", font_size)
+        # Live font objects. The ttk styles below and every per-widget `font=` in this
+        # window point at these, so the "Font" spinner only has to resize the objects -
+        # Tk re-measures and redraws the widgets itself (_apply_ui_font). The offsets
+        # keep the relative sizes the UI was designed with (hints smaller, headings and
+        # the big action buttons larger).
+        self.ui_fonts = {
+            'body':        tkfont.Font(family="Arial", size=font_size),
+            'hint':        tkfont.Font(family="Arial", size=font_size - 1),
+            'hint_italic': tkfont.Font(family="Arial", size=font_size - 1, slant="italic"),
+            'head':        tkfont.Font(family="Arial", size=font_size + 1, weight="bold"),
+            'big':         tkfont.Font(family="Arial", size=font_size + 4, weight="bold"),
+        }
+        self.f_body, self.f_hint = self.ui_fonts['body'], self.ui_fonts['hint']
+        self.f_hint_italic, self.f_head = self.ui_fonts['hint_italic'], self.ui_fonts['head']
+        self.f_big = self.ui_fonts['big']
+        self.ui_font_size_var = tk.IntVar(value=font_size)
+
+        LABEL_FONT = self.f_body
+        ENTRY_FONT = self.f_body
 
         # 預設校正資料夾
         self.default_calib_dir = APP_DIR / "calibration_profiles"
@@ -236,23 +253,18 @@ class SettingsWindow(tk.Tk):
 
         # --- Consistent ttk styling ---
         style = ttk.Style()
-        heading_size = font_size + 1
-        big_font_size = font_size + 4
 
-        # Widget fonts - consistent across the entire UI
-        style.configure("TLabel", font=("Arial", font_size))
-        style.configure("TCheckbutton", font=("Arial", font_size))
-        style.configure("TButton", font=("Arial", font_size))
-        style.configure("TSpinbox", font=("Arial", font_size))
-        style.configure("TCombobox", font=("Arial", font_size))
-        style.configure("TEntry", font=("Arial", font_size))
-        style.configure("TRadiobutton", font=("Arial", font_size))
+        # Widget fonts - consistent across the entire UI. These reference the live font
+        # objects, so the Font spinner resizes everything without a restyling pass.
+        for cls in ("TLabel", "TCheckbutton", "TButton", "TSpinbox",
+                    "TCombobox", "TEntry", "TRadiobutton"):
+            style.configure(cls, font=self.f_body)
         # LabelFrame headings - slightly larger and bold
-        style.configure("TLabelframe.Label", font=("Arial", heading_size, "bold"))
+        style.configure("TLabelframe.Label", font=self.f_head)
         # Notebook tabs
-        style.configure("TNotebook.Tab", font=("Arial", font_size), padding=[10, 4])
+        style.configure("TNotebook.Tab", font=self.f_body, padding=[10, 4])
         # Big action buttons
-        style.configure("Big.TButton", font=("Arial", big_font_size, "bold"), padding=8)
+        style.configure("Big.TButton", font=self.f_big, padding=8)
 
         # --- Layout: pack buttons FIRST so they always show ---
         btn_frame = ttk.Frame(self)
@@ -264,6 +276,14 @@ class SettingsWindow(tk.Tk):
         self.btn_start.pack(side="right", padx=10)
         self.btn_practice = ttk.Button(btn_frame, text="Start Practice", command=self.on_start_practice, state="disabled", style="Big.TButton")
         self.btn_practice.pack(side="right", padx=10)
+
+        # Font size lives on the button bar, not in a tab, so it is reachable from
+        # whichever tab is too small to read.
+        ttk.Label(btn_frame, text="Font:").pack(side="left")
+        ttk.Spinbox(btn_frame, from_=7, to=20, width=4,
+                    textvariable=self.ui_font_size_var).pack(side="left", padx=(4, 0))
+        self.ui_font_size_var.trace_add("write", lambda *a: self._apply_ui_font())
+        self._apply_ui_font()   # pull the named fonts up to the screen-derived size too
 
         # --- Notebook (fills remaining space) ---
         self.notebook = ttk.Notebook(self)
@@ -392,7 +412,7 @@ class SettingsWindow(tk.Tk):
         ttk.Spinbox(grp_guide, textvariable=self.webcam_oval_bottom_x_var, from_=0.0, to=1.0, increment=0.02, width=6).pack(side="left", padx=2)
         ttk.Label(grp_guide, text="Bottom Y:", font=label_font).pack(side="left", padx=(12, 2))
         ttk.Spinbox(grp_guide, textvariable=self.webcam_oval_bottom_y_var, from_=0.0, to=1.0, increment=0.02, width=6).pack(side="left", padx=2)
-        ttk.Label(grp_guide, text="(fractions of the camera frame)", font=("Arial", 9), foreground="gray").pack(side="left", padx=8)
+        ttk.Label(grp_guide, text="(fractions of the camera frame)", font=self.f_hint, foreground="gray").pack(side="left", padx=8)
         
 
 
@@ -618,7 +638,7 @@ class SettingsWindow(tk.Tk):
         ttk.Spinbox(gate_frame, textvariable=self.valid_start_threshold_var, from_=0, to=100,
                     increment=5, width=6).pack(side="left")
         ttk.Label(gate_frame, text="(enabled trackers, in the gaze-quality window)",
-                  font=("Arial", 9), foreground="gray").pack(side="left", padx=8)
+                  font=self.f_hint, foreground="gray").pack(side="left", padx=8)
 
         # ── Section 2a: VA Stimulus (shown when VA selected) ──
         self.grp_va_stim = ttk.LabelFrame(parent, text="VA Stimulus")
@@ -831,8 +851,8 @@ class SettingsWindow(tk.Tk):
         gaze_methods = ["3D", "2D"]
         self.cmb_gaze_method = ttk.Combobox(grp_gaze, textvariable=self.sol_gaze_method_var, values=gaze_methods, state="readonly", width=20)
         self.cmb_gaze_method.grid(row=0, column=1, **pad)
-        ttk.Label(grp_gaze, text="3D: Ray-plane intersection (uses gaze_3d)", font=("Arial", 9), foreground="gray").grid(row=1, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(grp_gaze, text="2D: Homography mapping (uses gaze_2d)", font=("Arial", 9), foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_gaze, text="3D: Ray-plane intersection (uses gaze_3d)", font=self.f_hint, foreground="gray").grid(row=1, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_gaze, text="2D: Homography mapping (uses gaze_2d)", font=self.f_hint, foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", **pad)
         self.btn_clear_homography = ttk.Button(grp_gaze, text="Clear Homography Cache", command=self._clear_homography_cache)
         self.btn_clear_homography.grid(row=0, column=2, **pad)
 
@@ -848,11 +868,11 @@ class SettingsWindow(tk.Tk):
         ttk.Label(grp_q, text="Quality Window (s):", font=l_font).grid(row=0, column=0, sticky="w", **pad)
         ttk.Spinbox(grp_q, textvariable=self.sol_quality_window_var, from_=0.5, to=30.0, increment=0.5, font=e_font, width=8).grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(grp_q, text="Rolling window for the live missing-data-rate shown on the tester dashboard during the test.",
-                  font=("Arial", 9), foreground="gray").grid(row=1, column=0, columnspan=4, sticky="w", **pad)
+                  font=self.f_hint, foreground="gray").grid(row=1, column=0, columnspan=4, sticky="w", **pad)
 
         # Preview Gaze Mapping
         grp_preview = ttk.LabelFrame(parent, text="Preview Gaze Mapping"); grp_preview.pack(fill="x", padx=10, pady=5)
-        ttk.Label(grp_preview, text="Test Sol gaze projection on screen with ArUco markers.", font=("Arial", 10)).grid(row=0, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(grp_preview, text="Test Sol gaze projection on screen with ArUco markers.", font=self.f_body).grid(row=0, column=0, columnspan=4, sticky="w", **pad)
 
         # Screen selection for preview
         ttk.Label(grp_preview, text="Screen:", font=l_font).grid(row=1, column=0, sticky="w", **pad)
@@ -874,7 +894,7 @@ class SettingsWindow(tk.Tk):
         self.btn_sol_accuracy_test = ttk.Button(grp_preview, text="Accuracy Test", command=self.run_sol_accuracy_test, state="disabled")
         self.btn_sol_accuracy_test.grid(row=2, column=2, **pad)
 
-        ttk.Label(grp_preview, text="Press Q or ESC to exit preview", font=("Arial", 9), foreground="gray").grid(row=3, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(grp_preview, text="Press Q or ESC to exit preview", font=self.f_hint, foreground="gray").grid(row=3, column=0, columnspan=4, sticky="w", **pad)
 
     def build_sol_offset_tab(self, parent, l_font, e_font):
         """Build the Sol Offset Calibration tab (simplified, auto-detects 2D/3D method)."""
@@ -884,9 +904,9 @@ class SettingsWindow(tk.Tk):
         method_frame = ttk.Frame(parent)
         method_frame.pack(fill="x", padx=10, pady=5)
         ttk.Label(method_frame, text="Current Gaze Method:", font=l_font).pack(side="left")
-        self.lbl_current_gaze_method = ttk.Label(method_frame, text="3D", font=("Arial", 12, "bold"), foreground="blue")
+        self.lbl_current_gaze_method = ttk.Label(method_frame, text="3D", font=self.f_big, foreground="blue")
         self.lbl_current_gaze_method.pack(side="left", padx=10)
-        ttk.Label(method_frame, text="(Set in Sol Settings tab)", font=("Arial", 9), foreground="gray").pack(side="left")
+        ttk.Label(method_frame, text="(Set in Sol Settings tab)", font=self.f_hint, foreground="gray").pack(side="left")
 
         # Target Settings
         grp_target = ttk.LabelFrame(parent, text="Calibration Settings")
@@ -923,20 +943,20 @@ class SettingsWindow(tk.Tk):
         grp_status.pack(fill="x", padx=10, pady=5)
 
         # 3D offset status
-        ttk.Label(grp_status, text="3D Offset:", font=("Arial", 10, "bold")).grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(grp_status, text="3D Offset:", font=self.f_head).grid(row=0, column=0, sticky="w", **pad)
         self.lbl_sol_offset_pitch = ttk.Label(grp_status, text="Pitch: --", font=l_font)
         self.lbl_sol_offset_pitch.grid(row=0, column=1, sticky="w", **pad)
         self.lbl_sol_offset_yaw = ttk.Label(grp_status, text="Yaw: --", font=l_font)
         self.lbl_sol_offset_yaw.grid(row=0, column=2, sticky="w", **pad)
 
         # 2D offset status
-        ttk.Label(grp_status, text="2D Offset:", font=("Arial", 10, "bold")).grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(grp_status, text="2D Offset:", font=self.f_head).grid(row=1, column=0, sticky="w", **pad)
         self.lbl_sol_2d_offset_status = ttk.Label(grp_status, text="Not calibrated", font=l_font)
         self.lbl_sol_2d_offset_status.grid(row=1, column=1, sticky="w", **pad)
-        self.lbl_sol_2d_offset_points = ttk.Label(grp_status, text="", font=("Arial", 10))
+        self.lbl_sol_2d_offset_points = ttk.Label(grp_status, text="", font=self.f_body)
         self.lbl_sol_2d_offset_points.grid(row=1, column=2, sticky="w", **pad)
 
-        self.lbl_sol_offset_timestamp = ttk.Label(grp_status, text="Last Calibrated: Never", font=("Arial", 10))
+        self.lbl_sol_offset_timestamp = ttk.Label(grp_status, text="Last Calibrated: Never", font=self.f_body)
         self.lbl_sol_offset_timestamp.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
 
         # Buttons
@@ -976,7 +996,7 @@ class SettingsWindow(tk.Tk):
 
 Controls: SPACE = Record point, Q = Cancel"""
 
-        ttk.Label(grp_instr, text=instr_text, font=("Arial", 10), justify="left").pack(anchor="w", **pad)
+        ttk.Label(grp_instr, text=instr_text, font=self.f_body, justify="left").pack(anchor="w", **pad)
 
         # Bind gaze method variable to update display
         self.sol_gaze_method_var.trace_add("write", lambda *args: self._update_gaze_method_display())
@@ -2357,7 +2377,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         _on_sol_rec_change()  # Init state
         r += 1
 
-        ttk.Label(grp_rec, text="* Screen Recording is enabled if Webcam or Sol is recorded.", font=("Arial", 9, "italic")).grid(row=r, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_rec, text="* Screen Recording is enabled if Webcam or Sol is recorded.", font=self.f_hint_italic).grid(row=r, column=0, columnspan=2, sticky="w", **pad)
 
 
     def parse_rgb(self, s, default=(127,127,127)):
@@ -3253,6 +3273,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             'color_light': self.color_light_var.get(),
             'color_dark': self.color_dark_var.get(),
             'bg_color': self.bg_color_var.get(),
+            'ui_font_size': self.ui_font_size_var.get(),
             'scr_width_cm': self.scr_width_cm_var.get(),
             'view_dist_cm': self.view_dist_cm_var.get(),
             'interval_img_path': self.interval_img_path_var.get(),
@@ -3337,8 +3358,33 @@ Controls: SPACE = Record point, Q = Cancel"""
         ]
         if hasattr(self, 'sol_preview_screen_var'):
             tracked_vars.append(self.sol_preview_screen_var)
+        tracked_vars.append(self.ui_font_size_var)
         for var in tracked_vars:
             var.trace_add('write', self._schedule_auto_save)
+
+    def _apply_ui_font(self):
+        """Resize the window's fonts in place.
+
+        Every ttk style and every per-widget `font=` here points at these objects, so Tk
+        re-measures and redraws on its own - there is no restyling pass and no rebuild.
+        The tabs are ScrollableFrames, so a larger font just scrolls rather than pushing
+        content out of reach."""
+        try:
+            size = int(self.ui_font_size_var.get())
+        except Exception:
+            return          # mid-edit empty/garbage value
+        if not 6 <= size <= 24:
+            return
+        self.ui_font_size = size
+        for key, delta in (('body', 0), ('hint', -1), ('hint_italic', -1),
+                           ('head', 1), ('big', 4)):
+            self.ui_fonts[key].configure(size=size + delta)
+        # About half the Entry/Spinbox/Combobox widgets here carry no explicit font and
+        # fall back to Tk's named fonts - and the vista theme IGNORES a style-level -font
+        # for exactly those three classes, so the style entries above cannot reach them.
+        # Moving the named fonts is what actually resizes them.
+        for name in ("TkDefaultFont", "TkTextFont"):
+            tkfont.nametofont(name).configure(size=size)
 
     def _auto_load_settings(self):
         """Silently load settings from file on startup."""
@@ -3405,6 +3451,9 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'color_light' in data: self.color_light_var.set(data['color_light'])
             if 'color_dark' in data: self.color_dark_var.set(data['color_dark'])
             if 'bg_color' in data: self.bg_color_var.set(data['bg_color'])
+            if 'ui_font_size' in data:
+                try: self.ui_font_size_var.set(int(data['ui_font_size']))   # trace applies it
+                except Exception: pass
             if 'scr_width_cm' in data: self.scr_width_cm_var.set(str(data['scr_width_cm']))
             if 'view_dist_cm' in data: self.view_dist_cm_var.set(str(data['view_dist_cm']))
             if 'interval_img_path' in data: self.interval_img_path_var.set(data['interval_img_path'])

@@ -39,6 +39,11 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Webcam |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
 
+**Font** (bottom bar, next to the Start buttons): text size of this settings window. It
+applies as you change it and is remembered between runs. The default is picked from the
+screen height; raise it if the settings text is small on a high-resolution clinic monitor.
+The tabs scroll, so a larger font never pushes controls out of reach.
+
 ### General Tab - Stimulus
 
 | Setting | Description | Default |

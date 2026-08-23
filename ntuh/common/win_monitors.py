@@ -146,6 +146,19 @@ def screen_options(monitors):
             for m in monitors] or ["0: Primary Display"]
 
 
+def _screen_key(label):
+    """(index, monitor name) from a picker label - the parts that survive a mode change.
+
+    The label also carries the resolution, which is exactly what changes when the operator
+    switches a display's resolution or aspect ratio, so it must not take part in matching."""
+    idx, _, rest = str(label).partition(':')
+    try:
+        idx = int(idx.strip())
+    except Exception:
+        idx = -1
+    return idx, rest.split('(')[0].strip()
+
+
 def valid_screen_option(saved, options):
     """Resolve a screen setting restored from a settings file to a CURRENT picker option.
 
@@ -154,17 +167,26 @@ def valid_screen_option(saved, options):
     a screen that no longer exists, while the ':'-split index parsers silently resolved it to
     a different monitor - so a test could run on a screen the operator never picked.
 
-    Exact match wins. Otherwise keep the index if it still exists (that is also what VA's
-    bare "0"/"1" defaults mean), refreshed to that monitor's current label; else fall back to
-    the first screen."""
+    Matched most-specific first, and never on the resolution, so changing a display's
+    resolution or ratio re-labels the operator's choice instead of moving it:
+      1. the exact label,
+      2. same index AND same monitor name - that display, at a new resolution,
+      3. the index alone - still that display; also covers VA's bare "0"/"1" defaults,
+      4. the first screen, only once the chosen index is gone.
+
+    The INDEX always beats the name. Matching a moved display by name was tried and
+    backfired: Windows can report a different (or empty) monitor name after a mode change,
+    and then the saved display-0 setting jumped to display 1 just because 1 still carried
+    the old name. The index is what the operator picked and what every ':'-split parser in
+    the suite reads, so a rename must not move the selection."""
     if not options:
         return saved
     if saved in options:
         return saved
-    try:
-        idx = int(str(saved).split(':')[0].strip())
-    except Exception:
-        idx = 0
+    idx, name = _screen_key(saved)
+    for opt in options:
+        if name and _screen_key(opt) == (idx, name):
+            return opt
     return options[idx] if 0 <= idx < len(options) else options[0]
 
 
