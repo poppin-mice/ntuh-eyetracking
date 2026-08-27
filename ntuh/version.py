@@ -129,6 +129,26 @@ VA_center_opt
            Removed the per-test VA_<user>_opt.csv summary: it duplicated trial_events.csv in a
            less useful form (no timestamps, no trial_type) and was the only reader of the
            in-memory `results` list, which is gone with it.
+    1.5.0  Catch trials are now placed by an adaptive scheduler instead of a fixed window,
+           and the setting means "N negative samples wanted", not "N catch trials". The
+           1.4.0 scheduler drew N slots from trials 2-13 regardless of N or the subject: a
+           subject who passes everything finishes in 9 trials, so a third of that window was
+           dead and the catch trials landed as a block AFTER the staircase (observed in the
+           first field session: both catch trials were trials 10-11); with N=2 both landing
+           there had a 9% chance every session. Now (CatchScheduler in vavf/stimuli.py):
+           trials 1-2 are always normal; a FAILED normal trial is always followed by a normal
+           one; otherwise the next trial is a catch with probability k/(k+m-1), k = catch
+           trials still needed, m = passes still needed to finish the staircase - a uniform
+           shuffle of the remaining catches among the slots before the final normal trial.
+           Chosen by Monte-Carlo simulation over the real staircase against the fixed window
+           and two fixed-probability (75%) variants: it is the only one whose sequence is
+           unpredictable from the previous trial (a next-trial guesser does no better than
+           the base rate), it spreads catches over the whole test for small N instead of
+           bunching them in the first half, and for a subject who keeps passing every catch
+           trial fits before the staircase ends. Real FAIL trials count toward N (they are
+           negatives already), so a low-VA subject gets few or no catch trials instead of a
+           block of them at the end; only what is still owed is forced in when the staircase
+           ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -197,12 +217,24 @@ replayer
            than the content.
            Gaze-point labels keep their own size - they are drawn on the video canvas in video
            coordinates and scale with it, not with the UI chrome.
+    1.2.0  Catch trials (VA_center_opt >= 1.4.0, trial_events.csv trial_type=catch) are now
+           shown as such: the trial row carries a CATCH tag on a violet tint with a tooltip,
+           the timeline marker gets a violet dashed outline over its label colour, and the
+           Trials group title reads e.g. "Trials (9 normal + 2 catch)". Before this the
+           replayer listed a catch trial like any other, so a reviewer could take its chance
+           PASS/FAIL for an acuity result. review_labels.json now carries "trial_type"
+           ("normal"/"catch") per trial (sessions recorded before the column existed read as
+           normal), so the training pipeline can treat catch trials - negatives by
+           construction - separately from the reviewer's pass/fail. Labels still pre-fill
+           from the auto result; nothing else in the review workflow changed. cpd in the
+           trial list is shown to one decimal (the catch frequency is a derived value like
+           29.333345...).
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.4.0",
+    "VA_center_opt": "1.5.0",
     "calibration": "1.2.0",
-    "replayer": "1.1.0",
+    "replayer": "1.2.0",
 }
 
 

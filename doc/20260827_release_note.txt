@@ -1,0 +1,81 @@
+==============================================================================
+ NTUH Eye-Tracking Suite - Release Notes
+ Build date: 2026-08-27
+==============================================================================
+
+This release builds on the 2026-08-23 build (same three programs:
+VA_center_opt.exe, calibration.exe, replayer.exe). How to run, where data is
+saved, and the per-participant workflow are UNCHANGED - see the earlier release
+notes in this folder for those. Below are only the changes since 2026-08-23.
+
+------------------------------------------------------------------------------
+ VERSION NUMBERS
+------------------------------------------------------------------------------
+Each program shows its version in the window title bar:
+      VA_center_opt   v1.5.0   (changed this release)
+      calibration     v1.2.0   (unchanged)
+      replayer        v1.2.0   (changed this release)
+Please include the version shown in the title when reporting an issue.
+
+------------------------------------------------------------------------------
+ CATCH TRIALS: SMARTER PLACEMENT  (VA_center_opt)  -- v1.5.0
+------------------------------------------------------------------------------
+The Negative Sample Collection Mode (General tab, "Collect negative samples:
+N") keeps the same control and the same saved settings, but two things about
+it changed:
+
+  - N now means "N negative samples wanted", not "N catch trials". A normal
+    trial the subject FAILS is already a negative sample, so real fails count
+    toward N and only the remainder is filled with catch trials. A subject who
+    keeps failing therefore gets few or no catch trials, instead of a block of
+    them tacked on at the end.
+
+  - Catch trials are no longer drawn from a fixed set of early slots. In the
+    first field session (A01, 2026-08-25) both catch trials came AFTER the
+    staircase had finished, as trials 10 and 11, because a subject who passes
+    everything finishes in 9 trials and the old slots reached to trial 13.
+    Now each trial is decided as it comes: trials 1 and 2 are always normal, a
+    failed trial is always followed by a normal one, and otherwise the chance
+    that the next trial is a catch tracks how many are still owed versus how
+    many normal trials the staircase still needs. In practice: the catch trials
+    spread over the whole test, the subject cannot learn a pattern (no fixed
+    "real, blank, real, blank" alternation), two catch trials can occasionally
+    come back to back, and for a subject who keeps passing they always fit
+    before the test ends. This was chosen by simulation against the old scheme
+    and two simpler fixed-probability variants.
+
+Suggested N: 6 for adults, 3-4 for young children. A session gains roughly
+7 seconds per catch trial.
+
+------------------------------------------------------------------------------
+ CATCH TRIALS VISIBLE IN THE REPLAYER  (replayer)  -- v1.2.0
+------------------------------------------------------------------------------
+Before this build the replayer listed a catch trial like any other, so a
+reviewer could mistake its chance PASS/FAIL for an acuity result. Now:
+
+  - the trial row shows a CATCH tag on a violet background (hover for a
+    reminder that its pass/fail does not reflect acuity);
+  - the timeline marker of a catch trial has a violet dashed outline over its
+    usual pass/fail/discard colour;
+  - the Trials group title counts them, e.g. "Trials (9 normal + 2 catch)";
+  - review_labels.json gains "trial_type": "normal" | "catch" per trial, so the
+    training pipeline can treat catch trials (negatives by construction)
+    separately from the reviewer's pass/fail label.
+
+Labels still pre-fill from the test's result and the 1/2/3 keys work as
+before. Sessions recorded before catch trials existed show every trial as
+normal. cpd values in the trial list are shown to one decimal.
+
+------------------------------------------------------------------------------
+ NOTES
+------------------------------------------------------------------------------
+- The catch-trial mode is for data-collection sessions; leave it OFF for
+  ordinary clinical VA screening.
+- The mode still needs a display fine enough to draw a grating above 20 cpd
+  (4K or 3200x2000 at 50 cm is fine; 1080p is not) - it refuses to run and
+  says so on the console otherwise.
+- Keep the Chronus phone app up to date (this build's Sol SDK needs Chronus
+  2.2.1 or newer, unchanged from the previous build).
+- Detailed per-program documentation: VA_center_opt.md, calibration.md,
+  replayer.md (in this folder).
+==============================================================================
