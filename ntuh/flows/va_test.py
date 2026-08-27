@@ -24,7 +24,7 @@ from ntuh.common.optics import to_rgb_tuple, mean_color_rgb
 from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import resolve_tester_rect
 from ntuh.vavf.stimuli import (
-    CATCH_CYCLES_PER_PX, DO_BLUR, Staircase, catch_trial_cpd,
+    CATCH_CYCLES_PER_PX, DO_BLUR, CatchScheduler, Staircase, catch_trial_cpd,
     generate_grating_oriented_patch, get_va_result_cpd, prepare_patch_grid,
 )
 from ntuh.tracking.sol_quality import (
@@ -414,22 +414,22 @@ def run_test(cfg, sol_context=None):
     # and scores exactly like a normal trial to the subject, but never touches the staircase
     # or the VA score.
     catch_cpd = catch_trial_cpd(W, cfg.get('screen_width_deg', 0.0))
-    catch_remaining = int(cfg.get('catch_trials', 0)) if cfg.get('catch_enabled') else 0
-    if catch_remaining and catch_cpd <= stair.maxv:
+    catch_quota = int(cfg.get('catch_trials', 0)) if cfg.get('catch_enabled') else 0
+    if catch_quota and catch_cpd <= stair.maxv:
         # Nothing above the staircase ceiling is renderable here, so a "catch" would be an
         # ordinary hard trial. Refuse rather than silently collect mislabelled samples.
         print(f"[Catch] DISABLED: display can only render {catch_cpd:.1f} cpd without aliasing, "
               f"which is not above the {stair.maxv:.0f} cpd staircase ceiling. "
               f"Move the subject closer or use a higher-resolution screen.")
-        catch_remaining = 0
-    # Random positions among the early trials; the staircase length is not known in advance,
-    # so whatever is left over is forced in before the test ends (see the loop below).
-    CATCH_WINDOW = 12
-    catch_at = set(random.sample(range(2, 2 + CATCH_WINDOW),
-                                 min(catch_remaining, CATCH_WINDOW))) if catch_remaining else set()
-    if catch_remaining:
-        print(f"[Catch] {catch_remaining} catch trial(s) at {catch_cpd:.1f} cpd "
-              f"({CATCH_CYCLES_PER_PX} cycles/px), scheduled at trials {sorted(catch_at)}")
+        catch_quota = 0
+    # The quota is NEGATIVE SAMPLES wanted: real FAILs count toward it, catch trials fill the
+    # rest, placed trial by trial by the scheduler (see CatchScheduler). Whatever is still
+    # owed when the staircase ends is forced in before the test ends (see the loop below).
+    catch = CatchScheduler(catch_quota)
+    if catch_quota:
+        print(f"[Catch] up to {catch_quota} negative sample(s) wanted: real FAIL trials count, "
+              f"the rest are catch trials at {catch_cpd:.1f} cpd ({CATCH_CYCLES_PER_PX} cycles/px), "
+              f"interleaved adaptively (never on trials 1-2 or right after a FAIL)")
 
     # [FIX] Calculate safe stimulus positions to avoid ArUco markers
     # Uses actual marker rectangles to compute minimum distance from stimulus circle
@@ -824,16 +824,16 @@ def run_test(cfg, sol_context=None):
     feedback_font = pygame.font.SysFont(None, 100)
     trial_number = 0
     while True:
-      # The staircase decides when the test ends, EXCEPT that any catch trials it finished
-      # before we could schedule are forced in first - they are the point of the session.
+      # The staircase decides when the test ends, EXCEPT that any negative samples still
+      # owed are forced in as catch trials first - they are the point of the session.
       if stair.done():
-          if catch_remaining <= 0:
+          if catch.needed <= 0:
               break
           is_catch = True
-          print(f"[Catch] staircase finished with {catch_remaining} catch trial(s) left - "
-                f"forcing them in before completion")
+          print(f"[Catch] staircase finished with {catch.needed} negative sample(s) still owed - "
+                f"forcing catch trial(s) in before completion")
       else:
-          is_catch = catch_remaining > 0 and (trial_number + 1) in catch_at
+          is_catch = catch.next_is_catch(trial_number + 1, stair)
       try:  # [FIX] Wrap entire trial in try-except for crash debugging
         trial_number += 1
         print(f"[Trial] Starting trial {trial_number}{' (CATCH)' if is_catch else ''}")
@@ -1289,10 +1289,12 @@ def run_test(cfg, sol_context=None):
         # A catch trial is unresolvable by construction, so its PASS/FAIL says nothing about
         # acuity: it must not move the staircase or reach the score. It is already in
         # trial_events.csv, which is what the ML pipeline reads.
+        catch.record(is_catch, passed)
         if is_catch:
-            catch_remaining -= 1
             print(f"[Catch] trial {trial_number} logged ({'PASS' if passed else 'FAIL'}); "
-                  f"{catch_remaining} left. Staircase and score untouched.")
+                  f"{catch.needed} negative sample(s) still needed "
+                  f"({catch.catches_done} catch, {catch.real_fails} real FAIL so far). "
+                  f"Staircase and score untouched.")
         else:
             stair.update(passed)
         
@@ -1323,11 +1325,10 @@ def run_test(cfg, sol_context=None):
             pass
 
         # Try to continue with next trial
-        if is_catch:
-            # Consume it even on error: a forced catch trial runs only because the staircase
-            # is already done, so leaving the counter up would loop here forever.
-            catch_remaining -= 1
-        else:
+        # Consume the slot even on error: a forced catch trial runs only because the staircase
+        # is already done, so leaving it owed would loop here forever.
+        catch.record(is_catch, False)
+        if not is_catch:
             stair.update(False)  # Mark as failed
         print(f"[TRIAL ERROR] Attempting to continue to next trial...")
 

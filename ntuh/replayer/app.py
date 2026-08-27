@@ -276,7 +276,8 @@ class ReplayerApp(QMainWindow):
     # -- Review labeling ----------------------------------------------------
 
     def _build_timeline_trials(self):
-        """List of (start_norm, end_norm, result, trial_number, cpd, review_label) for the timeline."""
+        """List of (start_norm, end_norm, result, trial_number, cpd, review_label, trial_type)
+        for the timeline."""
         df = self.engine.trial_events_df
         out = []
         if df is None:
@@ -286,7 +287,7 @@ class ReplayerApp(QMainWindow):
             tnum = row.get('trial_number', 0)
             label = rev.get(str(tnum), {}).get('label')
             out.append((row['start_norm'], row['end_norm'], row.get('result', '?'),
-                        tnum, row.get('cpd', 0), label))
+                        tnum, row.get('cpd', 0), label, self.engine.trial_type_of(row)))
         return out
 
     def _row_for_tnum(self, tnum):

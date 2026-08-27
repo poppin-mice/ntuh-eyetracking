@@ -32,6 +32,7 @@ class ConfigPanel(QWidget):
     trial_label_set = pyqtSignal(str)        # 'pass' | 'fail' | 'discard' (applies to current trial)
 
     LABEL_COLORS = {"pass": "#4CAF50", "fail": "#F44336", "discard": "#9E9E9E"}
+    CATCH_BG = "#4a3270"   # row tint for catch trials (same violet as the timeline outline)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -128,6 +129,7 @@ class ConfigPanel(QWidget):
 
         # Trial list + per-trial label buttons
         grp_trials = QGroupBox("Trials")
+        self.grp_trials = grp_trials
         tl = QVBoxLayout(grp_trials)
         self.trial_list = QListWidget()
         self.trial_list.itemClicked.connect(self._on_trial_clicked)
@@ -150,40 +152,70 @@ class ConfigPanel(QWidget):
         self.path_label.setText(os.path.basename(path))
         self.path_label.setToolTip(path)
 
+    @staticmethod
+    def _trial_type(row):
+        tt = row.get('trial_type', None)
+        return "catch" if isinstance(tt, str) and tt.strip().lower() == "catch" else "normal"
+
+    @staticmethod
+    def _fmt_cpd(cpd):
+        try:
+            return f"{float(cpd):.1f}"
+        except (TypeError, ValueError):
+            return str(cpd)
+
     def populate_trials(self, trials_df, review=None):
         self.trial_list.clear()
         self._trial_meta = {}
         if trials_df is None:
+            self.grp_trials.setTitle("Trials")
             return
+        n_catch = 0
         for _, row in trials_df.iterrows():
             tnum = row.get('trial_number', '?')
             cpd = row.get('cpd', '?')
             side = row.get('side', '?')
-            self._trial_meta[str(tnum)] = (cpd, side)
+            ttype = self._trial_type(row)
+            n_catch += (ttype == "catch")
+            self._trial_meta[str(tnum)] = (cpd, side, ttype)
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, float(row['start_norm']))
             try:
                 item.setData(Qt.ItemDataRole.UserRole + 1, int(tnum))
             except (ValueError, TypeError):
                 item.setData(Qt.ItemDataRole.UserRole + 1, tnum)
-            self._apply_trial_item(item, tnum, cpd, side, review)
+            self._apply_trial_item(item, tnum, cpd, side, review, ttype)
             self.trial_list.addItem(item)
+        n = len(trials_df)
+        # Say so in the group title, so a session with catch trials is recognisable at a glance.
+        self.grp_trials.setTitle(f"Trials ({n - n_catch} normal + {n_catch} catch)" if n_catch
+                                 else f"Trials ({n})")
 
-    def _apply_trial_item(self, item, tnum, cpd, side, review):
+    def _apply_trial_item(self, item, tnum, cpd, side, review, ttype="normal"):
         s = str(side)[:1].upper() if side is not None else "?"
         tr = (review or {}).get("trials", {}).get(str(tnum), {})
         label = tr.get("label", "?")
         auto = tr.get("auto_result", "")
         mark = "✓" if tr.get("reviewed") else "·"  # ✓ / ·
-        item.setText(f"#{tnum}  {cpd}cpd {s}   {auto}→{label} {mark}")
+        tag = "  CATCH" if ttype == "catch" else ""
+        item.setText(f"#{tnum}  {self._fmt_cpd(cpd)}cpd {s}{tag}   {auto}→{label} {mark}")
         item.setForeground(QColor(self.LABEL_COLORS.get(label, "#bbbbbb")))
+        if ttype == "catch":
+            # Catch trial = unresolvable grating, a negative sample by construction: its PASS/FAIL
+            # says nothing about acuity. Tinted so the reviewer never reads it as a real trial.
+            item.setBackground(QColor(self.CATCH_BG))
+            item.setToolTip("Catch trial: grating nobody can resolve (negative sample). "
+                            "Its pass/fail does not reflect acuity.")
+        else:
+            item.setBackground(QBrush())
+            item.setToolTip("")
 
     def refresh_trial(self, tnum, review):
         for i in range(self.trial_list.count()):
             item = self.trial_list.item(i)
             if str(item.data(Qt.ItemDataRole.UserRole + 1)) == str(tnum):
-                cpd, side = self._trial_meta.get(str(tnum), ('?', '?'))
-                self._apply_trial_item(item, tnum, cpd, side, review)
+                cpd, side, ttype = self._trial_meta.get(str(tnum), ('?', '?', 'normal'))
+                self._apply_trial_item(item, tnum, cpd, side, review, ttype)
                 return
 
     def current_trial_number(self):

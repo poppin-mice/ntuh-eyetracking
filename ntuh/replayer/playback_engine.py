@@ -185,6 +185,12 @@ class PlaybackEngine(QWidget):
 
     REVIEW_FILE = "review_labels.json"
 
+    @staticmethod
+    def trial_type_of(row):
+        """'catch' or 'normal' for a trial_events row; missing/NaN column -> 'normal'."""
+        tt = row.get("trial_type", None)
+        return "catch" if isinstance(tt, str) and tt.strip().lower() == "catch" else "normal"
+
     def _review_path(self):
         return os.path.join(self.session_dir, self.REVIEW_FILE) if self.session_dir else None
 
@@ -215,6 +221,10 @@ class PlaybackEngine(QWidget):
                 trials[tnum] = {
                     "label": prev.get("label", auto_label),
                     "auto_result": auto,
+                    # "normal" | "catch" (VA_center_opt >= 1.4.0); sessions recorded before the
+                    # column existed are all normal. Carried into the JSON so the training
+                    # pipeline can treat catch trials (negatives by construction) specially.
+                    "trial_type": self.trial_type_of(row),
                     "cpd": row.get("cpd", None),
                     "side": row.get("side", None),
                     "note": prev.get("note", ""),
