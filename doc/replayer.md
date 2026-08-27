@@ -66,6 +66,13 @@ The left panel also shows a **Data Quality** group (per-source valid %, whole te
 trials only) and the timeline shows colour-coded **Sol / webcam validity strips**. The
 trial list automatically highlights the trial currently under the playhead.
 
+**Catch trials** (sessions recorded with VA_center_opt's Negative Sample Collection Mode) are
+marked everywhere they appear: the trial row carries a **CATCH** tag on a violet background, the
+timeline marker has a violet dashed outline, and the Trials group title counts them
+(e.g. "Trials (9 normal + 2 catch)"). A catch trial's grating is unresolvable by design, so its
+PASS/FAIL says nothing about acuity — a chance PASS is expected sometimes. Older sessions
+without a `trial_type` column show every trial as normal.
+
 **Font** (bottom-left of the status bar): text size of the replayer window. It applies as you change it and
 is remembered between runs. The video and timeline overlays are drawn onto the video canvas and
 keep their own scale.
@@ -86,11 +93,15 @@ Everything **auto-saves** to `review_labels.json` in the session folder:
 ```
 review_labels.json
   record:  { "label": "keep"|"discard", "note", "reviewed" }
-  trials:  { "<n>": { "label": "pass"|"fail"|"discard", "auto_result", "note", "reviewed" } }
+  trials:  { "<n>": { "label": "pass"|"fail"|"discard", "auto_result",
+                      "trial_type": "normal"|"catch", "cpd", "side", "note", "reviewed" } }
 ```
 
 A training pipeline can then keep sessions where `record.label == "keep"` and trials where
 `label != "discard"`, and compare `label` vs `auto_result` to estimate label noise.
+`trial_type` lets it treat catch trials separately: they are negative samples by construction,
+so the pipeline should not read a catch trial's `pass` (the subject happened to hold on the
+target circle) as a positive.
 
 ## Troubleshooting
 

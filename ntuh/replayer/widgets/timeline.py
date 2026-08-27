@@ -48,12 +48,15 @@ class TimelineWidget(QWidget):
         self.update()
 
     def set_trials(self, trials: list):
-        # Normalise to 6-tuples (start, end, result, tnum, cpd, review_label); pad legacy 5-tuples.
+        # Normalise to 7-tuples (start, end, result, tnum, cpd, review_label, trial_type);
+        # pad legacy 5-/6-tuples.
         norm = []
         for t in trials:
             t = tuple(t)
             if len(t) == 5:
                 t = t + (None,)
+            if len(t) == 6:
+                t = t + ("normal",)
             norm.append(t)
         self._trials = norm
         self.update()
@@ -167,7 +170,7 @@ class TimelineWidget(QWidget):
         p.drawRoundedRect(margin, bar_y, usable, bar_h, 4, 4)
 
         # Trial markers (coloured by review label, falling back to the test result)
-        for (ts, te, result, tnum, cpd, label) in self._trials:
+        for (ts, te, result, tnum, cpd, label, ttype) in self._trials:
             x1 = self._time_to_x(ts)
             x2 = self._time_to_x(te)
             tw = max(x2 - x1, 3)
@@ -179,8 +182,16 @@ class TimelineWidget(QWidget):
                 color = QColor(76, 175, 80, 160)
             else:
                 color = QColor(76, 175, 80, 140) if result == "PASS" else QColor(244, 67, 54, 140)
+            p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(color)
             p.drawRoundedRect(x1, bar_y, tw, bar_h, 2, 2)
+            if ttype == "catch":
+                # Catch trial: violet dashed outline over the label colour, so it stays
+                # recognisable whatever the reviewer labels it.
+                p.setPen(QPen(QColor(186, 104, 200), 2, Qt.PenStyle.DashLine))
+                p.setBrush(Qt.BrushStyle.NoBrush)
+                p.drawRoundedRect(x1 + 1, bar_y + 1, tw - 2, bar_h - 2, 2, 2)
+        p.setPen(Qt.PenStyle.NoPen)
 
         # Validity strips (Sol + Webcam), below the trial bar
         strip_h = self._strip_h()
