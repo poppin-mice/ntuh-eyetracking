@@ -40,14 +40,26 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 | Show Gaze Marker | Display gaze point on screen during test | ON |
 
 **Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
-VA only. Inserts *N* **catch trials** at random positions among the normal trials. A catch trial
-renders the target grating far too fine for anyone to resolve, so the target circle and the
-uniform baseline circle look identical and the subject has no target to find: the gaze recorded
-between that trial's timestamps is a *negative* ("non-target fixation") sample. It looks, feels
-and scores exactly like a normal trial to the subject, but **never touches the staircase or the
-VA score** — it only appears in `trial_events.csv` with `trial_type=catch`, which is what the ML
-pipeline uses to label `webcam_gaze_data.csv` and the video frames. If the staircase finishes
-before all *N* have been shown, the remainder are forced in immediately before the test ends.
+VA only. "Collect negative samples: *N*" asks the session for *N* negative ("non-target
+fixation") samples. A normal trial the subject **fails** is already one, so real FAILs count
+toward *N*; the rest are filled with **catch trials**. A catch trial renders the target grating
+far too fine for anyone to resolve, so the target circle and the uniform baseline circle look
+identical and the subject has no target to find: the gaze recorded between that trial's
+timestamps is a negative sample. It looks, feels and scores exactly like a normal trial to the
+subject, but **never touches the staircase or the VA score** — it only appears in
+`trial_events.csv` with `trial_type=catch`, which is what the ML pipeline uses to label
+`webcam_gaze_data.csv` and the video frames.
+
+Catch trials are placed one trial at a time so the subject cannot learn a pattern:
+trials 1 and 2 are always normal; a failed normal trial is always followed by a normal trial;
+otherwise the next trial is a catch trial with a probability that tracks how many are still
+owed versus how many normal trials the staircase still needs (a random shuffle of the remaining
+catch trials among the remaining slots). Catch trials therefore spread over the whole test, can
+occasionally come back to back, and for a subject who keeps passing always fit before the
+staircase ends. A subject who keeps failing gets few or no catch trials — their fails are the
+negatives. Only what is still owed when the staircase finishes early is forced in before the
+test ends. Suggested *N*: 6 for adults, 3–4 for young children (a session gains ~7 s per catch
+trial).
 
 The catch frequency is derived, not configured: it is the highest the display can render without
 aliasing (0.4 cycles/px, safely under the 0.5 Nyquist limit), i.e.

@@ -3,6 +3,7 @@
 Stateless numeric logic extracted verbatim from VA_center_opt.py (no behaviour change).
 """
 import math
+import random
 
 import cv2
 import numpy as np
@@ -157,3 +158,67 @@ class Staircase:
         return (len(self.reversals) >= 4) or \
                (self.freq >= self.maxv and self.max_correct_streak >= 3) or \
                (self.incorrect_streak >= 4)
+
+
+# ---------- Catch-trial scheduler ----------
+class CatchScheduler:
+    """Decides, one trial at a time, whether the next VA trial is a catch trial.
+
+    `quota` is the number of NEGATIVE samples wanted from the session. A real FAIL on a
+    normal trial is already a negative, so it counts toward the quota; only the remainder
+    is filled with catch trials. A subject who keeps failing therefore gets few or no
+    catch trials instead of a block of them at the end.
+
+    Placement rules (chosen by simulation - see the 1.5.0 changelog):
+      - trials 1 and 2 are always normal (warm-up);
+      - a normal trial the subject FAILED is always followed by a normal trial;
+      - otherwise the next trial is a catch trial with probability k / (k + m - 1), where
+        k = catch trials still needed and m = normal trials still needed to finish the
+        staircase if the subject keeps passing ((maxv - freq) / step). That is a uniform
+        shuffle of the remaining catch trials among the slots before the final normal
+        trial: the sequence is indistinguishable from noise (no fixed 'catch, normal,
+        catch' alternation to learn), catch trials spread over the whole test instead of
+        bunching at the start, and for a subject who keeps passing they always fit before
+        the staircase ends. Back-to-back catch trials happen at the rate any random
+        shuffle produces.
+    The caller still forces in whatever is owed if the staircase ends early (it decides
+    when the test ends; this class only answers "is the next one a catch?").
+    """
+    WARMUP_TRIALS = 2
+
+    def __init__(self, quota):
+        self.quota = max(0, int(quota))
+        self.catches_done = 0
+        self.real_fails = 0
+        self._prev = None          # 'normal' | 'catch' | None
+        self._prev_passed = True
+
+    @property
+    def needed(self):
+        """Catch trials still needed to reach the quota, after counting real FAILs."""
+        return max(0, self.quota - self.real_fails - self.catches_done)
+
+    def catch_probability(self, trial_number, stair):
+        """P(next trial is a catch) for the 1-based `trial_number` about to run."""
+        k = self.needed
+        if k <= 0 or trial_number <= self.WARMUP_TRIALS:
+            return 0.0
+        if self._prev == 'normal' and not self._prev_passed:
+            return 0.0
+        m = max(0.0, (stair.maxv - stair.freq) / stair.step)
+        d = k + m - 1.0
+        return 1.0 if d <= 0 else min(1.0, k / d)
+
+    def next_is_catch(self, trial_number, stair):
+        p = self.catch_probability(trial_number, stair)
+        return p > 0.0 and random.random() < p
+
+    def record(self, is_catch, passed):
+        """Register the trial that just ran (call before the staircase update or after; it
+        does not read the staircase)."""
+        if is_catch:
+            self.catches_done += 1
+        elif not passed:
+            self.real_fails += 1
+        self._prev = 'catch' if is_catch else 'normal'
+        self._prev_passed = bool(passed)
