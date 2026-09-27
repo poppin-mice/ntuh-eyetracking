@@ -25,6 +25,8 @@ The **Ganzin Sol SDK** and **GazeFollower** are bundled in this repo — nothing
 - `vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl` — installed by `requirements.txt`. Must match the
   remote API version your Chronus app reports; a mismatch fails at connect time.
 - `gazefollower/` — vendored source (imported directly, do **not** edit vendored internals).
+  Licensed CC BY-NC-SA 4.0 (`gazefollower/LICENSE`); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+  for this and the other third-party material under licence review.
 
 ## Setup
 
@@ -109,6 +111,7 @@ packaging/            build & release: *.spec, build_exe.bat, stage_release.py, 
 doc/                  end-user docs + release notes
 tests/                hardware-free pytest suite (see Tests)
 release/              built release zips (git-ignored)
+THIRD_PARTY_NOTICES.md  third-party licences + material under licence review
 ```
 
 ## Development workflow (READ THIS before pushing)
