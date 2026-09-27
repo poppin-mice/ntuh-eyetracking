@@ -75,6 +75,63 @@ branches:
 - **"Simplified / offset calibration"** = the Sol offset-calibration in this repo (1/3/5-pt, screen-
   space or camera-space).
 
+## Project data & roles
+
+### Who does what
+
+- **Edan** (GitHub `poppin-mice`): the bridge to NTUH. Triages issues, reviews and merges PRs, and owns
+  `ntuh-eyetracking-model` (the model, paper and delivery), which reads this suite's output files.
+- **Bouing** (GitHub `bobo2ni`): maintains this repository and does the first analysis and QC of the
+  collected data. Each task is either **`mode:manual-check`** (checking by hand) or **`mode:claude-dev`**
+  (a code change driven with Claude Code from a Claude-dev issue).
+- **NTUH colleagues** (收測人員: clinicians / OTs): collect field data with the released exe suite. They
+  report problems and requests in the **NTUH tracker sheet**, not on GitHub.
+
+### Codes only: no personal data in this public repository
+
+This repository is **public**. Participants are referred to by **code only** (`s01`, `K03`, `A02` ...) in
+issues, PRs, commits, code comments, test fixtures, screenshots and docs. Never write a participant's
+name, birthday, case-record content or a face image here, and never copy anything from the case records
+(個案狀況記錄). Test data is synthetic. If you find personal data in the repo or its history, stop and tell
+Edan; do not try to rewrite history yourself.
+
+### Tracker IDs
+
+Every issue and PR carries a **`REQ-xxxx`** ID. That ID is the row in the NTUH tracker sheet, so NTUH's
+request and our code change stay linked (use `internal` for work that did not come from the tracker).
+The tracker's link is kept out of this public repo. Data-QC issues, QC scripts and QC reports live in the
+private repository `poppin-mice/ntuh-eyetracking-qc`, not here.
+
+### Field data (NAS)
+
+- Root: `Z:/ntuh-eyetracking-data` (on the server: `/home/edan/nas/ntuh-eyetracking-data`). It is organised
+  by modality first: `VA/`, `VF/`, `Accuracy_Test/`, plus the case records (`個案狀況記錄/`), which
+  never enter this repo.
+- **Never rename a session folder.** Session folders are kept byte-for-byte as the software wrote them,
+  because the model repo and the QC scripts refer to them by name, and so will each dataset's
+  `sessions.csv` manifest.
+  Only dataset-level folders may be moved or renamed. A new naming scheme applies to future data only, and
+  it comes from a software change, not from renaming files.
+- Accuracy-test **condition codes** (field sessions are named `sNN_cK`, e.g. `s01_c3`):
+  **C1** practice · **C2** no calibration · **C3** our 5-pt simplified (offset) calibration (簡化校正) ·
+  **C4** Sol built-in calibration (Chronus 燈塔 mode) · **C5** both C4 and C3.
+- Any change to an output file or column (`VA_output/`, `VF_output/`, `accuracy_test/`) must be listed in
+  the PR and in the app's `doc/*.md`. The model repo and the QC scripts parse these files.
+
+### Logging spec
+
+The contract for what each session must record (session metadata, sample-level Sol gaze, homography,
+events, calibration profiles) is **`doc/dev/LOGGING_SPEC.md`**. It is a draft (v0.1, 2026-09-27) and is
+added by its own PR. Until that PR is merged, ask Edan for the draft. New logging work follows it, and a
+format change updates it in the same PR.
+
+### Tests
+
+`python -m pytest` runs the hardware-free tests in `tests/` (settings in `pytest.ini`; the CI workflow
+`.github/workflows/tests.yml` runs them on every PR). Add a test when logic can be checked without Sol
+glasses, a webcam or a display. Do not write tests that pin a known bug: fixing the bug must not require
+editing a test that asserts the wrong behaviour.
+
 ## Developer tooling
 
 Optional but recommended for contributors working with AI coding agents. Neither is needed to build
