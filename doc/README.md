@@ -28,7 +28,10 @@ This package contains three programs for eye-tracking visual acuity experiments.
 2. Run `VA_center_opt.exe` - enter the **same** participant code as User Name (the Sol offset
    profile and the output folder are named after it). On the **Webcam tab → Calibration Folder**,
    select that participant's `<code>_<points>pt` folder; if the selected folder holds no profile,
-   the default `anonymous_9pt` profile is used without a warning. Configure the settings and run the test.
+   the default `anonymous_9pt` profile is used without a warning, and that choice is kept for later
+   runs. The same folder is where the Sol offset profile is saved and looked up, so keep one folder
+   selected from Sol calibration through the test (see [VA_center_opt.md](VA_center_opt.md), Webcam
+   tab). Configure the settings and run the test.
 3. Collect results from the `VA_output/` folder (next to `VA_center_opt.exe`)
 4. (Optional) Use `replayer.exe` to review **and label** recordings
 
@@ -42,9 +45,10 @@ Each program reads/writes its data **next to its own `.exe`** (not inside `_inte
 
 **Sharing calibration profiles:** `calibration.exe` saves to `calibration/calibration_profiles/`
 and **also copies the finished profile** to `VA_center_opt/calibration_profiles/`, which is where
-`VA_center_opt.exe` reads from — so a new `<name>_<points>pt` profile is usable straight away. If
-the two folders are not side by side, copy it by hand or set VA_center_opt's **Webcam tab →
-Calibration Folder** to point at `calibration/calibration_profiles/`.
+`VA_center_opt.exe` reads from — so a new `<code>_<points>pt` profile is available straight away. If
+the two folders are not side by side, copy it by hand. Either way, select the participant's
+`<code>_<points>pt` folder itself in VA_center_opt's **Webcam tab → Calibration Folder**; a parent
+folder such as `calibration_profiles/` holds no profile and triggers the `anonymous_9pt` fallback.
 A default `anonymous_9pt` profile is included in both.
 
 ## Building from Source

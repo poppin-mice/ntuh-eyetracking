@@ -9,14 +9,14 @@ The calibration program displays a series of targets on screen. The user looks a
 ## Quick Start
 
 1. **Launch** - Double-click `calibration.exe` (or `run_debug.bat` for error output)
-2. **Configure** - Enter username and settings
+2. **Configure** - Enter the participant code (e.g. `s01`, never a real name) and settings
 3. **Calibrate** - Click "Start calibration" and follow the on-screen targets
 
 ## Settings
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| User name | Participant identifier (use same name in VA_center_opt) | anonymous |
+| User name | Participant **code** (e.g. `s01`), never a real name. It names the profile folder `<code>_<points>pt` | anonymous |
 | Select Camera | Webcam device index | 0 |
 | Calibration points | Number of calibration targets: 5, 9, or 13 | 9 |
 | Calibration image | Optional custom target image (from `calibration_images/`) | (default dot) |
@@ -100,13 +100,15 @@ Calibration profiles are saved **next to `calibration.exe`**, in:
 calibration_profiles/{username}_{points}pt/
 ```
 
-Example: User "edan" with 9 points creates `calibration/calibration_profiles/edan_9pt/`
+Example: code `s01` with 9 points creates `calibration/calibration_profiles/s01_9pt/`
 
 > **To use a profile in VA_center_opt:** the finished profile is **copied automatically** into
 > `VA_center_opt/calibration_profiles/{username}_{points}pt/` when that folder exists next to
 > `calibration/` (the standard release layout) — the "Done" dialog lists both paths. If the copy
-> is skipped (custom layout, output folder moved), copy the folder by hand or set VA_center_opt's
-> **Webcam tab → Calibration Folder** to point at `calibration/calibration_profiles/`.
+> is skipped (custom layout, output folder moved), copy the folder by hand. Then select that
+> `{username}_{points}pt` folder itself in VA_center_opt's **Webcam tab → Calibration Folder**:
+> VA_center_opt does not pick the profile by User Name, and a folder without a profile makes it
+> fall back to `anonymous_9pt` without a warning.
 
 ## Included Calibration Images
 
@@ -128,4 +130,4 @@ can drop your own images into this folder to use them as calibration targets.
 |---------|----------|
 | Camera not found | Close other camera apps, try index 0, 1, or 2 |
 | Poor calibration accuracy | Ensure good lighting, stable head, clear eye visibility |
-| Profile not loading in VA_center_opt | Check that username and point count match exactly |
+| Profile not loading in VA_center_opt | Check that VA_center_opt's Webcam tab → Calibration Folder points at the participant's own `<code>_<points>pt` folder (not its parent) |
