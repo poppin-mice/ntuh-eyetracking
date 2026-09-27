@@ -25,6 +25,14 @@ here. Upstream's README said CC BY 4.0 for one week (commit `ec5442e`, 2024-11-1
 first licence file (`f5aa84a`, 2024-11-21) is CC BY-NC-SA 4.0, and so is every later one. The
 vendored snapshot is from 2025, so **CC BY-NC-SA 4.0 is the licence that applies to it.**
 
+**Conflicting metadata string.** `gazefollower/version.py` still declares
+`__license__ = "Creative Commons Attribution 4.0 (CC BY 4.0)"`. The string dates from the upstream
+commit that added `version.py` (`5df50f9`, 2024-11-05) and is unchanged at `d8c1969` and at upstream
+HEAD (v1.1.0). It is left
+as is here, because the vendored `gazefollower/` internals are not edited. The licence file and
+upstream's README both say CC BY-NC-SA 4.0. Whether to ask upstream to fix the string is part of
+REQ-0045.
+
 **Local modifications (CC BY-NC-SA asks for changes to be indicated).** Relative to upstream
 `d8c1969`, this repository changed or added the following files. `git diff d8c1969 -- gazefollower/`
 shows the full diff:
