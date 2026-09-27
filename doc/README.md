@@ -20,8 +20,15 @@ This package contains three programs for eye-tracking visual acuity experiments.
 
 ### For each participant:
 
-1. Run `calibration.exe` - enter participant name, complete calibration
-2. Run `VA_center_opt.exe` - use the **same** participant name, configure settings, run test
+> Enter a **participant code** (e.g. `s01`) wherever a name is asked for, **never a real name**.
+> The code becomes part of folder and file names that are copied and shared.
+
+1. Run `calibration.exe` - enter the participant code (e.g. `s01`) and complete calibration. The
+   webcam profile is saved as `calibration_profiles/<code>_<points>pt/`.
+2. Run `VA_center_opt.exe` - enter the **same** participant code as User Name (the Sol offset
+   profile and the output folder are named after it). On the **Webcam tab → Calibration Folder**,
+   select that participant's `<code>_<points>pt` folder; if the selected folder holds no profile,
+   the default `anonymous_9pt` profile is used without a warning. Configure the settings and run the test.
 3. Collect results from the `VA_output/` folder (next to `VA_center_opt.exe`)
 4. (Optional) Use `replayer.exe` to review **and label** recordings
 
