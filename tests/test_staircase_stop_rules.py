@@ -8,7 +8,8 @@ Deliberately NOT tested here: which cpd the VA test reports as the result and ho
 to a VA score. Both are open issues (REQ-0025: the reported level is the one after the last
 step, not the level passed; REQ-0026: the cpd->VA table). Only the stop rules are pinned:
   - 4 reversals, or
-  - at the ceiling after >= 3 correct in a row, or
+  - at the ceiling, once the run has had >= 3 correct in a row at any point
+    (max_correct_streak, not necessarily the last 3 trials), or
   - 4 incorrect in a row.
 """
 import pytest
