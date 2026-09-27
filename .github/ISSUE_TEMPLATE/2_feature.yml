@@ -1,0 +1,68 @@
+name: "Feature / change request"
+description: "New option, UI change, new output field, workflow change"
+title: "[REQ-____] <component>: <short feature>"
+labels: ["type:feature", "needs:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **This repository is PUBLIC.** Participant **codes only** (s01, K03, A02 ...). Never paste names,
+        > birthdays, case-record contents, photos or screenshots showing a face, or raw data files.
+  - type: input
+    id: req
+    attributes:
+      label: Tracker REQ ID
+      description: "REQ-xxxx from the NTUH tracker, or 'internal'."
+      placeholder: "REQ-0000"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: "How Bouing will work on it. Edan confirms at triage and sets the matching label."
+      options:
+        - "mode:manual-check - check / decide by hand"
+        - "mode:claude-dev - implement with Claude Code (then also fill the Claude-dev template)"
+        - "Edan handles it (not assigned to Bouing)"
+        - "Not decided (triage)"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: ["VA test", "Accuracy test / Sol calibration", "VF test", "calibration", "replayer", "all apps", "packaging / release", "other"]
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why (who asked, what problem in the field it solves)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Proposed behaviour / implementation notes
+  - type: textarea
+    id: data
+    attributes:
+      label: Output / data-format impact
+      description: "Does this add or rename a file or column in VA_output / VF_output / accuracy_test? If yes, the QC scripts and the model-repo loaders must be told, and the app's doc/*.md updated."
+      value: "None"
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: ["P0 blocks data collection / corrupts data", "P1 before next collection", "P2 normal", "P3 nice to have"]
+    validations:
+      required: true

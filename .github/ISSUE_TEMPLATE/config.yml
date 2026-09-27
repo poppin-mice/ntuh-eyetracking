@@ -1,0 +1,4 @@
+blank_issues_enabled: false
+# NTUH colleagues do not file GitHub issues: they use the NTUH tracker sheet, whose link is
+# kept in the team Drive and deliberately NOT in this public repository. Edan copies each
+# actionable tracker row here with its REQ ID. Data-QC work goes to the private QC repo.

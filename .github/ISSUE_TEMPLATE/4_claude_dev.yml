@@ -1,0 +1,119 @@
+name: "Claude-dev task"
+description: "A well-specified code change that Bouing drives with Claude Code (spec + acceptance criteria + ready-to-paste prompt)"
+title: "[REQ-____] <component>: <task>"
+labels: ["mode:claude-dev", "needs:triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **This repository is PUBLIC.** Participant **codes only** (s01, K03, A02 ...). Never paste names,
+        > birthdays, case-record contents, photos or screenshots showing a face, or raw data files - not here,
+        > not in the prompt, not in commits or test fixtures. Field data stays on the NAS.
+
+        Fill in every field so the prompt at the bottom can be pasted into Claude Code with only the
+        placeholders replaced. If the acceptance criteria cannot be written as checks, this is not a
+        Claude-dev task yet: use the Manual-check template or ask Edan.
+  - type: input
+    id: req
+    attributes:
+      label: Tracker REQ ID
+      description: "REQ-xxxx from the NTUH tracker, or 'internal'. Several IDs are fine if one PR closes them all."
+      placeholder: "REQ-0000"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: ["VA test", "Accuracy test / Sol calibration", "VF test", "calibration", "replayer", "all apps", "packaging / release", "tests / CI", "other"]
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context (why, evidence, file:line pointers; NAS locations as <dataset>/<session folder>, codes only)
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope / out of scope
+      value: |
+        In scope:
+        -
+        Out of scope (do NOT change):
+        -
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria (testable)
+      description: "Each line must be checkable by a test in tests/ or by a concrete manual step."
+      value: |
+        - [ ]
+        - [ ]
+        - [ ] `python -m pytest` passes (and a new hardware-free test covers the change where the logic allows it)
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Output / data-format impact
+      description: "Files or columns added / renamed in VA_output, VF_output or accuracy_test? If yes, list them: the QC scripts and the model-repo loaders must be updated, and the app's doc/*.md too."
+      value: "None"
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: How to verify (commands, screen setups, sample session to replay)
+      value: |
+        - python -m pytest
+        - python VA_center_opt.py on: single monitor 1920x1080 @100%; dual monitor with mixed DPI (100% + 150%)
+        - Sol connected / not connected
+        - Open the new output in replayer
+  - type: textarea
+    id: prompt
+    attributes:
+      label: Ready-to-paste Claude Code prompt
+      description: "Replace every <...> placeholder, then paste the whole block into Claude Code started in the repo root."
+      render: markdown
+      value: |
+        You are working in the poppin-mice/ntuh-eyetracking repository. First read CLAUDE.md and README.md
+        and follow them exactly: branch off develop as <fix|feature|chore>/<issue#>-<slug>, make small
+        single-purpose commits, push the branch, open a PR into develop with the PR template filled in,
+        then STOP. Never merge, never push to develop or main, never force-push, and do not add a
+        Co-Authored-By trailer to commits.
+
+        Task: [REQ-____] <title>  (GitHub issue #<n>)
+
+        Context:
+        <paste the Context field>
+
+        In scope / out of scope:
+        <paste the In scope / out of scope field>
+
+        Acceptance criteria:
+        <paste the Acceptance criteria field>
+
+        Constraints:
+        - Do not edit the vendored gazefollower/ internals; wrap or extend from ntuh/ instead.
+        - Keep Sol scene decoding in the isolated child process and add no per-frame work to it.
+        - Keep the app entry modules import-light (multiprocessing 'spawn' re-imports them).
+        - Follow the versioning rules in CLAUDE.md: bump each changed app in ntuh/version.py with a
+          one-line changelog entry when behaviour changes; state explicitly in the PR if no bump is needed and why.
+        - If any output file or column changes, update doc/<app>.md and list the schema change in the PR body.
+        - Add or update a hardware-free test in tests/ (numpy / OpenCV / pytest only) when the logic can be
+          tested without Sol glasses, webcam or display. Do not write tests that pin a known bug.
+        - Participant codes only (s01, K03 ...) in code, tests, fixtures, commits and the PR. Never real names.
+
+        Before opening the PR: run `python -m pytest` and the checks in "How to verify", paste the output
+        (no faces, no names) into the PR body, and fill the PR template (Closes #<n>, REQ ID, version bump).
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: ["P0 blocks data collection / corrupts data", "P1 before next collection", "P2 normal", "P3 nice to have"]
+    validations:
+      required: true
