@@ -72,7 +72,7 @@ branches:
 
 - **"Sol glasses"** = Ganzin Sol smart eye-tracking glasses. **"Chronus"** = the paired phone app.
 - Use **"gaze estimation"** (not "eye tracking") for the webcam screen-coordinate prediction task.
-- **"Simplified / offset calibration"** = the Sol offset-calibration in this repo (1/3/5-pt, screen-
+- **"Simplified / offset calibration"** = the Sol offset-calibration in this repo (1/3/5/9-pt, screen-
   space or camera-space).
 
 ## Project data & roles
@@ -107,7 +107,8 @@ private repository `poppin-mice/ntuh-eyetracking-qc`, not here.
 - Root: `Z:/ntuh-eyetracking-data` (on the server: `/home/edan/nas/ntuh-eyetracking-data`). It is organised
   by modality first: `VA/`, `VF/`, `Accuracy_Test/`, plus the case records (`個案狀況記錄/`), which
   never enter this repo.
-- **Never rename a session folder.** Session folders are kept byte-for-byte as the software wrote them,
+- **Never rename a session folder.** Session folder names are kept byte-for-byte as they are on the NAS
+  (including the few that were renamed by hand in the field; the mismatch is recorded, not repaired),
   because the model repo and the QC scripts refer to them by name, and so will each dataset's
   `sessions.csv` manifest.
   Only dataset-level folders may be moved or renamed. A new naming scheme applies to future data only, and
