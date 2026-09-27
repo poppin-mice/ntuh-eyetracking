@@ -1,0 +1,11 @@
+# NTUH Eye-Tracking Suite - developer / CI tools (not needed to run or build the apps)
+# ---------------------------------------------------------------------------
+# Install on top of requirements.txt, inside the same venv, from the repo root:
+#     pip install -r requirements-dev.txt
+# Then run the hardware-free tests (settings in pytest.ini):
+#     python -m pytest
+#
+# The tests themselves only import numpy and OpenCV (cv2) besides pytest; CI installs
+# exactly those two, at the versions pinned in requirements.txt, plus this file.
+# ---------------------------------------------------------------------------
+pytest==9.1.1

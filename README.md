@@ -58,6 +58,18 @@ python replayer.py          :: session replayer
 Each app reads/writes its data next to itself (`VA_output/`, `calibration_profiles/`, `logs/`,
 `accuracy_test/`). The window title shows the app version (e.g. `Eye Tracking Test Settings (v1.0.1)`).
 
+## Tests
+
+Hardware-free unit tests (no Sol glasses, webcam or display needed) live in `tests/`:
+
+```bat
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`pytest.ini` sets `-p no:cacheprovider`, so no `.pytest_cache/` is written. Test data must be
+synthetic or use participant **codes** only (s01, K03 ...) — never real names or field recordings.
+
 ## Build the executables
 
 PyInstaller **onedir** builds, one `.spec` per app, staged by `stage_release.py`:
@@ -95,6 +107,7 @@ vendor/               Ganzin Sol SDK wheel
 packaging/            build & release: *.spec, build_exe.bat, stage_release.py, release.py,
                       pyinstaller_helpers.py, hooks/
 doc/                  end-user docs + release notes
+tests/                hardware-free pytest suite (see Tests)
 release/              built release zips (git-ignored)
 ```
 
