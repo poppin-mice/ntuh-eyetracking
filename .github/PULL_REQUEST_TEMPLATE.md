@@ -3,7 +3,9 @@
 
 ## What / why
 
-Closes #<issue>   ·   Tracker: REQ-____   ·   Mode: `mode:claude-dev` / `mode:manual-check` / Edan
+Closes poppin-mice/ntuh-eyetracking-qc#<issue>   ·   Tracker: REQ-____   ·   Mode: `mode:claude-dev` / `mode:manual-check` / Edan
+
+Tasks are tracked in the private repo `poppin-mice/ntuh-eyetracking-qc` and on the "NTUH Eye-Tracking" Project board (Issues are off here); keep the full cross-repo form above, a bare `#N` points at this repo.
 
 <one paragraph: what changed and why>
 
