@@ -25,6 +25,8 @@ The **Ganzin Sol SDK** and **GazeFollower** are bundled in this repo — nothing
 - `vendor/ganzin_sol_sdk-2.0.1-py3-none-any.whl` — installed by `requirements.txt`. Must match the
   remote API version your Chronus app reports; a mismatch fails at connect time.
 - `gazefollower/` — vendored source (imported directly, do **not** edit vendored internals).
+  Licensed CC BY-NC-SA 4.0 (`gazefollower/LICENSE`); see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)
+  for this and the other third-party material under licence review.
 
 ## Setup
 
@@ -57,6 +59,18 @@ python replayer.py          :: session replayer
 
 Each app reads/writes its data next to itself (`VA_output/`, `calibration_profiles/`, `logs/`,
 `accuracy_test/`). The window title shows the app version (e.g. `Eye Tracking Test Settings (v1.0.1)`).
+
+## Tests
+
+Hardware-free unit tests (no Sol glasses, webcam or display needed) live in `tests/`:
+
+```bat
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`pytest.ini` sets `-p no:cacheprovider`, so no `.pytest_cache/` is written. Test data must be
+synthetic or use participant **codes** only (s01, K03 ...) — never real names or field recordings.
 
 ## Build the executables
 
@@ -95,7 +109,9 @@ vendor/               Ganzin Sol SDK wheel
 packaging/            build & release: *.spec, build_exe.bat, stage_release.py, release.py,
                       pyinstaller_helpers.py, hooks/
 doc/                  end-user docs + release notes
+tests/                hardware-free pytest suite (see Tests)
 release/              built release zips (git-ignored)
+THIRD_PARTY_NOTICES.md  third-party licences + material under licence review
 ```
 
 ## Development workflow (READ THIS before pushing)

@@ -7,6 +7,8 @@ venv/
 logs/
 *.log
 va_crash_log.txt
+# vf_crash_log.txt too (VA_center_opt.py writes both into the working directory)
+*_crash_log.txt
 
 # Output Data
 VA_output/
@@ -34,3 +36,11 @@ dist/
 
 # Release archives (compressed dist/ for handoff)
 release/
+
+# Claude Code per-machine settings (permissions, local paths). Only the shared
+# .claude/settings.json, if one is ever added, belongs in the repo.
+.claude/settings.local.json
+
+# Vendor SDK HTML docs (pdoc output, e.g. "vendor/sol_sdk v2.0.1 docs/"). Reference
+# material kept outside the repo; only the SDK wheel under vendor/ is tracked.
+vendor/*docs*/

@@ -1,0 +1,45 @@
+# Hardware-free unit tests (tests/, settings in pytest.ini).
+# Installs only what the tests import: numpy + OpenCV at the versions pinned in
+# requirements.txt, plus pytest from requirements-dev.txt. The app stack (Sol SDK,
+# MediaPipe, MNN, pygame, PyQt6, PyInstaller) is NOT installed here; release builds
+# stay local (see CLAUDE.md, "Versioning & release flow").
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies only
+        shell: bash
+        run: |
+          # tr: the Windows runner may check files out with CRLF line endings.
+          PINS=$(tr -d '\r' < requirements.txt | grep -E '^(numpy|opencv-contrib-python)==' | sed 's/[[:space:]]*#.*$//')
+          echo "Pins taken from requirements.txt:"; echo "$PINS"
+          test "$(echo "$PINS" | wc -l)" -eq 2
+          python -m pip install --upgrade pip
+          python -m pip install $PINS -r requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -p no:cacheprovider

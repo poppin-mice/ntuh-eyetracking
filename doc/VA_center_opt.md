@@ -1,10 +1,12 @@
 # VA_center_opt - Visual Acuity Test
 
-A visual acuity (VA) testing program using contrast sensitivity gratings with support for both webcam-based and Sol glasses eye tracking.
+A **grating visual acuity (VA)** test with gaze-based responses. It supports Sol glasses eye tracking and webcam gaze estimation.
 
 ## Overview
 
-VA_center_opt presents circular sinusoidal gratings at the center of the screen and uses a staircase procedure to measure the user's contrast sensitivity threshold. It supports dual eye-tracking sources (webcam + Sol glasses), records gaze data, screen video, and webcam video throughout the entire experiment.
+VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial shows a circular sinusoidal grating on a randomly chosen side of the screen (left or right). The other side shows a uniform disc in the average of the bright and dark colours (grey 128 in Paper Color Mode). The Bright/Dark colours (full white/black by default) set the nominal grating contrast and do not change during the test; the grating is drawn with a slight blur (5x5 Gaussian, sigma 1 px), which lowers the rendered contrast at high cpd (tracker REQ-0037). The staircase changes only the grating's **spatial frequency** (cycles per degree, cpd): it starts at 2 cpd, moves 2 cpd up after a pass and 2 cpd down after a fail, and stays within 2-20 cpd. A trial passes when the gaze of the Evaluation Source stays on the grating's half of the screen for the Pass Duration. Both sources (webcam + Sol glasses) can run together. Gaze data, screen video and webcam video are recorded throughout the test.
+
+> **Final score under review.** The cpd / VA value shown at the end of a test is provisional and not for clinical use until the scoring rule and the cpd→VA conversion are agreed with the clinicians (tracker REQ-0025, REQ-0026).
 
 ## What's new (2026-07-21)
 
@@ -34,9 +36,9 @@ VA_center_opt presents circular sinusoidal gratings at the center of the screen 
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| User Name | Participant identifier (must match calibration profile) | anonymous |
-| Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: OFF |
-| Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Webcam |
+| User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
+| Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
 
 **Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
@@ -68,8 +70,9 @@ coarse moire that is *more* visible, which would defeat the purpose.
 
 > **Requires a fine enough display.** If that derived frequency is not above the 20 cpd staircase
 > ceiling, a "catch" trial would just be an ordinary hard trial, so the mode **refuses to run** and
-> says so on the console. At a 50 cm viewing distance that rules out 1080p (13.8 cpd); 3200x2000
-> gives 23.0 cpd and 4K gives 25.6 cpd. Increasing the viewing distance also raises it.
+> says so on the console. With the default geometry (53 cm wide screen, 60 cm away) that rules out
+> 1080p (16.1 cpd); 2560 px wide gives 21.5 cpd and 4K gives 32.2 cpd. A 4K screen 59.5 cm wide at
+> 60 cm gives 29.1 cpd. A longer viewing distance or a narrower screen raises it.
 
 **Font** (bottom bar, next to the Start buttons): text size of this settings window. It
 applies as you change it and is remembered between runs. The default is picked from the
@@ -83,7 +86,7 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Stimulus Duration (s) | How long each grating is displayed | 5.0 |
 | Pass Duration (s) | Time gaze must be on target to count as "pass" | 2.0 |
 | Blank Duration (s) | Duration of blank screen between stimulus and response | 1.0 |
-| Circle Radius (px) | Radius of the circular grating stimulus | 200 |
+| Circle Radius (px) | Radius of the circular grating stimulus. With Sol enabled it is reduced automatically to keep clear of the ArUco markers and the screen edges | 400 |
 | Rotate Stimulus | Enable rotation of the grating | OFF |
 | Speed (deg/s) | Rotation speed | 60.0 |
 
@@ -102,8 +105,8 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 |---------|-------------|---------|
 | Examiner Screen | Operator-only monitor. When it differs from the Subject Screen, the examiner views open there. **Disabled with a single display**, where no examiner view opens at all | 1 (secondary) |
 | Subject Screen | Monitor the subject sees (stimuli, calibration targets) | 0 (primary) |
-| Screen Width (cm) | Physical width of the display monitor | 52.6 |
-| Viewing Distance (cm) | Distance from user's eyes to the screen | 50 |
+| Screen Width (cm) | Physical width of the display monitor. Measure it: the grating cpd is computed from it | 53.0 |
+| Viewing Distance (cm) | Distance from the participant's eyes to the screen. Measure it: the grating cpd is computed from it | 60 |
 
 > **Note:** Subject Screen and Examiner Screen (formerly *Test Screen* / *Tester Screen*) used to live on the *Sol Calib* tab under *Display Settings*. They moved here because every flow uses them — the VA/VF test, Sol calibration and the accuracy test — not just Sol calibration. Saved settings carry over unchanged.
 
@@ -112,25 +115,29 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Image | Optional image displayed between trials | (none) |
-| Image Duration (s) | How long the inter-trial image is shown | 1.1 |
+| Image Duration (s) | How long the inter-trial image is shown | 1.5 |
 | Background Hold (s) | Duration of blank background after inter-trial image | 1.0 |
 
 ### Webcam Tab
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Calibration Folder | Path to webcam calibration profiles | calibration_profiles/ |
+| Calibration Folder | The webcam profile folder to use: select the participant's own `<code>_<points>pt` folder. The profile is **not** picked by User Name | calibration_profiles/ (holds no profile itself, see note) |
 | Select Camera | Webcam device index | 0 |
 
-> **Note:** Profiles are read from the `calibration_profiles/` folder **next to `VA_center_opt.exe`**. `calibration.exe` copies each finished profile here automatically (as well as to its own `calibration/calibration_profiles/`), so new profiles appear without any manual step; if the two app folders are not side by side, copy the `<name>_<points>pt` folder here or point this Calibration Folder at `calibration/calibration_profiles/`. A default `anonymous_9pt` profile is included.
+> **Note:** Profiles live in the `calibration_profiles/` folder **next to `VA_center_opt.exe`**. `calibration.exe` copies each finished profile here automatically (as well as to its own `calibration/calibration_profiles/`); if the two app folders are not side by side, copy the `<code>_<points>pt` folder here by hand. Then select that `<code>_<points>pt` folder itself as the Calibration Folder: a parent folder such as `calibration_profiles/` holds no profile. A default `anonymous_9pt` profile is included.
+>
+> **Silent fallback (tracker REQ-0041).** If the selected folder holds no webcam profile (no `svr_x.xml`), *Start* switches the Calibration Folder to `anonymous_9pt` without a warning (only the console says so) and keeps that setting for later runs.
+>
+> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found and the test runs on uncorrected Sol gaze. The test screens give no warning; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0018, REQ-0031).
 
 ### Sol Tab
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| IP / Port | Sol glasses network address | 192.168.1.121 : 8080 |
+| IP / Port | Sol glasses network address | 192.168.1.100 : 8080 |
 | Markers (HxV) | ArUco marker grid layout | 8 x 5 |
-| Pattern Size (px) | Size of each ArUco marker on screen | 120 |
+| Pattern Size (px) | Size of each ArUco marker on screen | 200 |
 | Dict | ArUco dictionary type | DICT_4X4_250 |
 | Gaze Method | 3D (ray-plane) or 2D (homography) | 2D |
 | Pose Smooth / Gaze Smooth | Smoothing factors (0-1, higher = more smooth) | 1 / 1 |
@@ -143,9 +150,9 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Target Image | Image shown as fixation target during calibration | (none) |
+| Target Image | Image shown as fixation target during calibration | stimulus_images/ball.jpg |
 | Target Size (px) | Display size of the target | 100 |
-| Calibration Points | Number of calibration positions (1-5) | 5 |
+| Calibration Points | Number of calibration positions: 1, 3, 5 or 9 (1 point applies a constant offset; 3 or more use IDW interpolation) | 5 |
 
 **Accuracy Test** (button in *Preview Gaze Mapping*): measures Sol gaze accuracy + precision before and after the loaded 2D offset, over concentric-ring + corner targets, and saves a CSV/JSON report plus heatmap/by-angle PNGs under `accuracy_test/`. The subject fixates each target and the operator presses **SPACE** (ESC/Q aborts).
 
@@ -172,7 +179,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 ## Output Data
 
-Experiment data is saved to `VA_output/` **next to `VA_center_opt.exe`**:
+Experiment data is saved to `VA_output/` **next to `VA_center_opt.exe`**. Strictly, `VA_output/` is created in the folder the program was started from: double-clicking the `.exe` or `run_debug.bat` puts it next to the `.exe`, but a shortcut whose "Start in" folder is elsewhere does not (tracker REQ-0042).
 
 ### Session Folder
 
@@ -214,7 +221,7 @@ Click "Start Practice" to run a practice session. Practice mode uses the same st
 
 | Problem | Solution |
 |---------|----------|
-| "Calibration not found" | Run calibration.exe first with the same username |
+| "Calibration not found" | The selected Webcam tab → Calibration Folder holds no usable webcam profile. Run calibration.exe for this participant, then select its `<code>_<points>pt` folder (the profile is not found by User Name) |
 | Camera not detected | Close other camera apps, try different camera index |
 | Sol glasses not connecting | Check IP/port, ensure glasses are on the same network |
 | Black screen | Press ESC, check camera and display settings |
