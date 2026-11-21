@@ -136,4 +136,5 @@ workflow. The full rules are in [`CLAUDE.md`](CLAUDE.md); the short version:
 
 Each app has an independent version in `ntuh/version.py` (`APP_VERSIONS`), shown in its window title.
 Bump the relevant app before a release build; see [`CLAUDE.md`](CLAUDE.md#versioning--release-flow) for
-the PATCH/MINOR/MAJOR rules, tagging, and the full release checklist.
+the PATCH/MINOR/MAJOR rules, tagging, and the full release checklist. Every release is also checked by
+hand with the Sol glasses: [`doc/dev/release_hardware_checklist.md`](doc/dev/release_hardware_checklist.md).
