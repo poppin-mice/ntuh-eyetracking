@@ -206,7 +206,10 @@ are built **locally** with `release.py` (not in CI).
    This cleans/builds all three apps, runs `stage_release.py`, writes
    `release/YYYYMMDD_NTUH_EyeTracking_Suite.zip` (date-first, git-ignored), and creates per-app git
    tags `VA_center_opt-vX.Y.Z`, `calibration-vX.Y.Z`, `replayer-vX.Y.Z` for the current versions.
-4. **A human** pushes the tags (`git push --tags`) and, for a stable release, opens a PR to merge
+4. **A human** runs the with-glasses checks in
+   [`doc/dev/release_hardware_checklist.md`](doc/dev/release_hardware_checklist.md) on the built exes
+   (the automated tests need no hardware, so they cannot cover this). A failed check blocks the release.
+5. **A human** pushes the tags (`git push --tags`) and, for a stable release, opens a PR to merge
    `develop → main`. Hand off the zip from `release/`.
 
 ### Release artifact conventions
