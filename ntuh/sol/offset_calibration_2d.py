@@ -842,8 +842,6 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         print("[Sol2DOffset] Cannot save: model not trained")
         return False
 
-    filepath = get_sol_2d_offset_path(username, calib_dir)
-
     data = {
         'version': '1.0',
         'type': 'sol_2d_offset_idw',
@@ -856,7 +854,10 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         'model': model.to_dict()
     }
 
+    # The caller shows "not saved" on False, so every way the write can fail must end up there -
+    # including a calibration folder that does not exist and cannot be created.
     try:
+        filepath = get_sol_2d_offset_path(username, calib_dir)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         print(f"[Sol2DOffset] Saved calibration to {filepath}")
