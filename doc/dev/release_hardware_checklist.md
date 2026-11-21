@@ -8,6 +8,12 @@ handed off or the tags are pushed (see the release flow in
 
 - Run the **built exes** from `dist/` (what goes into the zip), each through its `run_debug.bat` so
   the console stays open. Do not run from source.
+- **Build first.** `dist/` is git-ignored and keeps whatever was built last, however old. Run
+  `python packaging/release.py` on the commit being released (it empties `dist/`, so move out
+  anything you want to keep), then check that each window title shows the version in
+  `ntuh/version.py` before doing anything else. A different version means a stale build: stop and
+  rebuild. A VA_center_opt build older than 1.1.1, for example, fails at **Connect** with
+  `No mapping found for keys: frozenset({...})`.
 - Use a test code that is not a participant's (below: `t01`), never a name.
 - About 20 minutes. Paste the filled-in table at the bottom into the release PR or hand-off note:
   codes only, no face screenshots.
@@ -17,7 +23,6 @@ handed off or the tags are pushed (see the release flow in
 - Glasses plugged into the phone, Chronus in the foreground with a live scene preview, phone and PC
   on the same Wi-Fi. Webcam connected.
 - Two monitors, as in the clinic: *General → Screen & Viewing → Subject Screen / Examiner Screen*.
-- Each window title shows the version listed in `ntuh/version.py`.
 
 ## Checks
 
