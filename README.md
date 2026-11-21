@@ -71,6 +71,9 @@ python -m pytest
 
 `pytest.ini` sets `-p no:cacheprovider`, so no `.pytest_cache/` is written. Test data must be
 synthetic or use participant **codes** only (s01, K03 ...) — never real names or field recordings.
+Shared synthetic builders live in `tests/helpers/synthetic.py` (`from helpers.synthetic import ...`):
+`parse_outcomes("P2 P4 F6")` for staircase outcome sequences and `make_sol_stream(...)` for Sol
+samples with stream gaps and invalid spans.
 
 ## Build the executables
 
