@@ -229,12 +229,17 @@ replayer
            from the auto result; nothing else in the review workflow changed. cpd in the
            trial list is shown to one decimal (the catch frequency is a derived value like
            29.333345...).
+    1.2.1  Fix: the replayer closed as soon as the mouse hovered a trial on the timeline. 1.2.0
+           gave every timeline trial a 7th field (trial_type) but the hover tooltip still
+           unpacked 6, so the first repaint raised inside paintEvent and PyQt6 ended the
+           process. The tooltip text now comes from a small Qt-free function that reads the
+           whole trial, and it tags a catch trial CATCH, like the trial list does.
 """
 
 APP_VERSIONS = {
     "VA_center_opt": "1.5.0",
     "calibration": "1.2.0",
-    "replayer": "1.2.0",
+    "replayer": "1.2.1",
 }
 
 
