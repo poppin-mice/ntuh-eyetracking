@@ -17,6 +17,7 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -48,8 +49,15 @@ REQUIRED_FILES = {
     "sol3d_calibration": [EVENTS_FILE, CONSOLE_FILE],
 }
 # ... and, in addition, only when it ran to the end / only when it crashed.
-REQUIRED_WHEN_COMPLETED = {"accuracy_test": ["accuracy_report.json", "accuracy_data.csv"]}
+REQUIRED_WHEN_COMPLETED = {"va": ["va_result.json"], "vf": ["vf_result.json"],
+                           "accuracy_test": ["accuracy_report.json", "accuracy_data.csv"]}
 REQUIRED_WHEN_CRASHED = [CRASH_FILE]
+# Calibration profile evidence (bundle.profile): where the byte copies go.
+SNAPSHOT_FILE = "calib_profile_snapshot.json"   # the Sol profile the session applied, or wrote
+PROFILE_COPY_DIR = "calib_profiles"             # any other profile it loaded: <role>__<file name>
+PROFILE_COPY_MAX_BYTES = 5 * 1024 * 1024        # a larger webcam profile folder is hashed, not copied
+# File name pattern of each Sol profile, to list which profiles the folder held.
+PROFILE_PATTERNS = {"sol2d_offset": "*_sol_2d_offset.json", "sol3d_offset": "*_sol_offset.json"}
 # LOGGING_SPEC 4.3. Never rename or reorder: bundle v2 appends columns at the end.
 EVENT_COLUMNS = ["pc_timestamp_ms", "sdk_timestamp_ms_nearest", "event", "target_idx",
                  "target_name", "repeat_idx", "x", "y", "detail_json"]
@@ -127,6 +135,30 @@ def parse_identity(user_name):
     return {"subject_code": m["subject"],
             "condition_code": m["condition"].upper() if m["condition"] else None,
             "take": int(m["take"]) if m["take"] else None}
+
+
+def our_calibration_expected(condition_code):
+    """C3 and C5 are run with our offset calibration, C1, C2 and C4 without; None when unknown."""
+    return {"C3": True, "C5": True, "C1": False, "C2": False, "C4": False}.get(condition_code)
+
+
+def _profile_facts(path, started_at):
+    """calibration_timestamp, its age at the session start, n_points and offset_mode read from a
+    Sol offset profile (2D or 3D JSON). Whatever the file does not say stays out."""
+    facts = {}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        facts["calibration_timestamp"] = made = data.get("calibration_timestamp")
+        facts["n_points"] = data.get("num_calibration_points")
+        facts["offset_mode"] = (data.get("model") or {}).get("offset_mode")
+        if made and started_at:
+            made, start = datetime.fromisoformat(made), datetime.fromisoformat(started_at)
+            if made.tzinfo is None:             # the profiles store local time without a zone
+                start = start.replace(tzinfo=None)
+            facts["age_s_at_start"] = round((start - made).total_seconds(), 1)
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    return facts
 
 
 def _monitor_index(label):
@@ -221,6 +253,14 @@ def note_software(**values):
     _APP.software_extra.update(values)
 
 
+def note_sol_builtin(confirmed, performed_at=None, chronus_participant=None):
+    """The operator's confirmation that the Sol built-in (Chronus) calibration was done. Every
+    session started from now on stores it in session_meta.json -> sol_builtin_calibration."""
+    _APP.sol_builtin = {"confirmed": bool(confirmed),
+                        "performed_at": performed_at if confirmed else None,
+                        "chronus_participant": str(chronus_participant or "").strip() or None}
+
+
 # ---------- app-wide state ----------
 class _AppState:
     """One per process: the console sinks, the app-level event log and the open session."""
@@ -229,7 +269,8 @@ class _AppState:
         self.lock = threading.RLock()
         self.app_dir = APP_DIR
         self.software_extra = {}
-        self.current = None            # the open SessionBundle, if any
+        self.sol_builtin = {"confirmed": False, "performed_at": None, "chronus_participant": None}
+        self.current = None           # the open SessionBundle, if any
         self.pending = []              # event rows since the previous session ended
         self.events_file = self.events_writer = None
         self.console_path = None
@@ -414,6 +455,9 @@ class _NullBundle:
 
     def event(self, *a, **k): pass
     def update(self, **k): pass
+    def profile(self, *a, **k): pass
+    def profile_written(self, *a, **k): pass
+    def write_json(self, *a, **k): pass
     def crash(self, *a, **k): pass
     def finish(self, *a, **k): pass
 
@@ -475,6 +519,91 @@ class SessionBundle:
                     self.meta[key] = _clean(value)
             if not self._closed:
                 self._safe_write_meta()
+
+    def write_json(self, name, data):
+        """A result file of the session (va_result.json ...). A failure is printed, never raised."""
+        try:
+            with open(self.folder / name, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[SessionBundle] could not write {name}: {e}")
+
+    # -- calibration profiles --
+    def _hash_and_copy(self, path, dest):
+        """sha256 and size of a profile file; with dest (a name inside the session folder) also
+        a byte copy, which the check tool later compares against that sha256."""
+        out = {"sha256": sha256_file(path), "bytes": path.stat().st_size, "snapshot": None}
+        if dest:
+            (self.folder / dest).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, self.folder / dest)
+            out["snapshot"] = dest
+        return out
+
+    def _profile_evidence(self, role, looked_for, copy):
+        """Where a profile was looked for and what was there. looked_for is a file (a Sol offset
+        profile) or a folder (the webcam profile). copy: "snapshot" (the applied or written Sol
+        profile -> calib_profile_snapshot.json), "other" (-> calib_profiles/) or None."""
+        path = Path(looked_for)
+        out = {"looked_for_path": portable_path(path), "source_path": None, "sha256": None,
+               "bytes": None, "calibration_timestamp": None, "age_s_at_start": None,
+               "n_points": None, "offset_mode": None, "present": [], "snapshot": None}
+        other = f"{PROFILE_COPY_DIR}/{role}__"
+        try:
+            if path.is_dir():
+                files = sorted(p for p in path.iterdir() if p.is_file())
+                out.update(source_path=out["looked_for_path"], present=[p.name for p in files])
+                small = sum(p.stat().st_size for p in files) <= PROFILE_COPY_MAX_BYTES
+                out["files"] = [{"name": p.name,
+                                 **self._hash_and_copy(p, other + p.name if copy and small else None)}
+                                for p in files]
+            else:
+                if path.parent.is_dir():
+                    pattern = PROFILE_PATTERNS.get(role, "*" + path.suffix)
+                    out["present"] = sorted(p.name for p in path.parent.glob(pattern))
+                if path.is_file():
+                    dest = SNAPSHOT_FILE if copy == "snapshot" else other + path.name if copy else None
+                    out.update(self._hash_and_copy(path, dest), source_path=out["looked_for_path"])
+                    out.update(_profile_facts(path, self.meta.get("started_at")))
+        except Exception as e:                  # evidence must never stop a test
+            out["evidence_error"] = _scrub(f"{type(e).__name__}: {e}")
+        return out
+
+    def profile(self, role, looked_for, loaded, *, applied=False, load_error=None):
+        """One calibration profile the session looked for: session_meta.json -> our_calibration
+        gets where it looked, whether the profile was loaded, its sha256 and which profiles
+        that folder held; a loaded profile is copied into the session folder. `applied` marks
+        the Sol profile the session's gaze method uses."""
+        with _APP.lock:
+            if self._closed:
+                return
+            copy = ("snapshot" if applied else "other") if loaded else None
+            entry = {"role": role, "applied": bool(applied), "loaded": bool(loaded),
+                     "load_error": _scrub(str(load_error)) if load_error else None,
+                     **self._profile_evidence(role, looked_for, copy)}
+            block = self.meta.setdefault("our_calibration", {"expected": None, "loaded": False,
+                                                             "profiles": []})
+            block["profiles"].append(entry)
+            if applied:
+                block["loaded"] = bool(loaded)
+            self._safe_write_meta()
+            self.event("profile_loaded" if loaded else "profile_missing", role=role,
+                       applied=bool(applied), looked_for_path=entry["looked_for_path"],
+                       exists=entry["source_path"] is not None, present=entry["present"])
+
+    def profile_written(self, role, path, saved, error=None, **facts):
+        """A calibration session's own result: session_meta.json -> calibration_result says
+        whether the profile was saved, where, and why not; a saved profile is copied to
+        calib_profile_snapshot.json."""
+        with _APP.lock:
+            if self._closed:
+                return
+            self.meta["calibration_result"] = result = {
+                "role": role, "saved": bool(saved),
+                "save_error": _scrub(str(error)) if error else None, **_clean(facts),
+                **self._profile_evidence(role, path, "snapshot" if saved else None)}
+            self._safe_write_meta()
+            self.event("calib_saved", role=role, saved=bool(saved),
+                       path=result["looked_for_path"], error=result["save_error"])
 
     def crash(self, exc_type=None, exc=None, tb=None, where=""):
         """Record an exception: crash_log.txt, an "exception" event and status "crashed", which
@@ -596,6 +725,7 @@ def _start(folder, kind, app, cfg, user_name, operator_code, condition_code, dis
                           "take": identity["take"]},
             "user_name_legacy": user_name,
             "identity_source": "parsed_from_user_name",
+            "sol_builtin_calibration": {"source": "operator_confirmed", **_APP.sol_builtin},
             "display": _clean(display if display is not None else cfg_blocks.get("display", {})),
             "mapping": _clean(mapping if mapping is not None else cfg_blocks.get("mapping", {})),
             "protocol_params": _clean(protocol_params if protocol_params is not None
@@ -603,6 +733,10 @@ def _start(folder, kind, app, cfg, user_name, operator_code, condition_code, dis
             "config": _clean(config if config is not None else (cfg or {})),
             "bundle": {"version": BUNDLE_VERSION, "files": None},   # filled by finish()
         }
+        if kind in ("va", "vf", "accuracy_test"):       # filled in by bundle.profile()
+            meta["our_calibration"] = {
+                "expected": our_calibration_expected(meta["condition"]["condition_code"]),
+                "loaded": False, "profiles": []}
         bundle = SessionBundle(folder, kind, meta, cfg=cfg)
         bundle._write_meta()
         for row in _APP.pending:        # what the operator did since the previous session

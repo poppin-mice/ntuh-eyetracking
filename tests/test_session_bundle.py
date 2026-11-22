@@ -351,3 +351,137 @@ def test_console_log_hides_the_user_profile_folder(bundle_app):
     lines = log.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2 and all("%USERPROFILE%" in line for line in lines)
     assert Path.home().name not in "".join(lines)
+
+
+# ---------- calibration profiles (our_calibration) ----------
+def _sol2d_profile(calib_dir, user_name, n_points=5):
+    """A real Sol 2D offset profile, written by the app's own code. Returns its path."""
+    from ntuh.sol import offset_calibration_2d as oc
+    model = oc.Sol2DOffsetModel(offset_mode=oc.OFFSET_MODE_SCREEN)
+    for i in range(n_points):
+        model.add_calibration_point((100.0 + 300 * i, 200.0 + 150 * (i % 3)),
+                                    (110.0 + 300 * i, 190.0 + 150 * (i % 3)), f"p{i}")
+    assert model.train() and oc.save_sol_2d_offset(user_name, calib_dir, model, 3840, 2160)
+    return oc.get_sol_2d_offset_path(user_name, calib_dir)
+
+
+def test_a_loaded_profile_is_recorded_and_copied_byte_for_byte(bundle_app):
+    calib_dir = bundle_app / "calibration_profiles"
+    source = _sol2d_profile(calib_dir, "s01_c3")
+    folder = bundle_app / "accuracy_test" / "s01_c3_20261122_100305"
+    bundle = sb.start(folder, "accuracy_test", user_name="s01_c3")
+    bundle.profile("sol2d_offset", source, True, applied=True)
+    bundle.finish()
+
+    block = _meta(folder)["our_calibration"]
+    assert (block["expected"], block["loaded"]) == (True, True)             # C3 runs with our calibration
+    (prof,) = block["profiles"]
+    assert (prof["role"], prof["applied"], prof["loaded"], prof["load_error"]) == ("sol2d_offset", True, True, None)
+    assert prof["looked_for_path"] == prof["source_path"] == "calibration_profiles/s01_c3_sol_2d_offset.json"
+    assert prof["present"] == ["s01_c3_sol_2d_offset.json"]
+    assert (prof["n_points"], prof["offset_mode"]) == (5, "screen")
+    assert prof["calibration_timestamp"] and 0 <= prof["age_s_at_start"] < 60
+    copy = folder / "calib_profile_snapshot.json"
+    assert prof["snapshot"] == copy.name and copy.read_bytes() == source.read_bytes()
+    assert prof["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert prof["bytes"] == source.stat().st_size
+    loaded = [e for e in _events(folder) if e["event"] == "profile_loaded"]
+    assert json.loads(loaded[0]["detail_json"])["looked_for_path"] == prof["looked_for_path"]
+
+
+def test_the_20260918_failure_can_be_read_from_the_folder_alone(bundle_app):
+    """A C3 test whose calibration folder holds only the C2 profile, after a Clear Offset and a
+    changed User Name: the folder says our calibration was not loaded, which file the program
+    looked for, which profiles were there, who ran it and what happened before the start."""
+    from ntuh.sol import offset_calibration_2d as oc
+    calib_dir = bundle_app / "calibration_profiles"
+    _sol2d_profile(calib_dir, "s01_c2")
+    sb.app_event("clear_offset", method="2D", user_name="s01_c3", existed=False, cleared=True,
+                 file=str(calib_dir / "s01_c3_sol_2d_offset.json"))
+    sb.app_event("user_name_changed", old="s01_c2", new="s01_c3")
+
+    folder = bundle_app / "accuracy_test" / "s01_c3_20261122_100305"
+    bundle = sb.start(folder, "accuracy_test", user_name="s01_c3", operator_code="OT1")
+    data = oc.load_sol_2d_offset("s01_c3", calib_dir)                       # what the accuracy test does
+    bundle.profile("sol2d_offset", oc.get_sol_2d_offset_path("s01_c3", calib_dir), data is not None,
+                   applied=True)
+    bundle.finish()
+
+    meta = _meta(folder)                                                    # from here on: the folder only
+    block = meta["our_calibration"]
+    assert (block["expected"], block["loaded"]) == (True, False)
+    (prof,) = block["profiles"]
+    assert prof["looked_for_path"] == "calibration_profiles/s01_c3_sol_2d_offset.json"
+    assert prof["present"] == ["s01_c2_sol_2d_offset.json"]
+    assert (prof["source_path"], prof["sha256"], prof["snapshot"]) == (None, None, None)
+    assert not (folder / "calib_profile_snapshot.json").exists()
+    assert meta["operator"] == {"operator_code": "OT1"}
+    assert (meta["subject"]["subject_code"], meta["condition"]["condition_code"]) == ("s01", "C3")
+    rows = _events(folder)
+    assert [e["event"] for e in rows] == ["clear_offset", "user_name_changed", "session_start",
+                                          "profile_missing", "session_end"]
+    assert all(json.loads(e["detail_json"])["phase"] == "pre_session" for e in rows[:2])
+    missing = json.loads(rows[3]["detail_json"])
+    assert (missing["exists"], missing["present"]) == (False, ["s01_c2_sol_2d_offset.json"])
+
+
+def test_other_profiles_go_to_calib_profiles_and_a_big_webcam_folder_is_only_hashed(folder, bundle_app,
+                                                                                    monkeypatch):
+    calib_dir = bundle_app / "calibration_profiles" / "s01_9pt"
+    calib_dir.mkdir(parents=True)
+    (calib_dir / "svr_x.xml").write_text("<x/>", encoding="utf-8")
+    (calib_dir / "svr_y.xml").write_text("<y/>", encoding="utf-8")
+    offset_3d = calib_dir / "s01_c3_sol_offset.json"
+    offset_3d.write_text('{"num_calibration_points": 3, "calibration_timestamp": "2026-11-22T09:00:00"}',
+                         encoding="utf-8")
+    bundle = sb.start(folder, "va", cfg=CFG)
+    bundle.profile("webcam", calib_dir, True)
+    bundle.profile("sol3d_offset", offset_3d, True)                         # loaded, but 2D is the method
+    bundle.profile("sol2d_offset", calib_dir / "s01_c3_sol_2d_offset.json", False, applied=True)
+    monkeypatch.setattr(sb, "PROFILE_COPY_MAX_BYTES", 5)
+    bundle.profile("webcam", calib_dir, True)                               # the same folder, now "too big"
+    bundle.finish()
+
+    webcam, sol3d, sol2d, big = _meta(folder)["our_calibration"]["profiles"]
+    assert [f["snapshot"] for f in webcam["files"]] == [
+        "calib_profiles/webcam__s01_c3_sol_offset.json", "calib_profiles/webcam__svr_x.xml",
+        "calib_profiles/webcam__svr_y.xml"]
+    assert (folder / "calib_profiles" / "webcam__svr_x.xml").read_text(encoding="utf-8") == "<x/>"
+    assert sol3d["snapshot"] == "calib_profiles/sol3d_offset__s01_c3_sol_offset.json"
+    assert (sol3d["n_points"], sol3d["present"]) == (3, ["s01_c3_sol_offset.json"])
+    assert (sol2d["loaded"], sol2d["snapshot"]) == (False, None)
+    assert _meta(folder)["our_calibration"]["loaded"] is False              # the applied one is missing
+    assert [f["snapshot"] for f in big["files"]] == [None, None, None]
+    assert all(len(f["sha256"]) == 64 for f in big["files"])
+    assert "calib_profiles/webcam__svr_y.xml" in _meta(folder)["bundle"]["files"]
+
+
+@pytest.mark.parametrize("condition, expected", [("C1", False), ("C2", False), ("C3", True),
+                                                 ("C4", False), ("C5", True), (None, None)])
+def test_whether_our_calibration_is_expected_follows_the_condition(condition, expected):
+    assert sb.our_calibration_expected(condition) is expected
+
+
+# ---------- Sol built-in calibration, result files ----------
+def test_the_sol_builtin_confirmation_is_in_every_session_started_after_it(bundle_app):
+    first, second, third = (bundle_app / "accuracy_test" / n for n in ("a", "b", "c"))
+    sb.start(first, "accuracy_test", user_name="s01_c2").finish()
+    sb.note_sol_builtin(True, "2026-11-22T10:01:00.000+08:00", " s01_sol ")
+    sb.start(second, "accuracy_test", user_name="s01_c4").finish()
+    sb.note_sol_builtin(False, "2026-11-22T10:01:00.000+08:00", "s01_sol")
+    sb.start(third, "accuracy_test", user_name="s01_c2").finish()
+    assert _meta(first)["sol_builtin_calibration"] == {
+        "source": "operator_confirmed", "confirmed": False, "performed_at": None, "chronus_participant": None}
+    assert _meta(second)["sol_builtin_calibration"] == {
+        "source": "operator_confirmed", "confirmed": True,
+        "performed_at": "2026-11-22T10:01:00.000+08:00", "chronus_participant": "s01_sol"}
+    assert _meta(third)["sol_builtin_calibration"]["performed_at"] is None  # unticked: no time
+
+
+def test_a_result_file_is_written_into_the_folder_and_listed(folder):
+    bundle = sb.start(folder, "va", cfg=CFG)
+    bundle.write_json("va_result.json", {"n_trials": 9})
+    bundle.finish()
+    assert json.loads((folder / "va_result.json").read_text(encoding="utf-8")) == {"n_trials": 9}
+    assert "va_result.json" in _meta(folder)["bundle"]["files"]
+    sb.NULL.write_json("va_result.json", {})                                # practice mode: nothing

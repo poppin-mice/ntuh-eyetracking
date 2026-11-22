@@ -90,11 +90,21 @@ def check_session(folder):
     for name, rec in files.items():
         _check_copy(folder, name, rec.get("sha256"), rec.get("bytes"), "changed after the session ended", fail)
 
-    # Calibration profile copies (bundle PR-2): the copy must be the bytes that were loaded.
-    for prof in (meta.get("our_calibration") or {}).get("profiles", []):
-        if prof.get("snapshot"):
-            _check_copy(folder, prof["snapshot"], prof.get("sha256"), prof.get("bytes"),
-                        f"is not the {prof.get('role', 'calibration')} profile that was loaded", fail)
+    # Calibration profile copies: each must be the bytes the session loaded (a test) or saved (a
+    # calibration run). A webcam profile is a folder: one copy per file, none above the size cap.
+    copies = [(prof, prof.get("loaded"), "loaded")
+              for prof in (meta.get("our_calibration") or {}).get("profiles", [])]
+    written = meta.get("calibration_result")
+    if written:
+        copies.append((written, written.get("saved"), "saved"))
+    for prof, used, verb in copies:
+        role = prof.get("role", "calibration")
+        if used and "files" not in prof and not prof.get("snapshot"):
+            fail(f"the {role} profile was {verb} but the folder has no copy of it")
+        for item in [prof] + list(prof.get("files") or []):
+            if item.get("snapshot"):
+                _check_copy(folder, item["snapshot"], item.get("sha256"), item.get("bytes"),
+                            f"is not the {role} profile that was {verb}", fail)
 
     if not result["reasons"]:
         result["verdict"] = "PASS"

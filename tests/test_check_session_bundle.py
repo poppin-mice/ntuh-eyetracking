@@ -10,8 +10,8 @@ from tools import check_session_bundle as chk
 
 # What the app itself writes into a finished folder of each kind, besides the bundle files.
 KIND_FILES = {
-    "va": {"trial_events.csv": "trial_number,cpd\n1,2.0\n"},
-    "vf": {"trial_events.csv": "trial_number,cpd\n1,0.0\n"},
+    "va": {"trial_events.csv": "trial_number,cpd\n1,2.0\n", "va_result.json": '{"n_trials": 1}'},
+    "vf": {"trial_events.csv": "trial_number,cpd\n1,0.0\n", "vf_result.json": '{"n_points": 1}'},
     "accuracy_test": {"accuracy_report.json": '{"meta": {"user": "s01_c3"}}',
                       "accuracy_data.csv": "name,err_raw_deg\ncenter,1.2\n"},
     "sol2d_calibration": {"calib_points.csv": "point_idx,name,n\n0,center,30\n"},
@@ -108,6 +108,50 @@ def test_a_profile_copy_must_be_the_bytes_that_were_loaded(bundle_app, copy_is_t
     else:
         assert result["verdict"] == "FAIL"
         assert "calib_profile_snapshot.json is not the sol2d_offset profile that was loaded" in reasons(folder)
+
+
+def test_a_loaded_profile_without_its_copy_fails(bundle_app):
+    folder = bundle_app / "accuracy_test" / "s01_c3_20261122_100305"
+    bundle = sb.start(folder, "accuracy_test", user_name="s01_c3")
+    for fname, text in KIND_FILES["accuracy_test"].items():
+        (folder / fname).write_text(text, encoding="utf-8")
+    bundle.update(our_calibration={"profiles": [{"role": "sol2d_offset", "loaded": True, "snapshot": None}]})
+    bundle.finish()
+    assert chk.check_session(folder)["verdict"] == "FAIL"
+    assert "the sol2d_offset profile was loaded but the folder has no copy of it" in reasons(folder)
+
+
+def test_a_calibration_run_is_checked_against_the_profile_it_saved(bundle_app):
+    profile = bundle_app / "calibration_profiles" / "s01_c3_sol_2d_offset.json"
+    profile.parent.mkdir()
+    profile.write_text('{"num_calibration_points": 5}', encoding="utf-8")
+    folder = bundle_app / "calibration_sessions" / "s01_c3_20261122_100305"
+    bundle = sb.start(folder, "sol2d_calibration", user_name="s01_c3")
+    (folder / "calib_points.csv").write_text("point_idx,name,n\n0,center,30\n", encoding="utf-8")
+    bundle.profile_written("sol2d_offset", profile, True)
+    bundle.finish()
+    result = chk.check_session(folder)
+    assert result["verdict"] == "PASS", result["reasons"]
+
+    (folder / "calib_profile_snapshot.json").write_text('{"num_calibration_points": 9}', encoding="utf-8")
+    assert chk.check_session(folder)["verdict"] == "FAIL"
+    assert "calib_profile_snapshot.json is not the sol2d_offset profile that was saved" in reasons(folder)
+
+
+def test_each_copy_of_a_webcam_profile_folder_is_checked(bundle_app):
+    calib_dir = bundle_app / "calibration_profiles" / "s01_9pt"
+    calib_dir.mkdir(parents=True)
+    (calib_dir / "svr_x.xml").write_text("<x/>", encoding="utf-8")
+    folder = bundle_app / "va" / "VA_s01_c3_sess1_20261122_100305"
+    bundle = sb.start(folder, "va", user_name="s01_c3")
+    for fname, text in KIND_FILES["va"].items():
+        (folder / fname).write_text(text, encoding="utf-8")
+    bundle.profile("webcam", calib_dir, True)
+    bundle.finish()
+    assert chk.check_session(folder)["verdict"] == "PASS"
+
+    (folder / "calib_profiles" / "webcam__svr_x.xml").write_text("<y/>", encoding="utf-8")
+    assert "calib_profiles/webcam__svr_x.xml is not the webcam profile that was loaded" in reasons(folder)
 
 
 @pytest.mark.parametrize("change, expected", [
