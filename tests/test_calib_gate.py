@@ -212,6 +212,13 @@ def test_result_does_not_warn_when_no_calibration_is_the_condition():
     assert cg.result_warning(cg.decide_gate("C2", None), [_record((1.0, 2.0), (1.0, 2.0))]) == ""
 
 
+# ---------- report folder name ----------
+def test_report_folder_name_carries_the_condition():
+    assert acc.report_dir_name("s01", "C3", "20261122_100305") == "s01_c3_20261122_100305"
+    # The User Name is kept as typed: a different condition in it stays visible, not merged.
+    assert acc.report_dir_name("s01_c2", "C3", "20261122_100305") == "s01_c2_c3_20261122_100305"
+
+
 # ---------- accuracy_report.json meta ----------
 ORIGINAL_META_KEYS = {"user", "timestamp", "screen_w", "screen_h", "view_dist_cm", "screen_width_cm",
                       "n_points", "calib_model_loaded", "offset_mode", "aborted"}

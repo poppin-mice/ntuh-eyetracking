@@ -158,7 +158,8 @@ VA_center_opt
            bar and in the result dialog (a warning when expected but not applied, or applied
            but corrected == raw). accuracy_report.json meta gains condition_code,
            our_calibration_expected, profile_path, profile_calibration_timestamp and gate; the
-           ten existing keys are unchanged.
+           ten existing keys are unchanged. The report folder name gains the condition:
+           accuracy_test/<User Name>_<condition>_<date>_<time> (was <User Name>_<date>_<time>).
            Fix: a 2D offset calibration whose profile could not be written still said
            "Calibration Complete". It now says "Calibration NOT saved" with the path and keeps
            the model in memory for the accuracy test that follows.

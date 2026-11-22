@@ -3106,7 +3106,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         # ---- report ----
         if records:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_dir = str(APP_DIR / "accuracy_test" / f"{username}_{ts}")
+            out_dir = str(APP_DIR / "accuracy_test" / acc.report_dir_name(username, gate.condition, ts))
             # Relative to the app folder when the profile lives under it (the normal layout), so the
             # report does not carry this PC's folder names around.
             try:

@@ -167,6 +167,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 - The start dialog shows the status once a condition is picked: `校正檔：已載入（file, time, points）` in green, or `校正檔：未載入` in grey (the condition does not use it) or red (C3/C5 and no profile).
 - During the test the examiner view carries a banner with a status dot: green `OUR CALIB: LOADED <file> <n> pts <time>`, or grey `OUR CALIB: NOT LOADED (...)`. The bar at the bottom of the subject screen shows `Our calib: ON` / `OFF`, which is what a single-monitor setup has.
 - The result dialog repeats the status. It is a **warning** dialog when a C3/C5 test ran without our calibration, or when a profile was loaded but corrected and raw gaze are identical on every point.
+- The report folder name carries the condition: `accuracy_test/<User Name>_<condition>_<YYYYMMDD_HHMMSS>/`, for example `s01_c3_20261122_100305` (before 1.6.0: `<User Name>_<YYYYMMDD_HHMMSS>`). The condition is the one picked in the start dialog, in lower case. The User Name is used as typed, so a User Name that already ends in a condition gives `s01_c3_c3_...`. Existing folders are not renamed.
 - `accuracy_report.json` → `meta` keeps its ten keys (`user`, `timestamp`, `screen_w`, `screen_h`, `view_dist_cm`, `screen_width_cm`, `n_points`, `calib_model_loaded`, `offset_mode`, `aborted`) and gains five:
 
   | Key | Meaning |
