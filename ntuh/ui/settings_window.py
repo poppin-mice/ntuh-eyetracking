@@ -11,7 +11,7 @@ import time
 import traceback
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, colorchooser, filedialog, messagebox, font as tkfont
+from tkinter import ttk, colorchooser, filedialog, messagebox, simpledialog, font as tkfont
 
 import cv2
 import numpy as np
@@ -28,12 +28,15 @@ from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
 from ntuh.common.pygame_utils import ensure_pygame_focus
-from ntuh.common.win_monitors import get_monitor_info_windows, screen_options, valid_screen_option
+from ntuh.common.win_monitors import (centered_on_monitor_at, get_monitor_info_windows,
+                                      screen_options, valid_screen_option)
 from ntuh.ui.face_overlay import (
     draw_face_quality_overlay,
     _GUIDE_OVAL_SIZE_FRAC, _GUIDE_OVAL_BOTTOM_X_FRAC, _GUIDE_OVAL_BOTTOM_Y_FRAC,
 )
 from ntuh.ui.widgets import Camera, ScrollableFrame
+from ntuh.ui.calib_status import draw_calib_status
+from ntuh.sol import calib_gate
 from ntuh.tracking.sol_session import run_sol_worker
 
 try:
@@ -54,7 +57,7 @@ except ImportError:
 try:
     from ntuh.sol.offset_calibration_2d import (
         Sol2DOffsetCalibrator, Sol2DOffsetModel,
-        load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset,
+        load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset, get_sol_2d_offset_path,
         CALIBRATION_POSITIONS_2D, compute_safe_calibration_positions,
         OFFSET_MODE_PIXEL, OFFSET_MODE_ANGULAR, OFFSET_MODE_SCREEN,
     )
@@ -1041,6 +1044,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         method = self.sol_gaze_method_var.get()
         if hasattr(self, 'lbl_current_gaze_method'):
             self.lbl_current_gaze_method.config(text=method, foreground="blue" if method == "3D" else "green")
+        self._set_last_calibrated()
 
     def start_sol_offset_calibration_auto(self):
         """Start offset calibration based on current gaze method (2D or 3D)."""
@@ -1080,10 +1084,23 @@ Controls: SPACE = Record point, Q = Cancel"""
 
             self.lbl_sol_offset_pitch.config(text=f"Pitch: {pitch_deg:.2f}°")
             self.lbl_sol_offset_yaw.config(text=f"Yaw: {yaw_deg:.2f}°")
-            self.lbl_sol_offset_timestamp.config(text=f"Last Calibrated: {timestamp}")
         else:
+            timestamp = None
             self.lbl_sol_offset_pitch.config(text="Pitch: --")
             self.lbl_sol_offset_yaw.config(text="Yaw: --")
+        self._set_last_calibrated("3D", timestamp)
+
+    def _set_last_calibrated(self, method=None, timestamp=None):
+        """Remember when the CURRENT user's 3D / 2D profile was made (None = no profile) and show
+        the one for the gaze method in use. The label is shared by both methods and used to be
+        written only when a profile was found, so it kept the previous user's time."""
+        if not hasattr(self, '_last_calibrated'):
+            self._last_calibrated = {}
+        if method is not None:
+            self._last_calibrated[method] = timestamp
+        if hasattr(self, 'lbl_sol_offset_timestamp'):
+            shown = self._last_calibrated.get(self.sol_gaze_method_var.get())
+            self.lbl_sol_offset_timestamp.config(text=f"Last Calibrated: {shown or 'Never'}")
 
     def update_sol_2d_offset_display(self):
         """Update the 2D Sol offset status display."""
@@ -1105,10 +1122,11 @@ Controls: SPACE = Record point, Q = Cancel"""
                 method_label = "Calibrated (IDW)"
             self.lbl_sol_2d_offset_status.config(text=method_label)
             self.lbl_sol_2d_offset_points.config(text=f"({num_points} pts)")
-            self.lbl_sol_offset_timestamp.config(text=f"Last Calibrated: {timestamp}")
         else:
+            timestamp = None
             self.lbl_sol_2d_offset_status.config(text="Not calibrated")
             self.lbl_sol_2d_offset_points.config(text="")
+        self._set_last_calibrated("2D", timestamp)
 
         # Update button state
         self._update_offset_button_state()
@@ -1703,15 +1721,25 @@ Controls: SPACE = Record point, Q = Cancel"""
                 if calibrator.finish_calibration():
                     # Save the model
                     username = self.user_var.get().strip() or "anonymous"
-                    save_sol_2d_offset(
+                    model = calibrator.get_model()
+                    n_pts = len(model.calibration_points)
+                    saved = save_sol_2d_offset(
                         username,
                         Path(self.calib_dir_var.get()),
-                        calibrator.get_model(),
+                        model,
                         screen_w, screen_h,
                         calibrator.target_image_path
                     )
-                    self.after(0, lambda: messagebox.showinfo("Calibration Complete",
-                        f"2D offset calibration complete!\n{len(calibrator.model.calibration_points)} points recorded."))
+                    # A profile that did not reach the disk must not read as success, but the
+                    # subject has just sat through the calibration: keep the trained model in
+                    # memory so the accuracy test that follows under this User Name can use it.
+                    self._unsaved_sol_2d = None if saved else {
+                        'username': username, 'model': model, 'num_calibration_points': n_pts,
+                        'calibration_timestamp': time.strftime("%Y-%m-%dT%H:%M:%S"), 'unsaved': True}
+                    kind, title, text = calib_gate.calibration_done_dialog(
+                        saved, n_pts, self._sol_2d_profile_path(username))
+                    show = messagebox.showinfo if kind == "info" else messagebox.showerror
+                    self.after(0, lambda: show(title, text))
                 else:
                     self.after(0, lambda: messagebox.showerror("Calibration Failed",
                         "Failed to train the offset model. Please try again."))
@@ -2479,6 +2507,108 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.btn_start.configure(state="disabled")
             self.btn_practice.configure(state="disabled")
 
+    def _sol_2d_profile_path(self, username):
+        """The Sol 2D offset profile file this User Name maps to (it may not exist)."""
+        calib_dir = Path(self.calib_dir_var.get())
+        try:
+            return get_sol_2d_offset_path(username, calib_dir)
+        except OSError:        # the folder does not exist and cannot be created
+            return calib_dir / f"{username}_sol_2d_offset.json"
+
+    def _load_sol_2d_profile(self, username):
+        """This User Name's 2D offset profile: the saved file, else a calibration from this run
+        that could not be saved (see _run_sol_2d_offset_calibration). None if there is neither."""
+        data = (load_sol_2d_offset(username, Path(self.calib_dir_var.get()))
+                if SOL_2D_OFFSET_AVAILABLE else None)
+        if calib_gate.profile_usable(data):
+            return data
+        kept = getattr(self, '_unsaved_sol_2d', None)
+        return kept if kept and kept['username'] == username else None
+
+    def _ask_accuracy_condition(self, username, profile, profile_name):
+        """Start dialog of the accuracy test: the operator must pick the condition (there is no
+        default) and sees what it means for our calibration profile. Returns 'C1'..'C5' or None."""
+        dlg = tk.Toplevel(self)
+        dlg.withdraw()                      # shown once it is placed (see below), so it does not jump
+        dlg.title("Accuracy Test - 測試條件 Condition")
+        dlg.transient(self)
+        dlg.resizable(False, False)
+        pad = dict(padx=14, pady=7)
+        ttk.Label(dlg, text=f"User Name: {username}", font=self.f_head).grid(
+            row=0, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(dlg, text="測試條件 Condition:", font=self.f_body).grid(row=1, column=0, sticky="w", **pad)
+        var = tk.StringVar()
+        box = ttk.Combobox(dlg, textvariable=var, state="readonly", width=42, font=self.f_body,
+                           values=[f"{c}  {d}" for c, d in calib_gate.CONDITIONS.items()])
+        box.grid(row=1, column=1, sticky="w", **pad)
+        # wraplength is in pixels: derive it from the font so it follows the Font setting and the DPI.
+        status = tk.Label(dlg, text="請先選擇測試條件。\nChoose the condition first.", justify="left",
+                          wraplength=self.f_body.measure("0" * 80), font=self.f_body, fg="#555555")
+        status.grid(row=2, column=0, columnspan=2, sticky="w", **pad)
+        chosen = [None]
+
+        def start():
+            chosen[0] = var.get().split()[0]
+            dlg.destroy()
+
+        btns = ttk.Frame(dlg)
+        btns.grid(row=3, column=0, columnspan=2, sticky="e", **pad)
+        btn_start = ttk.Button(btns, text="Start", command=start, state="disabled")
+        btn_start.pack(side="left", padx=6)
+        ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="left")
+
+        def on_pick(_event=None):
+            gate = calib_gate.decide_gate(var.get().split()[0], profile)
+            colour = {"green": "#0a7d0a", "grey": "#555555", "red": "#c00000"}[calib_gate.icon_state(gate.status)]
+            status.config(text="\n".join(calib_gate.describe(gate, profile, profile_name)), fg=colour)
+            btn_start.config(state="normal")
+
+        box.bind("<<ComboboxSelected>>", on_pick)
+        # Tk opens a Toplevel at the top-left corner. Centre it on the monitor the settings window
+        # is on, which is the operator's screen and not necessarily the primary one.
+        dlg.update_idletasks()
+        x, y = centered_on_monitor_at(
+            getattr(self, 'monitor_info_list', None) or get_monitor_info_windows(),
+            self.winfo_rootx() + self.winfo_width() // 2, self.winfo_rooty() + self.winfo_height() // 2,
+            dlg.winfo_reqwidth(), dlg.winfo_reqheight())
+        dlg.geometry(f"+{x}+{y}")
+        dlg.deiconify()
+        dlg.wait_visibility()
+        dlg.grab_set()
+        dlg.lift()
+        box.focus_set()
+        self.wait_window(dlg)
+        return chosen[0]
+
+    def _accuracy_gate(self, username):
+        """Ask for the condition and decide whether our calibration profile is applied.
+        Returns (gate, profile, profile_path), or None when the test must not start."""
+        profile = self._load_sol_2d_profile(username)
+        profile_path = self._sol_2d_profile_path(username)
+        condition = self._ask_accuracy_condition(username, profile, profile_path.name)
+        if condition is None:
+            return None
+        gate = calib_gate.decide_gate(condition, profile)
+        if not gate.may_start:
+            print(f"[Accuracy] BLOCKED - {gate.message} (looked for {profile_path})")
+            if not messagebox.askyesno(f"{condition}: 找不到校正檔 / calibration profile missing",
+                                       calib_gate.blocked_message(gate, username, profile_path),
+                                       icon=messagebox.ERROR, default=messagebox.NO, parent=self):
+                return None
+            code = simpledialog.askstring(
+                "不套用校正 / Continue WITHOUT our calibration",
+                f"這次 {condition} 測驗將不套用我方校正，並會如實記錄。\n"
+                f"請輸入操作者代碼確認（代碼，不是姓名）；按 Cancel 返回。\n\n"
+                f"This {condition} test will run WITHOUT our calibration and be recorded as such.\n"
+                f"Enter your operator code to confirm (a code, not a name).",
+                initialvalue=getattr(self, '_operator_code', ''), parent=self)
+            if not (code or "").strip():
+                return None
+            self._operator_code = code.strip()
+            gate = calib_gate.continue_without_calibration(gate, code)
+        print(f"[Accuracy] our calibration gate: {gate.status} - {gate.message}")
+        return gate, profile, profile_path
+
     def run_sol_accuracy_test(self):
         """Interactive Sol gaze ACCURACY + PRECISION test. Shows concentric-ring + corner targets on
         the subject's screen; the subject fixates each target and the operator presses SPACE. When a
@@ -2546,15 +2676,16 @@ Controls: SPACE = Record point, Q = Cancel"""
             messagebox.showerror("Error", "No on-screen accuracy targets could be computed.")
             return
 
-        # Load the 2D offset model under test (the currently-saved one for this user).
-        offset_model = None
+        # Which condition is this, and does it run with our 2D offset profile? C3/C5 must, C1/C2/C4
+        # must not (a profile found for the User Name is ignored); a missing profile blocks C3/C5
+        # unless the operator explicitly continues without it. Nothing is started before this.
         username = self.user_var.get().strip() or 'anonymous'
-        if SOL_2D_OFFSET_AVAILABLE:
-            data = load_sol_2d_offset(username, Path(self.calib_dir_var.get()))
-            if data and data.get('model') and data['model'].is_trained:
-                offset_model = data['model']
-                print(f"[Accuracy] testing offset model for '{username}' "
-                      f"(mode={getattr(offset_model, 'offset_mode', '?')})")
+        started = self._accuracy_gate(username)
+        if started is None:
+            return
+        gate, profile, profile_path = started
+        offset_model = profile['model'] if gate.apply else None
+        calib_banner = calib_gate.describe(gate, profile, profile_path.name)[1]
 
         cam_matrix = self.sol_cam_params.get('cam_matrix')
         dist_coeffs = self.sol_cam_params.get('dist_coeffs')
@@ -2780,6 +2911,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                         (12, H_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
             cv2.putText(canvas, "SPACE = record    Q/ESC = abort",
                         (W_img - 340, H_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
+            # Always on screen: is our calibration applied to what is being measured right now?
+            draw_calib_status(canvas, gate.status, calib_banner)
             return canvas
 
         print(f"[Accuracy] {len(targets)} targets. Subject fixates each target; operator presses "
@@ -2937,8 +3070,10 @@ Controls: SPACE = Record point, Q = Cancel"""
                            f"- look at the target, press SPACE")
                 pygame.draw.rect(win, (0, 0, 0), (0, screen_h - 50, screen_w, 50))
                 win.blit(font.render(msg, True, (255, 255, 255)), (10, screen_h - 44))
-                win.blit(small.render(f"Homography: {hom}   |   ESC/Q to abort", True, (200, 200, 200)),
-                         (screen_w - 470, screen_h - 40))
+                # "Our calib" is here too because a single-monitor setup has no examiner view.
+                win.blit(small.render(f"Our calib: {'ON' if gate.apply else 'OFF'}   |   "
+                                      f"Homography: {hom}   |   ESC/Q to abort", True, (200, 200, 200)),
+                         (screen_w - 650, screen_h - 40))
 
                 # ---- render (tester monitor) ----
                 if dual_screen:
@@ -2983,21 +3118,30 @@ Controls: SPACE = Record point, Q = Cancel"""
         # ---- report ----
         if records:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_dir = str(APP_DIR / "accuracy_test" / f"{username}_{ts}")
-            meta = {"user": username, "timestamp": ts, "screen_w": screen_w, "screen_h": screen_h,
-                    "view_dist_cm": view_dist_cm, "screen_width_cm": screen_width_cm,
-                    "n_points": len(records), "calib_model_loaded": offset_model is not None,
-                    "offset_mode": getattr(offset_model, 'offset_mode', None) if offset_model else None,
-                    "aborted": aborted}
+            out_dir = str(APP_DIR / "accuracy_test" / acc.report_dir_name(username, gate.condition, ts))
+            # Relative to the app folder when the profile lives under it (the normal layout), so the
+            # report does not carry this PC's folder names around.
+            try:
+                profile_path_txt = profile_path.resolve().relative_to(APP_DIR.resolve()).as_posix()
+            except ValueError:
+                profile_path_txt = str(profile_path)
+            meta = acc.build_meta(username, ts, screen_w, screen_h, view_dist_cm, screen_width_cm,
+                                  len(records), offset_model, aborted, gate, profile_path_txt,
+                                  profile.get('calibration_timestamp') if gate.apply else None)
             try:
                 acc.save_accuracy_report(out_dir, records, meta)
                 ov = acc.summarize(records).get('_overall', {})
-                messagebox.showinfo("Accuracy Test Complete",
+                # Expected-but-not-applied, or applied-but-changed-nothing, is a warning, not news.
+                warning = calib_gate.result_warning(gate, records)
+                show = messagebox.showwarning if warning else messagebox.showinfo
+                show("Accuracy Test Complete",
                     f"Recorded {len(records)} point(s).\n"
                     f"Mean accuracy: raw {ov.get('raw_mean_deg', 0):.2f} deg / {ov.get('raw_mean_px', 0):.0f} px "
                     f"-> corrected {ov.get('corr_mean_deg', 0):.2f} deg / {ov.get('corr_mean_px', 0):.0f} px\n"
                     f"Mean precision: {ov.get('prec_corr_deg', 0):.3f} deg / {ov.get('prec_corr_px', 0):.1f} px\n\n"
-                    f"Saved to:\n{out_dir}")
+                    + "\n".join(calib_gate.describe(gate, profile, profile_path.name))
+                    + (f"\n\n{warning}" if warning else "")
+                    + f"\n\nSaved to:\n{out_dir}")
             except Exception as e:
                 messagebox.showerror("Report Error", f"Recorded data but report failed: {e}")
         else:

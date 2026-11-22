@@ -129,7 +129,7 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 >
 > **Silent fallback (tracker REQ-0041).** If the selected folder holds no webcam profile (no `svr_x.xml`), *Start* switches the Calibration Folder to `anonymous_9pt` without a warning (only the console says so) and keeps that setting for later runs.
 >
-> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found and the test runs on uncorrected Sol gaze. The test screens give no warning; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0018, REQ-0031).
+> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found. The **accuracy test** then refuses to start a C3/C5 condition (since 1.6.0, see *Sol Calib Tab*). The **VA/VF test** still runs on uncorrected Sol gaze without a warning on the test screens; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0031).
 
 ### Sol Tab
 
@@ -155,6 +155,30 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 | Calibration Points | Number of calibration positions: 1, 3, 5 or 9 (1 point applies a constant offset; 3 or more use IDW interpolation) | 5 |
 
 **Accuracy Test** (button in *Preview Gaze Mapping*): measures Sol gaze accuracy + precision before and after the loaded 2D offset, over concentric-ring + corner targets, and saves a CSV/JSON report plus heatmap/by-angle PNGs under `accuracy_test/`. The subject fixates each target and the operator presses **SPACE** (ESC/Q aborts).
+
+**Condition and our calibration (since 1.6.0).** The Accuracy Test opens with a start dialog in which the operator must pick the **Condition** (C1–C5; there is no default). The condition decides whether our offset profile (`<User Name>_sol_2d_offset.json` in the Calibration Folder) is used:
+
+| Condition | Our calibration | What happens |
+|-----------|-----------------|--------------|
+| C1 practice, C2 no calibration, C4 Sol built-in | must **not** be applied | A profile that exists for the User Name is ignored (not deleted); the console says so. *Clear Offset* is no longer needed before these conditions. |
+| C3 our calibration, C5 both | **required** | With a profile: it is applied. Without one: the test does **not** start. |
+
+- **C3/C5 without a profile** shows an error dialog with the file that was looked for. *No* goes back, so the 5-point calibration can be run under exactly this User Name. *Yes* continues **without** our calibration; it then asks for the operator code (a code, not a name) as confirmation, and the choice, the code and the time are written to the report.
+- The start dialog shows the status once a condition is picked: `校正檔：已載入（file, time, points）` in green, or `校正檔：未載入` in grey (the condition does not use it) or red (C3/C5 and no profile).
+- During the test the examiner view carries a banner with a status dot: green `OUR CALIB: LOADED <file> <n> pts <time>`, or grey `OUR CALIB: NOT LOADED (...)`. The bar at the bottom of the subject screen shows `Our calib: ON` / `OFF`, which is what a single-monitor setup has.
+- The result dialog repeats the status. It is a **warning** dialog when a C3/C5 test ran without our calibration, or when a profile was loaded but corrected and raw gaze are identical on every point.
+- The report folder name carries the condition: `accuracy_test/<User Name>_<condition>_<YYYYMMDD_HHMMSS>/`, for example `s01_c3_20261122_100305` (before 1.6.0: `<User Name>_<YYYYMMDD_HHMMSS>`). The condition is the one picked in the start dialog, in lower case. The User Name is used as typed, so a User Name that already ends in a condition gives `s01_c3_c3_...`. Existing folders are not renamed.
+- `accuracy_report.json` → `meta` keeps its ten keys (`user`, `timestamp`, `screen_w`, `screen_h`, `view_dist_cm`, `screen_width_cm`, `n_points`, `calib_model_loaded`, `offset_mode`, `aborted`) and gains five:
+
+  | Key | Meaning |
+  |-----|---------|
+  | `condition_code` | `C1` … `C5`, as picked in the start dialog |
+  | `our_calibration_expected` | `true` for C3 and C5 |
+  | `profile_path` | The profile file the User Name maps to, relative to the program folder when it is inside it. It was loaded only if `calib_model_loaded` is `true` |
+  | `profile_calibration_timestamp` | Calibration time stored in the profile; `null` unless the profile was applied |
+  | `gate` | `{status, message, condition, operator_code, time}`. `status` is `ok` (applied), `not_applied_by_condition` (C1/C2/C4) or `no_calib_by_operator` (C3/C5 run without it by the operator's choice; `operator_code` and `time` are set) |
+
+**Calibration NOT saved.** When *Start Calibration* finishes but the profile file cannot be written (for example a read-only Calibration Folder), an error dialog **Calibration NOT saved / 校正未存檔** shows the path instead of *Calibration Complete*. The calibration is kept in memory, so an accuracy test run next under the same User Name still uses it (the status then reads `NOT SAVED (in memory)`); it is lost when the program closes.
 
 - The accuracy test and the gaze preview both run on the subject screen set at *General → Screen & Viewing → **Subject Screen***, and the operator's monitoring screen is *General → Screen & Viewing → Examiner Screen*. When these are two different monitors, an **examiner view** opens on the Examiner Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
 - The camera picture appears as soon as frames arrive; the target and corrected-gaze markers need a valid homography, so until the ArUco markers are found you see the video with the raw gaze only and a "no homography yet" note.

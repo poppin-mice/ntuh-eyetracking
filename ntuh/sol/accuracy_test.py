@@ -180,6 +180,37 @@ def summarize(records):
     return summary
 
 
+def report_dir_name(user, condition, timestamp):
+    """Report folder under accuracy_test/: <User Name>_<condition>_<YYYYMMDD_HHMMSS>, e.g.
+    s01_c3_20261122_100305. The condition is the one picked in the start dialog, in lower case
+    like the field naming (sNN_cK); the User Name is kept as typed."""
+    return f"{user}_{condition.lower()}_{timestamp}"
+
+
+def build_meta(user, timestamp, screen_w, screen_h, view_dist_cm, screen_width_cm, n_points,
+               offset_model, aborted, gate, profile_path, profile_calibration_timestamp):
+    """The "meta" block of accuracy_report.json.
+
+    The first ten keys are the original ones and keep their names and meaning (the QC scripts and
+    the model repo read them). The last five say which condition was run and what happened to our
+    calibration profile: `gate` is a ntuh.sol.calib_gate.GateResult, `profile_path` the profile
+    file this User Name maps to (loaded only when calib_model_loaded is true) and
+    `profile_calibration_timestamp` the time inside that profile, None unless it was applied.
+    """
+    return {
+        "user": user, "timestamp": timestamp, "screen_w": screen_w, "screen_h": screen_h,
+        "view_dist_cm": view_dist_cm, "screen_width_cm": screen_width_cm,
+        "n_points": n_points, "calib_model_loaded": offset_model is not None,
+        "offset_mode": getattr(offset_model, 'offset_mode', None) if offset_model else None,
+        "aborted": aborted,
+        "condition_code": gate.condition,
+        "our_calibration_expected": gate.expected,
+        "profile_path": profile_path,
+        "profile_calibration_timestamp": profile_calibration_timestamp,
+        "gate": gate.to_dict(),
+    }
+
+
 def save_accuracy_report(out_dir, records, meta):
     """Write accuracy_data.csv, accuracy_report.json, accuracy_heatmap.png, accuracy_by_angle.png.
 
