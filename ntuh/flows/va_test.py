@@ -16,6 +16,7 @@ import pygame
 from ntuh.sol.connector import SolConnector, SDK_AVAILABLE
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
+from ntuh.recording import session_bundle
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -24,9 +25,10 @@ from ntuh.common.optics import to_rgb_tuple, mean_color_rgb
 from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import resolve_tester_rect
 from ntuh.vavf.stimuli import (
-    CATCH_CYCLES_PER_PX, DO_BLUR, CatchScheduler, Staircase, catch_trial_cpd,
-    generate_grating_oriented_patch, get_va_result_cpd, prepare_patch_grid,
+    CATCH_CYCLES_PER_PX, DO_BLUR, VA_RESULT_FILE, VA_STAIRCASE, CatchScheduler, Staircase,
+    build_va_result, catch_trial_cpd, generate_grating_oriented_patch, prepare_patch_grid,
 )
+from ntuh.version import get_version
 from ntuh.tracking.sol_quality import (
     DashboardState, SolQualityTracker, build_summary_lines, build_quality_summary,
 )
@@ -41,11 +43,11 @@ except Exception:
     load_sol_offset = apply_angular_offset = None
 
 try:
-    from ntuh.sol.offset_calibration_2d import load_sol_2d_offset
+    from ntuh.sol.offset_calibration_2d import get_sol_2d_offset_path, load_sol_2d_offset
     SOL_2D_OFFSET_AVAILABLE = True
 except Exception:
     SOL_2D_OFFSET_AVAILABLE = False
-    load_sol_2d_offset = None
+    get_sol_2d_offset_path = load_sol_2d_offset = None
 
 
 def run_test(cfg, sol_context=None):
@@ -342,6 +344,19 @@ def run_test(cfg, sol_context=None):
     else:
         recorder = Recorder(output_dir="VA_output", subject_id=cfg['user_name'], session_num="1", is_va=True,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
+    # Session bundle: session_meta.json, events.csv and console.log in the session folder
+    # (doc/session_bundle.md). Practice mode has no folder, so it writes nothing.
+    bundle = session_bundle.start(getattr(recorder, 'session_dir', None), 'va', cfg=cfg)
+    # Which calibration profiles this test looked for, and what it found (with a copy of each).
+    if cfg['enable_webcam']:
+        bundle.profile("webcam", cfg['calib_dir'], loaded=True)    # without one the test did not start
+    if cfg['enable_sol'] and SOL_OFFSET_AVAILABLE:
+        method_2d = cfg.get('sol_gaze_method', '3D') == '2D'       # the Sol offset this test applies
+        bundle.profile("sol3d_offset", calib_dir / f"{username}_sol_offset.json", bool(sol_offset),
+                       applied=not method_2d)
+        if SOL_2D_OFFSET_AVAILABLE:
+            bundle.profile("sol2d_offset", get_sol_2d_offset_path(username, calib_dir, create=False),
+                           sol_2d_offset_model is not None, applied=method_2d)
 
     # [NEW] Sol gaze-quality tracker (missing-data rate over RECEIVED samples) + tester dashboard
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -406,7 +421,16 @@ def run_test(cfg, sol_context=None):
     screen_record_frame_counter = 0
 
     # Staircase
-    stair = Staircase(start=2.0, step=2.0, minv=2.0, maxv=20.0)
+    stair = Staircase(**VA_STAIRCASE)
+    # Every trial as (cpd, passed, "normal" | "catch"), in order: what the result is built from.
+    trial_log = []
+
+    def save_va_result():
+        """Write va_result.json into the session folder (practice mode has none). Returns the
+        result, which is also what the result screen shows."""
+        result = build_va_result(trial_log, get_version("VA_center_opt"))
+        bundle.write_json(VA_RESULT_FILE, result)
+        return result
 
     # --- Catch trials (negative-sample collection; OFF by default) ---
     # A catch trial renders the target at a frequency nobody can resolve, so the subject has
@@ -755,6 +779,7 @@ def run_test(cfg, sol_context=None):
         thr = float(cfg.get('valid_start_threshold', 80.0))
         blank_bg = PAPER_GRAY if PAPER_COLOR_ENABLED else to_rgb_tuple(cfg['bg_color'])
         forced = False
+        gate_t0, last_pct = time.time(), (None, None)   # for the gate_override event
         # Focus-independent SPACE, same approach as the offset calibration: cv2.waitKey only
         # reports keys while the dashboard window holds OS focus and pygame.event only while the
         # subject window does, so neither alone is reliable here. Seed prev from the current state
@@ -779,6 +804,9 @@ def run_test(cfg, sol_context=None):
                     forced = True
             if forced:
                 print("[wait_for_stable_quality] SPACE pressed - forcing trial start")
+                bundle.event("gate_override", trial=trial_number, key="space",
+                             waited_s=round(time.time() - gate_t0, 2), threshold_pct=thr,
+                             sol_valid_pct=last_pct[0], webcam_valid_pct=last_pct[1])
                 break   # skip the rest of the frame (render + screen encode) so the start is instant
             win.fill(blank_bg)
             if cfg['enable_sol']:
@@ -802,6 +830,7 @@ def run_test(cfg, sol_context=None):
                 sol_raw_gaze_data=sol_rd if cfg.get('rec_sol_data') else None,
                 sol_frame=sol_f)
             sol_pct, wc_pct = sol_quality.window_validity()
+            last_pct = (sol_pct if need_sol else None, wc_pct if need_wc else None)
             dash_state.update(gate=(sol_pct if need_sol else None, wc_pct if need_wc else None, thr, True))
             ok = True
             if need_sol: ok = ok and (sol_pct is not None and sol_pct >= thr)
@@ -876,8 +905,11 @@ def run_test(cfg, sol_context=None):
             if sol_projector: sol_projector.stop_background_detection()
             if dashboard is not None: dashboard.stop()
             finalize_sol_quality_metrics()
+            save_va_result()            # the operator stopped the test: recorded as not finished
             recorder.close()
+            bundle.event("abort", key="q", where="quality_gate", trial=trial_number)
             pygame.quit()
+            bundle.finish("aborted", "operator_q")
             return
 
         start  = time.time()
@@ -907,8 +939,11 @@ def run_test(cfg, sol_context=None):
                     if sol_projector: sol_projector.stop_background_detection()
                     if dashboard is not None: dashboard.stop()
                     finalize_sol_quality_metrics()
+                    save_va_result()    # the operator stopped the test: recorded as not finished
                     recorder.close()
+                    bundle.event("abort", key="q", where="trial", trial=trial_number)
                     pygame.quit()
+                    bundle.finish("aborted", "operator_q")
                     return
 
             t = time.time() - start
@@ -1290,6 +1325,7 @@ def run_test(cfg, sol_context=None):
         # acuity: it must not move the staircase or reach the score. It is already in
         # trial_events.csv, which is what the ML pipeline reads.
         catch.record(is_catch, passed)
+        trial_log.append((cpd, passed, "catch" if is_catch else "normal"))
         if is_catch:
             print(f"[Catch] trial {trial_number} logged ({'PASS' if passed else 'FAIL'}); "
                   f"{catch.needed} negative sample(s) still needed "
@@ -1313,6 +1349,10 @@ def run_test(cfg, sol_context=None):
         print(f"Error: {trial_err}")
         print(f"Full traceback:\n{err_msg}")
 
+        # The test goes on, so this is an event and not the end of the session.
+        bundle.event("exception", where="trial", trial=trial_number,
+                     error=f"{type(trial_err).__name__}: {trial_err}")
+
         # Write to crash log file
         try:
             with open("va_trial_crash_log.txt", "a") as f:
@@ -1328,6 +1368,9 @@ def run_test(cfg, sol_context=None):
         # Consume the slot even on error: a forced catch trial runs only because the staircase
         # is already done, so leaving it owed would loop here forever.
         catch.record(is_catch, False)
+        # Mirror what the staircase is told, at the level it is at, so the result follows its path.
+        trial_log.append((catch_cpd if is_catch else float(stair.freq), False,
+                          "catch" if is_catch else "normal"))
         if not is_catch:
             stair.update(False)  # Mark as failed
         print(f"[TRIAL ERROR] Attempting to continue to next trial...")
@@ -1372,9 +1415,11 @@ def run_test(cfg, sol_context=None):
         print("[Data Quality] " + ", ".join(
             f"{lbl} {('%.0f%%' % pct) if pct is not None else 'N/A'}" for lbl, pct, _k in summary_lines))
 
-    # Final Result
-    final_cpd = float(stair.freq)
-    va_score  = get_va_result_cpd(final_cpd)
+    # Final Result: saved before the result screen (which can stay open for a long time), and the
+    # screen shows the saved values, so the two cannot differ.
+    result = save_va_result()
+    final_cpd = result["legacy"]["next_level_cpd"]
+    va_score  = result["legacy"]["va_score"]
 
     # Result Screen
     result_font = pygame.font.SysFont(None, 80)
@@ -1408,3 +1453,4 @@ def run_test(cfg, sol_context=None):
     if sol_projector: sol_projector.stop_background_detection()
     recorder.close()
     pygame.quit()
+    bundle.finish("completed")     # after the window is gone: hashing the folder takes a moment

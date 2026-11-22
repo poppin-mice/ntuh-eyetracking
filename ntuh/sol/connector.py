@@ -176,6 +176,7 @@ class SolConnector:
         # nothing at all; the child passes its IPC _report so these reach the parent's console.
         # In-process users (calibration, VA/VF) leave it None and just get the print.
         self._report = report
+        self.remote_api_version = None  # what the phone speaks; known once connected
         self.stop_event = threading.Event()
         self._scene_active = threading.Event()  # Controls scene stream on/off
         # Start PAUSED: the scene (H.264) video is only needed for ArUco during preview/calibration/
@@ -324,6 +325,7 @@ class SolConnector:
                 # compared - and on a match this line is the record of what the pair actually was.
                 _ver = getattr(version_resp, 'result', None)
                 device_api = getattr(_ver, 'remote_api_version', None) if _ver is not None else None
+                self.remote_api_version = str(device_api) if device_api else None
                 sdk_ver = installed_sdk_version()
                 min_app = min_chronus_app_version()
                 print(f"[SolConnector] SDK {sdk_ver} <-> phone remote API {device_api}"

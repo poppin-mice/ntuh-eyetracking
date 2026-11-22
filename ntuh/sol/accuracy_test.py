@@ -180,6 +180,17 @@ def summarize(records):
     return summary
 
 
+# What the result dialog shows: the overall point count, mean accuracy before / after the offset
+# and mean precision. Saved as accuracy_report.json -> meta.result.
+RESULT_KEYS = ("n", "raw_mean_deg", "raw_mean_px", "corr_mean_deg", "corr_mean_px",
+               "prec_corr_deg", "prec_corr_px")
+
+
+def result_block(records):
+    overall = summarize(records)["_overall"]
+    return {key: overall[key] for key in RESULT_KEYS}
+
+
 def save_accuracy_report(out_dir, records, meta):
     """Write accuracy_data.csv, accuracy_report.json, accuracy_heatmap.png, accuracy_by_angle.png.
 
