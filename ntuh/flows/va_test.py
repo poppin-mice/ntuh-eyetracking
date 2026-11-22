@@ -16,6 +16,7 @@ import pygame
 from ntuh.sol.connector import SolConnector, SDK_AVAILABLE
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
+from ntuh.recording import session_bundle
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -342,6 +343,9 @@ def run_test(cfg, sol_context=None):
     else:
         recorder = Recorder(output_dir="VA_output", subject_id=cfg['user_name'], session_num="1", is_va=True,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
+    # Session bundle: session_meta.json, events.csv and console.log in the session folder
+    # (doc/session_bundle.md). Practice mode has no folder, so it writes nothing.
+    bundle = session_bundle.start(getattr(recorder, 'session_dir', None), 'va', cfg=cfg)
 
     # [NEW] Sol gaze-quality tracker (missing-data rate over RECEIVED samples) + tester dashboard
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -755,6 +759,7 @@ def run_test(cfg, sol_context=None):
         thr = float(cfg.get('valid_start_threshold', 80.0))
         blank_bg = PAPER_GRAY if PAPER_COLOR_ENABLED else to_rgb_tuple(cfg['bg_color'])
         forced = False
+        gate_t0, last_pct = time.time(), (None, None)   # for the gate_override event
         # Focus-independent SPACE, same approach as the offset calibration: cv2.waitKey only
         # reports keys while the dashboard window holds OS focus and pygame.event only while the
         # subject window does, so neither alone is reliable here. Seed prev from the current state
@@ -779,6 +784,9 @@ def run_test(cfg, sol_context=None):
                     forced = True
             if forced:
                 print("[wait_for_stable_quality] SPACE pressed - forcing trial start")
+                bundle.event("gate_override", trial=trial_number, key="space",
+                             waited_s=round(time.time() - gate_t0, 2), threshold_pct=thr,
+                             sol_valid_pct=last_pct[0], webcam_valid_pct=last_pct[1])
                 break   # skip the rest of the frame (render + screen encode) so the start is instant
             win.fill(blank_bg)
             if cfg['enable_sol']:
@@ -802,6 +810,7 @@ def run_test(cfg, sol_context=None):
                 sol_raw_gaze_data=sol_rd if cfg.get('rec_sol_data') else None,
                 sol_frame=sol_f)
             sol_pct, wc_pct = sol_quality.window_validity()
+            last_pct = (sol_pct if need_sol else None, wc_pct if need_wc else None)
             dash_state.update(gate=(sol_pct if need_sol else None, wc_pct if need_wc else None, thr, True))
             ok = True
             if need_sol: ok = ok and (sol_pct is not None and sol_pct >= thr)
@@ -877,7 +886,9 @@ def run_test(cfg, sol_context=None):
             if dashboard is not None: dashboard.stop()
             finalize_sol_quality_metrics()
             recorder.close()
+            bundle.event("abort", key="q", where="quality_gate", trial=trial_number)
             pygame.quit()
+            bundle.finish("aborted", "operator_q")
             return
 
         start  = time.time()
@@ -908,7 +919,9 @@ def run_test(cfg, sol_context=None):
                     if dashboard is not None: dashboard.stop()
                     finalize_sol_quality_metrics()
                     recorder.close()
+                    bundle.event("abort", key="q", where="trial", trial=trial_number)
                     pygame.quit()
+                    bundle.finish("aborted", "operator_q")
                     return
 
             t = time.time() - start
@@ -1313,6 +1326,10 @@ def run_test(cfg, sol_context=None):
         print(f"Error: {trial_err}")
         print(f"Full traceback:\n{err_msg}")
 
+        # The test goes on, so this is an event and not the end of the session.
+        bundle.event("exception", where="trial", trial=trial_number,
+                     error=f"{type(trial_err).__name__}: {trial_err}")
+
         # Write to crash log file
         try:
             with open("va_trial_crash_log.txt", "a") as f:
@@ -1408,3 +1425,4 @@ def run_test(cfg, sol_context=None):
     if sol_projector: sol_projector.stop_background_detection()
     recorder.close()
     pygame.quit()
+    bundle.finish("completed")     # after the window is gone: hashing the folder takes a moment

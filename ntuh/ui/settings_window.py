@@ -24,11 +24,13 @@ from gazefollower.calibration import SVRCalibration
 from gazefollower.camera import WebCamCamera
 
 from ntuh.recording.recorder import Recorder
+from ntuh.recording import session_bundle
 from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
 from ntuh.common.pygame_utils import ensure_pygame_focus
-from ntuh.common.win_monitors import get_monitor_info_windows, screen_options, valid_screen_option
+from ntuh.common.win_monitors import (get_monitor_info_windows, monitor_dpi_scale, screen_options,
+                                      valid_screen_option)
 from ntuh.ui.face_overlay import (
     draw_face_quality_overlay,
     _GUIDE_OVAL_SIZE_FRAC, _GUIDE_OVAL_BOTTOM_X_FRAC, _GUIDE_OVAL_BOTTOM_Y_FRAC,
@@ -54,7 +56,7 @@ except ImportError:
 try:
     from ntuh.sol.offset_calibration_2d import (
         Sol2DOffsetCalibrator, Sol2DOffsetModel,
-        load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset,
+        load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset, get_sol_2d_offset_path,
         CALIBRATION_POSITIONS_2D, compute_safe_calibration_positions,
         OFFSET_MODE_PIXEL, OFFSET_MODE_ANGULAR, OFFSET_MODE_SCREEN,
     )
@@ -138,6 +140,7 @@ class SettingsWindow(tk.Tk):
 
         # --- General Vars ---
         self.user_var = tk.StringVar(value="anonymous")
+        self.operator_code_var = tk.StringVar(value="")   # who runs the test; a code, never a name
         self.gaze_color_var  = tk.StringVar(value="0,255,0")
         self.gaze_radius_var = tk.StringVar(value="30")
         self.gaze_width_var  = tk.StringVar(value="4")
@@ -350,6 +353,7 @@ class SettingsWindow(tk.Tk):
 
         # Setup auto-save traces on all settings variables (after load to avoid saving during load)
         self._setup_auto_save_traces()
+        self._note_identity_changes()    # logs "app_start" with the restored User Name and folder
 
         # Watch for username changes to update user-dependent displays (offset calibration status)
         self.user_var.trace_add("write", self._on_username_changed)
@@ -628,6 +632,10 @@ class SettingsWindow(tk.Tk):
         ttk.Label(grp_user, text="User Name:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         self.entry_user = ttk.Entry(grp_user, textvariable=self.user_var, font=e_font, width=20)
         self.entry_user.grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        ttk.Label(grp_user, text="Operator Code:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        ttk.Entry(grp_user, textvariable=self.operator_code_var, font=e_font, width=20).grid(
+            row=r, column=1, sticky="w", **pad); r += 1
 
         ttk.Label(grp_user, text="Trackers:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         tracker_frame = ttk.Frame(grp_user)
@@ -1132,7 +1140,12 @@ Controls: SPACE = Record point, Q = Cancel"""
             return
 
         username = self.user_var.get().strip() or "anonymous"
-        clear_sol_2d_offset(username, Path(self.calib_dir_var.get()))
+        self._note_identity_changes()
+        path = get_sol_2d_offset_path(username, Path(self.calib_dir_var.get()))
+        existed = path.exists()
+        cleared = clear_sol_2d_offset(username, Path(self.calib_dir_var.get()))
+        session_bundle.app_event("clear_offset", method="2D", user_name=username, file=str(path),
+                                 existed=existed, cleared=bool(cleared))
         self.update_sol_2d_offset_display()
         messagebox.showinfo("2D Offset Cleared", "2D gaze offset calibration has been cleared.")
 
@@ -1901,7 +1914,12 @@ Controls: SPACE = Record point, Q = Cancel"""
 
         username = self.user_var.get().strip() or "anonymous"
         if messagebox.askyesno("Confirm", f"Clear Sol offset calibration for user '{username}'?"):
-            clear_sol_offset(username, Path(self.calib_dir_var.get()))
+            self._note_identity_changes()
+            path = Path(self.calib_dir_var.get()) / f"{username}_sol_offset.json"
+            existed = path.exists()
+            cleared = clear_sol_offset(username, Path(self.calib_dir_var.get()))
+            session_bundle.app_event("clear_offset", method="3D", user_name=username, file=str(path),
+                                     existed=existed, cleared=bool(cleared))
             self.update_sol_offset_display()
             messagebox.showinfo("Cleared", "Sol offset calibration cleared.")
 
@@ -2577,6 +2595,29 @@ Controls: SPACE = Record point, Q = Cancel"""
             'stream_frames': bool(dual_screen),
         }
 
+        # The session folder and its bundle exist from the START of the test (the folder used to
+        # appear only with the report), so an aborted or crashed test leaves its evidence too.
+        self._note_identity_changes()
+        out_dir = str(APP_DIR / "accuracy_test" / f"{username}_{datetime.now():%Y%m%d_%H%M%S}")
+        bundle = session_bundle.start(
+            out_dir, "accuracy_test", user_name=username, operator_code=self.operator_code_var.get(),
+            display={"screen_w_px": screen_w, "screen_h_px": screen_h, "screen_width_cm": screen_width_cm,
+                     "view_dist_cm": view_dist_cm, "dpi_scale": monitor_dpi_scale(screen_x + 1, screen_y + 1),
+                     "subject_monitor_index": screen.get('index'),
+                     "tester_monitor_index": tester_idx if dual_screen else None,
+                     "dual_screen": bool(dual_screen)},
+            mapping={"gaze_method": "2D", "gaze_smooth": None, "pose_smooth": pose_smooth,
+                     "eval_source": "Sol"},
+            protocol_params={"n_targets_planned": len(targets), "ring_eccentricities_deg": [10.0, 20.0],
+                             "points_per_ring": 8, "include_corners": True},
+            config=self._collect_gui_values())
+        abort_reason = [None]
+
+        def note_abort(key, reason):
+            if abort_reason[0] is None:      # Q is seen by pygame and by the async poll: log it once
+                abort_reason[0] = reason
+                bundle.event("abort", key=key, target_idx=idx)
+
         # Hand the device session to the isolated worker (crash-safe), like the preview.
         self._stop_inprocess_sol()
         sol_client = SolPreviewClient(sol_params)
@@ -2655,6 +2696,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         collecting = False
         raw_samples, corr_samples = [], []
         SAMPLES = 30
+        bundle.update(protocol_params={"samples_per_point_render_frames": SAMPLES})
         detected_marker_ids = []
         latest_gaze = None
         running = True
@@ -2796,9 +2838,12 @@ Controls: SPACE = Record point, Q = Cancel"""
                 for ev in pygame.event.get():
                     if ev.type == pygame.QUIT:
                         running = False; aborted = True
+                        note_abort("window_close", "window_close")
                     elif ev.type == pygame.KEYDOWN:
                         if ev.key in (pygame.K_q, pygame.K_ESCAPE):
                             running = False; aborted = True
+                            note_abort(*(("q", "operator_q") if ev.key == pygame.K_q
+                                         else ("esc", "operator_esc")))
                         elif ev.key == pygame.K_SPACE:
                             space_pressed = True
 
@@ -2810,6 +2855,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                         space_pressed = True
                     if _qd and not _prev_q_async:
                         running = False; aborted = True
+                        note_abort("q", "operator_q")
                     _prev_space_async, _prev_q_async = _sd, _qd
 
                 for g in sol_client.drain_gaze():
@@ -2837,21 +2883,27 @@ Controls: SPACE = Record point, Q = Cancel"""
                     elif t == 'connected':
                         sol_client.note_connected()   # recovered - don't count this crash forever
                         sol_client.resume()
+                        bundle.event("worker_connected")
                     elif t in ('error', 'connect_failed'):
                         # The worker has no console of its own; without this its startup diagnostic
                         # and any streaming failure are dropped on the floor.
                         print(f"[Accuracy] worker {m.get('where', t)}: {m.get('error')}")
+                        bundle.event("worker_message", type=t, where=m.get('where'), message=str(m.get('error')))
                 _ev = sol_client.poll_supervisor(time.time(), sol_projector.get_homography())
                 if _ev == 'crashed':
                     print(f"[Accuracy] scene worker crashed (exit {sol_client.last_exitcode}); "
                           f"respawning - expect several seconds with no scene video")
+                    bundle.event("worker_crash", exit_code=sol_client.last_exitcode, target_idx=idx)
                     sol_projector.homography_valid = False; detected_marker_ids = []
                     scene_age[0] = None
                 elif _ev == 'respawned':
                     print("[Accuracy] scene worker respawned; waiting for it to reconnect")
+                    bundle.event("worker_respawn", target_idx=idx)
                 elif _ev == 'failed':
                     print("[Accuracy] scene worker could not recover; aborting")
+                    bundle.event("worker_failed", target_idx=idx)
                     running = False; aborted = True
+                    note_abort(None, "worker_failed")
 
                 # How old is the newest scene frame? The child reports its own age; add the time
                 # since we heard from it so a dead child (no messages at all) also ages out.
@@ -2866,6 +2918,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                         _age_txt = "no data" if scene_age_s is None else f"{scene_age_s:.1f}s old"
                         print(f"[Accuracy] scene video stalled ({_age_txt}) - the homography is "
                               f"frozen, not recording; wait for it to recover")
+                        bundle.event("scene_stall", target_idx=idx, target_name=tgt['name'],
+                                     scene_age_s=None if scene_age_s is None else round(scene_age_s, 2))
                     elif sol_projector.is_homography_valid():
                         collecting = True; raw_samples, corr_samples = [], []
                     else:
@@ -2877,6 +2931,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                 if collecting and scene_stale:
                     print(f"[Accuracy] scene stalled mid-point ({tgt['name']}); discarding "
                           f"{len(corr_samples)} sample(s) - repeat this point")
+                    bundle.event("collect_discard", target_idx=idx, target_name=tgt['name'],
+                                 n_discarded=len(corr_samples))
                     collecting = False; raw_samples, corr_samples = [], []
 
                 # Live gaze -> screen (raw + offset-corrected), computed every frame so the tester
@@ -2955,6 +3011,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         except Exception as e:
             print(f"[Accuracy] error: {e}")
             traceback.print_exc()
+            bundle.crash(type(e), e, e.__traceback__, where="accuracy_test")
         finally:
             try:
                 self.sol_cached_homography = sol_projector.get_homography()
@@ -2981,16 +3038,21 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.deiconify()
 
         # ---- report ----
+        def end_session():   # after the report files exist, before any dialog waits for a click
+            bundle.finish("aborted" if aborted else "completed", abort_reason[0])
+
         if records:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_dir = str(APP_DIR / "accuracy_test" / f"{username}_{ts}")
+            # "timestamp" stays the END time, as it always was; the folder is named after the start.
             meta = {"user": username, "timestamp": ts, "screen_w": screen_w, "screen_h": screen_h,
                     "view_dist_cm": view_dist_cm, "screen_width_cm": screen_width_cm,
                     "n_points": len(records), "calib_model_loaded": offset_model is not None,
                     "offset_mode": getattr(offset_model, 'offset_mode', None) if offset_model else None,
-                    "aborted": aborted}
+                    "aborted": aborted,
+                    "started_at": bundle.meta.get("started_at")}
             try:
                 acc.save_accuracy_report(out_dir, records, meta)
+                end_session()
                 ov = acc.summarize(records).get('_overall', {})
                 messagebox.showinfo("Accuracy Test Complete",
                     f"Recorded {len(records)} point(s).\n"
@@ -2999,8 +3061,11 @@ Controls: SPACE = Record point, Q = Cancel"""
                     f"Mean precision: {ov.get('prec_corr_deg', 0):.3f} deg / {ov.get('prec_corr_px', 0):.1f} px\n\n"
                     f"Saved to:\n{out_dir}")
             except Exception as e:
+                bundle.event("exception", where="report", error=f"{type(e).__name__}: {e}")
+                end_session()
                 messagebox.showerror("Report Error", f"Recorded data but report failed: {e}")
         else:
+            end_session()
             messagebox.showinfo("Accuracy Test", "Aborted - no points recorded.")
 
     def _connect_inprocess_sol(self):
@@ -3086,6 +3151,8 @@ Controls: SPACE = Record point, Q = Cancel"""
     def _on_sol_connected_main(self, msg, params):
         self.is_sol_connected = True
         self.sol_cam_params = params
+        session_bundle.note_software(chronus_remote_api_version=getattr(
+            self.active_sol_connector, 'remote_api_version', None))
         self.btn_connect_sol.configure(state="normal", text="Disconnect")
         self.lbl_sol_status.configure(text=msg, foreground="green")
         self.check_start_button_state()
@@ -3158,6 +3225,7 @@ Controls: SPACE = Record point, Q = Cancel"""
     def on_start(self, practice_mode=False):
         # Stop webcam preview to release camera before test
         self.stop_preview()
+        self._note_identity_changes()
 
         # Validation — fallback to anonymous_9pt if no valid calibration profile
         if self.enable_webcam_var.get():
@@ -3168,6 +3236,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                 default_profile = APP_DIR / "calibration_profiles" / "anonymous_9pt"
                 if default_profile.exists() and (default_profile / "svr_x.xml").exists():
                     self.calib_dir_var.set(str(default_profile))
+                    self._note_identity_changes(reason="fallback_anonymous_9pt")
                     print(f"[Webcam] Using default calibration profile: {default_profile}")
                 else:
                     messagebox.showerror("Error", "Webcam enabled but no valid calibration profile found.")
@@ -3190,6 +3259,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         self.cfg = {
             # General
             'user_name': self.user_var.get(),
+            'operator_code': self.operator_code_var.get().strip(),
             'calib_dir': self.calib_dir_var.get().strip(),
             'stim_dur': self.safe_get_float(self.stim_var, 5.0),
             'pass_dur': self.safe_get_float(self.pass_dur_var, 2.0),
@@ -3257,6 +3327,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             'screen_y': user_scr.get('y', 0),
             'screen_w': user_scr['width'],
             'screen_h': user_scr['height'],
+            'dpi_scale': monitor_dpi_scale(user_scr.get('x', 0) + 1, user_scr.get('y', 0) + 1),
 
             # Experiment type
             'experiment_type': self.experiment_type_var.get(),
@@ -3298,6 +3369,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         return {
             # General settings
             'user_name': self.user_var.get(),
+            'operator_code': self.operator_code_var.get(),
             'calib_dir': self.calib_dir_var.get(),
 
             # Tracker settings
@@ -3378,8 +3450,30 @@ Controls: SPACE = Record point, Q = Cancel"""
             'vf_bg_color': self.vf_bg_color_var.get(),
         }
 
+    def _note_identity_changes(self, reason="operator"):
+        """Log a changed User Name or Calibration Folder as an event (session bundle). The two
+        decide which calibration profile a test finds, so a change between calibration and test
+        has to be visible afterwards. Called once a value has settled, not on every keystroke."""
+        now = (self.user_var.get(), self.calib_dir_var.get().strip())
+        was = getattr(self, '_logged_identity', None)
+        if was is None:
+            session_bundle.app_event("app_start", user_name=now[0], calib_dir=now[1])
+        else:
+            if now[0] != was[0]:
+                session_bundle.app_event("user_name_changed", old=was[0], new=now[0])
+            if now[1] != was[1]:
+                session_bundle.app_event("calib_dir_changed", old=was[1], new=now[1], reason=reason)
+        self._logged_identity = now
+
+    def report_callback_exception(self, exc, val, tb):
+        """Tk calls this for an exception in any callback. Print it as Tk does, and record it: in
+        the open session (which then ends as "crashed"), else in the app event log."""
+        traceback.print_exception(exc, val, tb)
+        session_bundle.crash_current(exc, val, tb, where="tk_callback")
+
     def _auto_save_settings(self):
         """Silently save all settings to file."""
+        self._note_identity_changes()
         try:
             LAST_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(LAST_SETTINGS_FILE, 'w', encoding='utf-8') as f:
@@ -3398,7 +3492,7 @@ Controls: SPACE = Record point, Q = Cancel"""
     def _setup_auto_save_traces(self):
         """Attach trace callbacks to all settings variables for auto-save."""
         tracked_vars = [
-            self.user_var, self.calib_dir_var,
+            self.user_var, self.operator_code_var, self.calib_dir_var,
             self.gaze_color_var, self.gaze_radius_var, self.gaze_width_var,
             self.stim_var, self.pass_dur_var, self.blank_var, self.rad_var,
             self.rotate_var, self.rot_speed_var, self.rot_dir_var,
@@ -3472,6 +3566,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             # Apply all settings
             if 'user_name' in data: self.user_var.set(data['user_name'])
             if 'calib_dir' in data: self.calib_dir_var.set(data['calib_dir'])
+            if 'operator_code' in data: self.operator_code_var.set(data['operator_code'])
 
             if 'enable_webcam' in data: self.enable_webcam_var.set(data['enable_webcam'])
             if 'enable_sol' in data: self.enable_sol_var.set(data['enable_sol'])

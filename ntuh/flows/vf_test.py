@@ -13,6 +13,7 @@ import pygame
 
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
+from ntuh.recording import session_bundle
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -177,6 +178,8 @@ def run_vf_test(cfg, sol_context=None):
     else:
         recorder = Recorder(output_dir="VF_output", subject_id=cfg.get('user_name', 'test'), is_va=False,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
+    # Session bundle (doc/session_bundle.md); nothing in practice mode, which has no folder.
+    bundle = session_bundle.start(getattr(recorder, 'session_dir', None), 'vf', cfg=cfg)
 
     # [NEW] Sol gaze-quality tracker + tester dashboard (mirrors the VA test)
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -239,6 +242,7 @@ def run_vf_test(cfg, sol_context=None):
 
     vf_stim_path = cfg.get('vf_stim_path', '')
     if not vf_stim_path or not Path(vf_stim_path).exists():
+        bundle.finish("aborted", "stimulus_image_missing")
         pygame.quit()
         messagebox.showerror("VF Test Error",
                              f"Stimulus image not found:\n{vf_stim_path}\n\n"
@@ -248,6 +252,7 @@ def run_vf_test(cfg, sol_context=None):
         raw = pygame.image.load(vf_stim_path)
         stim_img = pygame.transform.scale(raw, (diameter_px, diameter_px))
     except Exception as e:
+        bundle.finish("aborted", "stimulus_image_unreadable")
         pygame.quit()
         messagebox.showerror("VF Test Error",
                              f"Failed to load stimulus image:\n{vf_stim_path}\n\n{e}")
@@ -620,6 +625,7 @@ def run_vf_test(cfg, sol_context=None):
 
             # [NEW] Quality gate: wait until enabled trackers have stable valid data (if enabled).
             if wait_for_stable_quality() == 'quit':
+                bundle.event("abort", key="q", where="quality_gate", trial=idx + 1)
                 quit_requested = True
                 break
 
@@ -642,6 +648,7 @@ def run_vf_test(cfg, sol_context=None):
 
                 for ev in pygame.event.get():
                     if ev.type == pygame.KEYDOWN and ev.key == pygame.K_q:
+                        bundle.event("abort", key="q", where="trial", trial=idx + 1)
                         quit_requested = True
 
                 if quit_requested:
@@ -851,6 +858,7 @@ def run_vf_test(cfg, sol_context=None):
         import traceback
         print(f"[VF Test] Error: {e}")
         traceback.print_exc()
+        bundle.crash(type(e), e, e.__traceback__, where="vf_test")
     finally:
         if dashboard is not None:
             dashboard.stop()
@@ -862,3 +870,5 @@ def run_vf_test(cfg, sol_context=None):
             sol_projector.stop_background_detection()
         recorder.close()
         pygame.quit()
+        bundle.finish("aborted" if quit_requested else "completed",
+                      "operator_q" if quit_requested else None)
