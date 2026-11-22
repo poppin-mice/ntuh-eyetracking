@@ -84,11 +84,39 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Setting | Description | Default |
 |---------|-------------|---------|
 | Stimulus Duration (s) | How long each grating is displayed | 5.0 |
-| Pass Duration (s) | Time gaze must be on target to count as "pass" | 2.0 |
+| Pass Duration (s) | Time of valid gaze on the target's side that counts as a "pass" (see [Pass rule](#pass-rule)) | 2.0 |
+| Max Gaze Age (s) | A gaze sample older than this does not count toward the Pass Duration (since 1.10.0). Default to be confirmed | 0.2 |
+| Blink Grace (s) | How long the hold survives without valid gaze: shorter gaps pause the timer, longer ones start the hold over (since 1.10.0). Default to be confirmed | 0.3 |
 | Blank Duration (s) | Duration of blank screen between stimulus and response | 1.0 |
 | Circle Radius (px) | Radius of the circular grating stimulus. With Sol enabled it is reduced automatically to keep clear of the ArUco markers and the screen edges | 400 |
 | Rotate Stimulus | Enable rotation of the grating | OFF |
 | Speed (deg/s) | Rotation speed | 60.0 |
+
+#### Pass rule
+
+A trial is a PASS when the gaze stays on the target's side of the screen for the Pass Duration.
+**Since 1.10.0 only valid, fresh gaze counts** (rule version 2). The rule is checked once per
+rendered frame against the newest gaze sample:
+
+| The newest sample | Effect on the hold |
+|-------------------|--------------------|
+| Valid, on the target's side, at most *Max Gaze Age* old | The time counts |
+| Valid and fresh, but on the other side or off the screen | The hold starts over at once |
+| Invalid, older than *Max Gaze Age*, or none | The timer pauses. Once *Blink Grace* has passed since the last sample that counted, the hold starts over |
+
+A Sol sample is valid when the glasses report the combined gaze valid, at least one eye is seen
+(not both eyes `NO_EYE`) and the sample could be mapped to the screen in that frame. The gaze marker
+still shows the last mapped point, also an old one; the marker is not what the rule uses. With the
+webcam as Evaluation Source the same rule applies, and a frame without a webcam gaze is "no gaze".
+
+A trial ends as FAIL when the Stimulus Duration is over and no hold is in progress.
+
+> **Versions before 1.10.0 passed trials this rule does not.** They took the last mapped gaze point
+> every frame, whether or not the sample was valid, and kept using it when no new sample arrived, so
+> a frozen point on the target's side counted as looking at the target. Results from before and
+> after 1.10.0 are therefore not directly comparable; `trial_quality.csv` says which rule a session
+> ran with. The defaults 0.2 s and 0.3 s are the suggestion of the 2026-09-18 audit and are still to
+> be confirmed (tracker REQ-0027).
 
 ### General Tab - Colors & Display
 
@@ -200,6 +228,7 @@ VA_output/
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
     trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
+    trial_quality.csv           - Per-trial quality of the gaze the pass rule saw (since 1.10.0)
     review_labels.json          - Created later by replayer (review labels)
 ```
 
@@ -210,6 +239,25 @@ VA_output/
 
 Trial-by-trial VA results live in the session's `trial_events.csv` (CPD, side, pass/fail,
 timestamps and `trial_type`).
+
+`trial_quality.csv` (since 1.10.0) has one row for each row of `trial_events.csv`, with the same
+`trial_number`. `trial_events.csv` itself is unchanged.
+
+| Column | Meaning |
+|--------|---------|
+| `n_sol_samples` | Sol gaze samples received during the trial |
+| `valid_fraction_trial` | Fraction of them that were valid (combined gaze valid and not both eyes `NO_EYE`) |
+| `valid_fraction_final_window` | The same over the last Pass Duration of the trial: the stretch a PASS was decided on |
+| `hold_start_s` | Seconds into the trial at which the hold that passed began; empty for a FAIL |
+| `max_sample_age_ms` | The longest the trial went without a new Sol sample |
+| `n_gaps_gt_300ms` | Stretches longer than 0.3 s without a valid Sol sample |
+| `pass_rule_version` | `2`: the [pass rule](#pass-rule) above. Sessions without this file ran with the old rule |
+
+The two fractions are empty when no Sol sample arrived (Sol off).
+
+Recorded sessions can be run through the current rule to see which trials would change:
+`python tools/replay_va_hold.py <folder of VA session folders>`. It only reads the folders, and it
+is approximate for sessions recorded before 1.10.0 (the tool explains why).
 
 Gaze data is recorded continuously during all phases (stimulus, feedback, inter-trial).
 
