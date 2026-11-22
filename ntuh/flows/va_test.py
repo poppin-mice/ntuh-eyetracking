@@ -25,8 +25,10 @@ from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import resolve_tester_rect
 from ntuh.vavf.stimuli import (
     CATCH_CYCLES_PER_PX, DO_BLUR, CatchScheduler, Staircase, catch_trial_cpd,
-    generate_grating_oriented_patch, get_va_result_cpd, prepare_patch_grid,
+    generate_grating_oriented_patch, prepare_patch_grid,
 )
+from ntuh.vavf import va_scoring
+from ntuh.version import get_version
 from ntuh.tracking.sol_quality import (
     DashboardState, SolQualityTracker, build_summary_lines, build_quality_summary,
 )
@@ -406,7 +408,23 @@ def run_test(cfg, sol_context=None):
     screen_record_frame_counter = 0
 
     # Staircase
-    stair = Staircase(start=2.0, step=2.0, minv=2.0, maxv=20.0)
+    stair = Staircase(**va_scoring.STAIRCASE)
+    # Every trial as (cpd, passed, "normal" | "catch"), in order: what the result is scored from.
+    trial_log = []
+
+    def save_va_result():
+        """Score the run so far and write va_result.json into the session folder (practice mode
+        has none). Returns the result, which is also what the result screen shows."""
+        result = va_scoring.build_result(trial_log, cfg.get('va_threshold_rule'),
+                                         cfg.get('va_conversion'), get_version("VA_center_opt"))
+        sess_dir = getattr(recorder, 'session_dir', None)
+        if sess_dir:
+            try:
+                with open(os.path.join(sess_dir, va_scoring.RESULT_FILE), 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"[VA Result] Failed to save {va_scoring.RESULT_FILE}: {e}")
+        return result
 
     # --- Catch trials (negative-sample collection; OFF by default) ---
     # A catch trial renders the target at a frequency nobody can resolve, so the subject has
@@ -876,6 +894,7 @@ def run_test(cfg, sol_context=None):
             if sol_projector: sol_projector.stop_background_detection()
             if dashboard is not None: dashboard.stop()
             finalize_sol_quality_metrics()
+            save_va_result()            # the operator stopped the test: recorded as not finished
             recorder.close()
             pygame.quit()
             return
@@ -907,6 +926,7 @@ def run_test(cfg, sol_context=None):
                     if sol_projector: sol_projector.stop_background_detection()
                     if dashboard is not None: dashboard.stop()
                     finalize_sol_quality_metrics()
+                    save_va_result()    # the operator stopped the test: recorded as not finished
                     recorder.close()
                     pygame.quit()
                     return
@@ -1290,6 +1310,7 @@ def run_test(cfg, sol_context=None):
         # acuity: it must not move the staircase or reach the score. It is already in
         # trial_events.csv, which is what the ML pipeline reads.
         catch.record(is_catch, passed)
+        trial_log.append((cpd, passed, "catch" if is_catch else "normal"))
         if is_catch:
             print(f"[Catch] trial {trial_number} logged ({'PASS' if passed else 'FAIL'}); "
                   f"{catch.needed} negative sample(s) still needed "
@@ -1328,6 +1349,9 @@ def run_test(cfg, sol_context=None):
         # Consume the slot even on error: a forced catch trial runs only because the staircase
         # is already done, so leaving it owed would loop here forever.
         catch.record(is_catch, False)
+        # Mirror what the staircase is told, at the level it is at, so the score follows its path.
+        trial_log.append((catch_cpd if is_catch else float(stair.freq), False,
+                          "catch" if is_catch else "normal"))
         if not is_catch:
             stair.update(False)  # Mark as failed
         print(f"[TRIAL ERROR] Attempting to continue to next trial...")
@@ -1372,22 +1396,32 @@ def run_test(cfg, sol_context=None):
         print("[Data Quality] " + ", ".join(
             f"{lbl} {('%.0f%%' % pct) if pct is not None else 'N/A'}" for lbl, pct, _k in summary_lines))
 
-    # Final Result
-    final_cpd = float(stair.freq)
-    va_score  = get_va_result_cpd(final_cpd)
+    # Final result: the threshold the subject actually reached, by the configured rule
+    # (ntuh/vavf/va_scoring.py), not the level the staircase would have shown next. Saved before
+    # the result screen, which can stay open for a long time.
+    result = save_va_result()
+    result_text = va_scoring.result_lines(result)
+    print("[VA Result] " + " | ".join(result_text))
 
-    # Result Screen
+    # Result Screen: the threshold in large type, a decimal acuity only when a conversion is
+    # selected, then the rule and the provisional notice.
     result_font = pygame.font.SysFont(None, 80)
     info_font   = pygame.font.SysFont(None, 40)
 
     win.fill(to_rgb_tuple(cfg['bg_color']))
-    text1 = result_font.render(f"Final Spatial Freq: {final_cpd:.2f} cpd", True, (255, 255, 255))
-    text2 = result_font.render(f"Estimated VA Score: {va_score}", True, (0, 255, 255))
-    text3 = info_font.render("Press Q to Exit", True, (200, 200, 200))
-
-    win.blit(text1, ((W - text1.get_width()) // 2, H // 3 - 50))
-    win.blit(text2, ((W - text2.get_width()) // 2, H // 3 + 50))
-    win.blit(text3, ((W - text3.get_width()) // 2, H // 3 + 150))
+    y = H // 3 - 50
+    for line in result_text + ["Press Q to Exit"]:
+        if line == result_text[0]:
+            font, color = result_font, (255, 255, 255)
+        elif line.startswith("Decimal VA"):
+            font, color = result_font, (0, 255, 255)
+        elif line == va_scoring.PROVISIONAL_TEXT:
+            font, color = info_font, (255, 200, 0)
+        else:
+            font, color = info_font, (200, 200, 200)
+        surf = font.render(line, True, color)
+        win.blit(surf, ((W - surf.get_width()) // 2, y))
+        y += surf.get_height() + 30
     pygame.display.flip()
     
     while True:
