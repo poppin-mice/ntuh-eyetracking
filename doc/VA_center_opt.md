@@ -104,10 +104,18 @@ rendered frame against the newest gaze sample:
 | Valid and fresh, but on the other side or off the screen | The hold starts over at once |
 | Invalid, older than *Max Gaze Age*, or none | The timer pauses. Once *Blink Grace* has passed since the last sample that counted, the hold starts over |
 
+Both thresholds are measured from the sample, not from the frame: the time between two frames
+counts only as far as the last sample is not older than *Max Gaze Age*, and a sample that comes
+*Blink Grace* or more after the last one that counted begins a new hold. Keep both longer than one
+frame of the test (0.03 to 0.06 s).
+
 A Sol sample is valid when the glasses report the combined gaze valid, at least one eye is seen
 (not both eyes `NO_EYE`) and the sample could be mapped to the screen in that frame. The gaze marker
-still shows the last mapped point, also an old one; the marker is not what the rule uses. With the
-webcam as Evaluation Source the same rule applies, and a frame without a webcam gaze is "no gaze".
+still shows the last mapped point, also an old one; the marker is not what the rule uses.
+
+With the webcam as Evaluation Source the same rule applies, and a frame without a webcam gaze is
+"no gaze". **The webcam gives a gaze point in every frame, also while the eyes are closed**, so
+with the webcam the rule cannot tell closed eyes from looking at the target.
 
 A trial ends as FAIL when the Stimulus Duration is over and no hold is in progress.
 

@@ -13,8 +13,12 @@ Rule version 2 (HoldTracker), checked once per rendered frame against the newest
     no gaze     the sample is invalid, too old, or there is none: the timer pauses; once
                 blink_grace_s has passed since the last sample that counted, the hold starts over
 
-PASS when the time that counted reaches pass_dur. The two thresholds are settings; their defaults
-are the suggestion of the 2026-09-18 audit and are still to be confirmed (REQ-0027).
+PASS when the time that counted reaches pass_dur. Both thresholds are measured from the sample,
+not from the check: the time between two checks counts only as far as the last sample vouches for
+it (max_sample_age_s), and a good sample that comes blink_grace_s or more after the last one begins
+a new hold. So a loop that stalls, or checks late, cannot add up time nobody looked at. The two
+thresholds are settings; their defaults are the suggestion of the 2026-09-18 audit and are still
+to be confirmed (REQ-0027).
 """
 from collections import namedtuple
 
@@ -44,9 +48,8 @@ class HoldTracker:
         self.blink_grace_s = float(blink_grace_s)
         self.passed = False
         self.hold_start = None      # `now` at which the hold in progress began
-        self._banked = 0.0          # time that counted before the last pause of this hold
-        self._run_start = None      # `now` at which the gaze started counting again
-        self._run_now = None        # the latest `now` at which it counted
+        self.held_s = 0.0           # seconds that have counted toward pass_dur in that hold
+        self._counted_at = None     # `now` of the previous update, if the gaze counted then
         self._last_good_t = None    # receive time of the last sample that counted
 
     @property
@@ -54,15 +57,9 @@ class HoldTracker:
         """A hold has begun and has not started over (it may be paused by a blink)."""
         return self.hold_start is not None
 
-    @property
-    def held_s(self):
-        """Seconds that have counted toward pass_dur in the hold in progress."""
-        run = (self._run_now - self._run_start) if self._run_start is not None else 0.0
-        return self._banked + run
-
     def _start_over(self):
-        self.hold_start = self._run_start = self._run_now = self._last_good_t = None
-        self._banked = 0.0
+        self.hold_start = self._counted_at = self._last_good_t = None
+        self.held_s = 0.0
 
     def update(self, now, sample):
         """Take the newest gaze sample (or None) at time `now`. Returns True once passed."""
@@ -70,22 +67,24 @@ class HoldTracker:
             return True
         fresh = (sample is not None and sample.valid
                  and now - sample.t <= self.max_sample_age_s)
-        if fresh and sample.in_correct_half:                # counts
+        counts = fresh and sample.in_correct_half
+        if fresh and not counts:                            # looked away
+            self._start_over()
+        elif self.hold_start is not None:
+            # A sample that counted vouches for max_sample_age_s. Past that the hold is without
+            # gaze, and so it is whenever the newest sample does not count.
+            without = now - self._last_good_t
+            if (not counts or without > self.max_sample_age_s) and without >= self.blink_grace_s:
+                self._start_over()
+        if counts:
             if self.hold_start is None:
                 self.hold_start = now
-            if self._run_start is None:
-                self._run_start = now
-            self._run_now = now
-            self._last_good_t = sample.t
+            elif self._counted_at is not None:              # it counted at the last check too
+                self.held_s += min(now, self._last_good_t + self.max_sample_age_s) - self._counted_at
+            self._counted_at, self._last_good_t = now, sample.t
             self.passed = self.held_s + 1e-9 >= self.pass_dur
-        elif fresh:                                         # looked away
-            self._start_over()
-        elif self.hold_start is not None:                   # no gaze: pause, or start over
-            if self._run_start is not None:
-                self._banked += self._run_now - self._run_start
-                self._run_start = self._run_now = None
-            if now - self._last_good_t >= self.blink_grace_s:
-                self._start_over()
+        else:
+            self._counted_at = None                         # no gaze: the timer pauses
         return self.passed
 
 

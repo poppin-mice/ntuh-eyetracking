@@ -100,6 +100,31 @@ def test_a_sample_counts_only_while_it_is_fresh():
     assert not tracker.in_progress                          # 0.3 s since it was received: over
 
 
+def test_a_stalled_loop_does_not_add_up_time_between_its_checks():
+    """One fresh sample on the target's side per second is not seconds of looking."""
+    tracker = HoldTracker(PASS_DUR)
+    for t in range(10):
+        assert not tracker.update(float(t), on_target(float(t)))
+        assert tracker.held_s == 0.0
+
+
+def test_a_late_check_counts_no_more_than_one_sample_vouches_for():
+    tracker = HoldTracker(PASS_DUR)
+    run(tracker, on_target, until=1.0)
+    tracker.update(1.25, on_target(1.25))       # 0.25 s later: over the sample age, under the grace
+    assert tracker.in_progress and tracker.held_s == pytest.approx(1.2)
+
+
+def test_the_blink_grace_runs_from_sample_to_sample_not_from_check_to_check():
+    """A loss of 0.31 s that ends between two checks: the sample that ends it begins a new hold."""
+    tracker = HoldTracker(PASS_DUR)
+    tracker.update(0.0, on_target(0.0))
+    tracker.update(0.1, on_target(0.1))
+    tracker.update(0.2, on_target(0.2, valid=False))        # the blink begins: paused
+    tracker.update(0.41, on_target(0.41))                   # 0.31 s after the last one that counted
+    assert tracker.hold_start == 0.41 and tracker.held_s == 0.0
+
+
 def test_no_sample_at_all_is_no_gaze():
     tracker = HoldTracker(PASS_DUR)
     assert run(tracker, lambda t: None, until=3.0) is None and not tracker.in_progress
