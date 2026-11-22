@@ -2888,7 +2888,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                         # The worker has no console of its own; without this its startup diagnostic
                         # and any streaming failure are dropped on the floor.
                         print(f"[Accuracy] worker {m.get('where', t)}: {m.get('error')}")
-                        bundle.event("worker_message", type=t, where=m.get('where'), error=str(m.get('error')))
+                        bundle.event("worker_message", type=t, where=m.get('where'), message=str(m.get('error')))
                 _ev = sol_client.poll_supervisor(time.time(), sol_projector.get_homography())
                 if _ev == 'crashed':
                     print(f"[Accuracy] scene worker crashed (exit {sol_client.last_exitcode}); "

@@ -102,7 +102,8 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `exception` | An exception was caught | `where`, `error` |
 | `scene_stall` | Accuracy test: SPACE while the scene video was stalled | `scene_age_s` |
 | `collect_discard` | Accuracy test: a point was dropped because the scene stalled while collecting | `n_discarded` |
-| `worker_crash`, `worker_respawn`, `worker_failed`, `worker_connected`, `worker_message` | Accuracy test: what the Sol child process reported | `exit_code` / `type`, `where`, `error` |
+| `worker_crash`, `worker_respawn`, `worker_failed`, `worker_connected` | Accuracy test: the Sol child process crashed, was restarted, could not recover, (re)connected | `exit_code` |
+| `worker_message` | Accuracy test: a note from the Sol child process. Most are status notes (stream subscribed, first frame), not errors | `type`, `where`, `message` |
 
 Events from before the session have `"phase": "pre_session"` in the detail: everything since the
 previous session ended (or since the program started). That is where a Clear Offset or a changed User
