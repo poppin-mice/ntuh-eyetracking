@@ -27,6 +27,7 @@ from ntuh.recording.recorder import Recorder
 from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
+from ntuh.vavf import va_scoring
 from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import get_monitor_info_windows, screen_options, valid_screen_option
 from ntuh.ui.face_overlay import (
@@ -161,6 +162,9 @@ class SettingsWindow(tk.Tk):
         self.enable_webcam_var = tk.BooleanVar(value=True)
         self.enable_sol_var = tk.BooleanVar(value=True)
         self.eval_source_var = tk.StringVar(value="Sol") # Webcam, Sol, Both (Both logic TBD, usually primary)
+        # How the VA result is reported (ntuh/vavf/va_scoring.py). Both are provisional choices.
+        self.va_threshold_rule_var = tk.StringVar(value=va_scoring.DEFAULT_THRESHOLD_RULE)
+        self.va_conversion_var = tk.StringVar(value=va_scoring.DEFAULT_CONVERSION)
 
         # [NEW] Sol Vars
         self.sol_ip_var = tk.StringVar(value="192.168.1.100")
@@ -638,6 +642,18 @@ class SettingsWindow(tk.Tk):
 
         ttk.Label(grp_user, text="Evaluation Source:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         ttk.Combobox(grp_user, textvariable=self.eval_source_var, values=["Webcam", "Sol"], state="readonly", font=e_font).grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        # VA result: which threshold is reported, and whether it is also shown as a decimal acuity.
+        ttk.Label(grp_user, text="VA Threshold Rule:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        ttk.Combobox(grp_user, textvariable=self.va_threshold_rule_var, values=list(va_scoring.THRESHOLD_RULES),
+                     state="readonly", font=e_font, width=22).grid(row=r, column=1, sticky="w", **pad)
+        ttk.Label(grp_user, text="(provisional - every rule's value is saved in va_result.json)",
+                  font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", padx=8); r += 1
+        ttk.Label(grp_user, text="VA Conversion:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        ttk.Combobox(grp_user, textvariable=self.va_conversion_var, values=list(va_scoring.CONVERSIONS),
+                     state="readonly", font=e_font, width=22).grid(row=r, column=1, sticky="w", **pad)
+        ttk.Label(grp_user, text="(none = show cpd only; cpd_div_30 = cpd / 30; cpd_div_20_legacy = the old table)",
+                  font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", padx=8); r += 1
 
         ttk.Checkbutton(grp_user, text="Show Gaze Marker during Test", variable=self.show_gaze_marker_var).grid(row=r, column=0, columnspan=2, sticky="w", **pad); r += 1
 
@@ -3215,6 +3231,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'enable_webcam': self.enable_webcam_var.get(),
             'enable_sol': self.enable_sol_var.get(),
             'eval_source': self.eval_source_var.get(),
+            'va_threshold_rule': self.va_threshold_rule_var.get(),
+            'va_conversion': self.va_conversion_var.get(),
 
             # Sol
             'sol_ip': self.sol_ip_var.get(),
@@ -3304,6 +3322,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'enable_webcam': self.enable_webcam_var.get(),
             'enable_sol': self.enable_sol_var.get(),
             'eval_source': self.eval_source_var.get(),
+            'va_threshold_rule': self.va_threshold_rule_var.get(),
+            'va_conversion': self.va_conversion_var.get(),
 
             # Sol settings
             'sol_ip': self.sol_ip_var.get(),
@@ -3406,6 +3426,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.scr_width_cm_var, self.view_dist_cm_var,
             self.interval_img_path_var, self.interval_img_dur_var, self.bg_after_inter_dur_var,
             self.enable_webcam_var, self.enable_sol_var, self.eval_source_var,
+            self.va_threshold_rule_var, self.va_conversion_var,
             self.sol_ip_var, self.sol_port_var, self.sol_marker_k_var, self.sol_marker_n_var,
             self.sol_marker_size_var, self.sol_aruco_dict_var,
             self.sol_pose_smooth_var, self.sol_gaze_smooth_var, self.sol_gaze_method_var,
@@ -3476,6 +3497,11 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'enable_webcam' in data: self.enable_webcam_var.set(data['enable_webcam'])
             if 'enable_sol' in data: self.enable_sol_var.set(data['enable_sol'])
             if 'eval_source' in data: self.eval_source_var.set(data['eval_source'])
+            # Only values this version knows; anything else keeps the default.
+            if data.get('va_threshold_rule') in va_scoring.THRESHOLD_RULES:
+                self.va_threshold_rule_var.set(data['va_threshold_rule'])
+            if data.get('va_conversion') in va_scoring.CONVERSIONS:
+                self.va_conversion_var.set(data['va_conversion'])
 
             if 'sol_ip' in data: self.sol_ip_var.set(data['sol_ip'])
             if 'sol_port' in data: self.sol_port_var.set(str(data['sol_port']))

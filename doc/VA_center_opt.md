@@ -6,7 +6,9 @@ A **grating visual acuity (VA)** test with gaze-based responses. It supports Sol
 
 VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial shows a circular sinusoidal grating on a randomly chosen side of the screen (left or right). The other side shows a uniform disc in the average of the bright and dark colours (grey 128 in Paper Color Mode). The Bright/Dark colours (full white/black by default) set the nominal grating contrast and do not change during the test; the grating is drawn with a slight blur (5x5 Gaussian, sigma 1 px), which lowers the rendered contrast at high cpd (tracker REQ-0037). The staircase changes only the grating's **spatial frequency** (cycles per degree, cpd): it starts at 2 cpd, moves 2 cpd up after a pass and 2 cpd down after a fail, and stays within 2-20 cpd. A trial passes when the gaze of the Evaluation Source stays on the grating's half of the screen for the Pass Duration. Both sources (webcam + Sol glasses) can run together. Gaze data, screen video and webcam video are recorded throughout the test.
 
-> **Final score under review.** The cpd / VA value shown at the end of a test is provisional and not for clinical use until the scoring rule and the cpd→VA conversion are agreed with the clinicians (tracker REQ-0025, REQ-0026).
+> **The result is provisional (since 1.8.0).** The end of a test shows the **threshold in cpd** that the subject actually reached, by the selected *VA Threshold Rule*, with the notice "PROVISIONAL - not for clinical use". The rule and the cpd→VA conversion are not yet agreed with the clinicians (tracker REQ-0025, REQ-0026), so both are settings and every candidate value is saved in `va_result.json`. See [VA result](#va-result-since-180).
+>
+> **Versions before 1.8.0 reported a different number.** "Final Spatial Freq" was the level the staircase would have shown *next*: after a final PASS that is 2 cpd above anything the subject passed. "Estimated VA Score" was that value divided by 20. Do not compare an old score with a new one directly; `va_result.json` keeps the old value as `legacy`.
 
 ## What's new (2026-07-21)
 
@@ -39,6 +41,8 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 | User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
+| VA Threshold Rule | Which threshold the result screen reports (since 1.8.0): `last4_reversal_mean`, `highest_passed` or `legacy_next_level`. See [VA result](#va-result-since-180). The default is a placeholder until the rule is agreed | last4_reversal_mean |
+| VA Conversion | Whether a decimal acuity is shown next to the cpd threshold (since 1.8.0): `none`, `cpd_div_30` (30 cpd = 1.0) or `cpd_div_20_legacy` (the old table) | none |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
 
 **Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
@@ -200,6 +204,7 @@ VA_output/
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
     trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
+    va_result.json              - The result: threshold by every rule, reversals, stop reason (since 1.8.0)
     review_labels.json          - Created later by replayer (review labels)
 ```
 
@@ -212,6 +217,49 @@ Trial-by-trial VA results live in the session's `trial_events.csv` (CPD, side, p
 timestamps and `trial_type`).
 
 Gaze data is recorded continuously during all phases (stimulus, feedback, inter-trial).
+
+### VA result (since 1.8.0)
+
+The staircase stops after 4 reversals, after 4 FAILs in a row, or when the next level would be 20 cpd (the top of the range) and the run has had 3 passes in a row. A *reversal* is the level of a trial whose outcome differs from the previous trial's. Catch trials are not part of the staircase and never enter the result.
+
+The result screen shows, top to bottom:
+
+1. `Threshold: <x> cpd` by the selected rule, or `Not measurable (<= 2 cpd floor)`.
+2. `Rule: ...`, the rule that produced the value.
+3. `Decimal VA: <y> (<convention>)`, only when *VA Conversion* is not `none`.
+4. `PROVISIONAL - not for clinical use`.
+
+| VA Threshold Rule | Value reported |
+|-------------------|----------------|
+| `last4_reversal_mean` | Mean of the last 4 reversal levels |
+| `highest_passed` | Highest level with a PASS. Never a level the subject did not pass |
+| `legacy_next_level` | The level the staircase would show next: what versions before 1.8.0 reported |
+
+Special cases, the same for every rule:
+
+- **Fewer than 4 reversals** (the subject passed every level shown, or failed 4 times in a row above 2 cpd): the mean does not exist, so the highest level passed is reported and the rule line says so. When every level shown was passed, the value is a lower bound and is written `>= 18.00 cpd`.
+- **4 FAILs in a row ending at 2 cpd**: `Not measurable (<= 2 cpd floor)`. No number is shown. Earlier versions showed 0.1 here, which looked like a measured score.
+- **Stopped with Q**: no result screen; `va_result.json` is written with `staircase_finished: false`.
+
+`va_result.json` is written for every test except practice mode:
+
+| Field | Meaning |
+|-------|---------|
+| `provisional` | Always `true` until the rule and conversion are agreed |
+| `app_version` | VA_center_opt version that scored the run |
+| `threshold_rule`, `threshold_rule_used` | The rule selected, and the rule that gave the value (they differ when there were fewer than 4 reversals) |
+| `threshold_cpd` | The reported threshold; `null` when not measurable |
+| `measurable`, `not_measurable_reason` | `floor`, `not_finished` or `nothing_passed` when not measurable |
+| `floor`, `ceiling` | Ended on 4 FAILs at 2 cpd / passed every level shown (`threshold_cpd` is then a lower bound) |
+| `staircase_finished`, `stop_reason` | `four_reversals`, `max_streak`, `four_consecutive_fails`, or `null` when stopped with Q |
+| `rules` | `last4_reversal_mean_cpd`, `highest_passed_cpd`, `legacy_next_level_cpd`: all three, whichever is selected |
+| `reversals` | The reversal levels in order |
+| `trials` | Every trial: `trial`, `cpd`, `result` (PASS / FAIL), `trial_type` (normal / catch) |
+| `n_trials`, `n_normal_trials` | Counts with and without catch trials |
+| `conversion`, `decimal_va` | The conversion selected and its value (`null` for `none`) |
+| `conversions` | The threshold under both conventions: `cpd_div_30`, `cpd_div_20_legacy` |
+| `legacy` | `next_level_cpd` and `va_score`: what versions before 1.8.0 displayed, for comparison with scores already written down |
+| `staircase` | `start`, `step`, `minv`, `maxv` in cpd |
 
 ## Practice Mode
 

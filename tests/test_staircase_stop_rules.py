@@ -4,9 +4,9 @@
 Uses the parameters the VA test builds its staircase with (ntuh/flows/va_test.py:
 start 2, step 2, min 2, max 20 cpd). Sequences are synthetic PASS/FAIL runs, not field data.
 
-Deliberately NOT tested here: which cpd the VA test reports as the result and how it maps
-to a VA score. Both are open issues (REQ-0025: the reported level is the one after the last
-step, not the level passed; REQ-0026: the cpd->VA table). Only the stop rules are pinned:
+Not tested here: which cpd the VA test reports as the result and how it maps to a VA score.
+That is ntuh.vavf.va_scoring (REQ-0025, REQ-0026), tested in tests/test_va_scoring.py. Only the
+stop rules are pinned:
   - 4 reversals, or
   - at the ceiling, once the run has had >= 3 correct in a row at any point
     (max_correct_streak, not necessarily the last 3 trials), or

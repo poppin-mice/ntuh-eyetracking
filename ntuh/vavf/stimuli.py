@@ -13,6 +13,10 @@ import numpy as np
 def get_va_result_cpd(cpd_value: float, *_ignored):
     """
     只依據 cpd 判定 VA 分數。你可依需求微調 thr_cpd。
+
+    LEGACY (kept for back-compat): this table is cpd / 20 in steps of 0.1 and has no cited
+    source. Since VA_center_opt 1.8.0 the result comes from ntuh.vavf.va_scoring, which only
+    uses this to record what earlier versions displayed (va_result.json -> legacy.va_score).
     """
     thr_cpd = [18.0, 16.0, 14.0, 12.0, 10.0, 8.0, 6.0, 4.0, 2.0]
     scores  = [0.9,  0.8,  0.7,  0.6,  0.5,  0.4,  0.3, 0.2, 0.1]
