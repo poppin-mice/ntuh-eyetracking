@@ -57,6 +57,7 @@ try:
     from ntuh.sol.offset_calibration_2d import (
         Sol2DOffsetCalibrator, Sol2DOffsetModel,
         load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset, get_sol_2d_offset_path,
+        sample_stats, calib_point_rows, write_calib_points,
         CALIBRATION_POSITIONS_2D, compute_safe_calibration_positions,
         OFFSET_MODE_PIXEL, OFFSET_MODE_ANGULAR, OFFSET_MODE_SCREEN,
     )
@@ -141,6 +142,10 @@ class SettingsWindow(tk.Tk):
         # --- General Vars ---
         self.user_var = tk.StringVar(value="anonymous")
         self.operator_code_var = tk.StringVar(value="")   # who runs the test; a code, never a name
+        # Sol built-in (Chronus) calibration: the SDK cannot report it, so the operator confirms it.
+        self.sol_builtin_done_var = tk.BooleanVar(value=False)     # not remembered between runs
+        self.sol_builtin_done_at = None                            # when it was ticked (ISO time)
+        self.chronus_participant_var = tk.StringVar(value="")      # the participant code in Chronus
         self.gaze_color_var  = tk.StringVar(value="0,255,0")
         self.gaze_radius_var = tk.StringVar(value="30")
         self.gaze_width_var  = tk.StringVar(value="4")
@@ -870,6 +875,18 @@ class SettingsWindow(tk.Tk):
         self.lbl_sol_status = ttk.Label(grp_conn, text="Not Connected", foreground="red")
         self.lbl_sol_status.grid(row=1, column=0, columnspan=5, **pad)
 
+        # Sol built-in calibration, done in the Chronus app: confirmed by the operator and stored
+        # in every session record (session_meta.json -> sol_builtin_calibration).
+        grp_builtin = ttk.LabelFrame(parent, text="Sol Built-in Calibration (Chronus)")
+        grp_builtin.pack(fill="x", padx=10, pady=5)
+        ttk.Checkbutton(grp_builtin, text="Sol built-in calibration done", variable=self.sol_builtin_done_var,
+                        command=self._on_sol_builtin_toggled).grid(row=0, column=0, sticky="w", **pad)
+        self.lbl_sol_builtin_at = ttk.Label(grp_builtin, text="", foreground="gray")
+        self.lbl_sol_builtin_at.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_builtin, text="Chronus participant code:", font=l_font).grid(row=1, column=0, sticky="w", **pad)
+        ttk.Entry(grp_builtin, textvariable=self.chronus_participant_var, font=e_font, width=20).grid(
+            row=1, column=1, sticky="w", **pad)
+
         # Calibration
         grp_cal = ttk.LabelFrame(parent, text="Marker Calibration"); grp_cal.pack(fill="x", padx=10, pady=5)
         ttk.Label(grp_cal, text="Markers (HxV):", font=l_font).grid(row=0, column=0, **pad)
@@ -1386,6 +1403,29 @@ Controls: SPACE = Record point, Q = Cancel"""
         except Exception:
             _user32_key = None
 
+        # Every calibration run is a session of its own (doc/session_bundle.md): its folder holds
+        # the per-point statistics, the events and a copy of the profile it wrote.
+        username = self.user_var.get().strip() or "anonymous"
+        self._note_identity_changes()
+        view_dist_cm = self.safe_get_float(self.view_dist_cm_var, 60.0)
+        screen_width_cm = self.safe_get_float(self.scr_width_cm_var, 53.0)
+        bundle = session_bundle.start(
+            APP_DIR / "calibration_sessions" / f"{username}_{time.strftime('%Y%m%d_%H%M%S')}",
+            "sol2d_calibration", user_name=username, operator_code=self.operator_code_var.get(),
+            display={"screen_w_px": screen_w, "screen_h_px": screen_h, "screen_width_cm": screen_width_cm,
+                     "view_dist_cm": view_dist_cm, "dpi_scale": monitor_dpi_scale(screen_x + 1, screen_y + 1),
+                     "subject_monitor_index": self.test_screen_monitor().get('index'),
+                     "tester_monitor_index": tester_screen_idx if show_tester else None},
+            mapping={"gaze_method": "2D", "gaze_smooth": None,
+                     "pose_smooth": self.safe_get_float(self.sol_pose_smooth_var, 0.1), "eval_source": "Sol"},
+            protocol_params={"offset_mode": calibrator.offset_mode, "n_points_planned": len(calibrator.positions),
+                             "samples_per_point_render_frames": SAMPLES_TO_COLLECT,
+                             "target_display_size_px": calibrator.target_display_size},
+            config=self._collect_gui_values())
+        shown_points = []           # per point shown: name, target and the statistics of its samples
+        collected_gaze_valid = []   # gaze_2d validity of each collected sample
+        abort_key = None            # "q" / "window_close" when the operator cancelled
+
         try:
             while running and not calibrator.calibration_complete:
                 space_pressed = False
@@ -1394,9 +1434,11 @@ Controls: SPACE = Record point, Q = Cancel"""
                 for ev in pygame.event.get():
                     if ev.type == pygame.QUIT:
                         running = False
+                        abort_key = abort_key or "window_close"
                     elif ev.type == pygame.KEYDOWN:
                         if ev.key == pygame.K_q:
                             running = False
+                            abort_key = abort_key or "q"
                         elif ev.key == pygame.K_SPACE:
                             space_pressed = True
 
@@ -1409,6 +1451,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                         space_pressed = True
                     if q_down and not _prev_q_down:
                         running = False
+                        abort_key = abort_key or "q"
                     _prev_space_down = space_down
                     _prev_q_down = q_down
 
@@ -1417,6 +1460,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                     if homography_good and not collecting_samples and H_screen_to_image is not None:
                         collecting_samples = True
                         collected_gaze_samples = []
+                        collected_gaze_valid = []
                         collection_start_time = time.time()
                         print(f"[2D Cal] Starting sample collection for point {calibrator.current_point_index + 1}...")
                     elif not homography_good:
@@ -1436,10 +1480,18 @@ Controls: SPACE = Record point, Q = Cancel"""
                 if collecting_samples and latest_gaze:
                     g2d = latest_gaze.combined.gaze_2d
                     collected_gaze_samples.append((g2d.x, g2d.y))
+                    collected_gaze_valid.append(bool(getattr(g2d, 'validity', False)))
 
                 # Check if we've collected enough samples
                 if collecting_samples and len(collected_gaze_samples) >= SAMPLES_TO_COLLECT:
                     try:
+                        # For the calibration record: this point's target and sample statistics,
+                        # whether or not the point ends up in the model.
+                        points_before = len(calibrator.model.calibration_points)
+                        point_target = calibrator.get_current_target_screen_position() or ("", "")
+                        shown_points.append({"name": calibrator.get_current_position_name(),
+                                             "target_x": point_target[0], "target_y": point_target[1],
+                                             **sample_stats(collected_gaze_samples, collected_gaze_valid)})
                         # Compute average gaze_2d from all samples
                         avg_x = np.mean([s[0] for s in collected_gaze_samples])
                         avg_y = np.mean([s[1] for s in collected_gaze_samples])
@@ -1479,9 +1531,14 @@ Controls: SPACE = Record point, Q = Cancel"""
                                 calibrator.current_point_index += 1
                                 if calibrator.current_point_index >= len(calibrator.positions):
                                     calibrator.calibration_complete = True
+                        recorded = len(calibrator.model.calibration_points) > points_before
+                        bundle.event("collect_end" if recorded else "point_skipped",
+                                     target_idx=len(shown_points) - 1, target_name=shown_points[-1]["name"],
+                                     n=shown_points[-1]["n"], n_valid=shown_points[-1]["n_valid"])
                     except Exception as e:
                         print(f"[2D Cal] Error recording calibration point: {e}")
                         traceback.print_exc()
+                        bundle.event("exception", where="calibration_point", error=f"{type(e).__name__}: {e}")
 
                     collecting_samples = False
                     collected_gaze_samples = []
@@ -1713,30 +1770,58 @@ Controls: SPACE = Record point, Q = Cancel"""
             # Calibration complete or cancelled
             if calibrator.calibration_complete:
                 # Train the model
-                if calibrator.finish_calibration():
+                trained = calibrator.finish_calibration()
+                bundle.event("calib_trained", trained=bool(trained),
+                             n_points=len(calibrator.model.calibration_points),
+                             **{f"loo_{k}_mean": float(np.mean(v)) if v else None
+                                for k, v in calibrator.model.loo_errors.items()})
+                saved, save_errors = False, []
+                if trained:
                     # Save the model
-                    username = self.user_var.get().strip() or "anonymous"
-                    save_sol_2d_offset(
+                    saved = save_sol_2d_offset(
                         username,
                         Path(self.calib_dir_var.get()),
                         calibrator.get_model(),
                         screen_w, screen_h,
-                        calibrator.target_image_path
+                        calibrator.target_image_path,
+                        error_out=save_errors
                     )
                     self.after(0, lambda: messagebox.showinfo("Calibration Complete",
                         f"2D offset calibration complete!\n{len(calibrator.model.calibration_points)} points recorded."))
                 else:
+                    save_errors.append("the offset model could not be trained")
                     self.after(0, lambda: messagebox.showerror("Calibration Failed",
                         "Failed to train the offset model. Please try again."))
+                # In the record: saved or not, why not, and a copy of the profile as written.
+                bundle.profile_written("sol2d_offset",
+                                       get_sol_2d_offset_path(username, self.calib_dir_var.get(), create=False),
+                                       saved, error="; ".join(save_errors) or None, trained=bool(trained),
+                                       points_recorded=len(calibrator.model.calibration_points))
             else:
+                bundle.event("abort", key=abort_key)
                 self.after(0, lambda: messagebox.showinfo("Calibration Cancelled", "2D offset calibration was cancelled."))
 
         except Exception as cal_error:
             print(f"[2D Cal] FATAL ERROR in calibration: {cal_error}")
             traceback.print_exc()
+            bundle.crash(type(cal_error), cal_error, cal_error.__traceback__, where="sol2d_calibration")
             self.after(0, lambda e=str(cal_error): messagebox.showerror("Calibration Error", f"Calibration crashed: {e}"))
 
         finally:
+            # The calibration record: calib_points.csv (also for a cancelled or crashed run), then
+            # the session is closed. LOO errors in degrees only in screen mode, where px are screen px.
+            try:
+                from ntuh.sol.accuracy_test import px_to_deg
+                to_deg = ((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
+                          if calibrator.offset_mode == OFFSET_MODE_SCREEN else None)
+                write_calib_points(bundle.folder / "calib_points.csv",
+                                   calib_point_rows(shown_points, calibrator.model, to_deg))
+            except Exception as e:
+                print(f"[2D Cal] Could not write calib_points.csv: {e}")
+            if calibrator.calibration_complete:
+                bundle.finish("completed")
+            else:
+                bundle.finish("aborted", "window_close" if abort_key == "window_close" else "operator_q")
             # Save homography for next session
             try:
                 H = sol_projector.get_homography()
@@ -1978,6 +2063,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                 print(f"[Sol Preview] Loaded 2D offset model for user '{username}' ({len(preview_2d_offset_model.calibration_points)} points)")
             else:
                 print(f"[Sol Preview] No 2D offset model found for user '{username}' in {calib_dir}")
+            session_bundle.app_event("profile_loaded" if preview_2d_offset_model else "profile_missing",
+                                     role="sol2d_offset", where="preview", looked_for_path=str(offset_path))
 
         # ---- Process-isolated Sol scene pipeline (preview) ----
         # The crash-prone scene H.264 decode + ArUco run in a CHILD process; the parent keeps a
@@ -2611,6 +2698,10 @@ Controls: SPACE = Record point, Q = Cancel"""
             protocol_params={"n_targets_planned": len(targets), "ring_eccentricities_deg": [10.0, 20.0],
                              "points_per_ring": 8, "include_corners": True},
             config=self._collect_gui_values())
+        if SOL_2D_OFFSET_AVAILABLE:      # the profile this test looked for, and whether it is applied
+            bundle.profile("sol2d_offset",
+                           get_sol_2d_offset_path(username, self.calib_dir_var.get(), create=False),
+                           offset_model is not None, applied=True)
         abort_reason = [None]
 
         def note_abort(key, reason):
@@ -3049,11 +3140,12 @@ Controls: SPACE = Record point, Q = Cancel"""
                     "n_points": len(records), "calib_model_loaded": offset_model is not None,
                     "offset_mode": getattr(offset_model, 'offset_mode', None) if offset_model else None,
                     "aborted": aborted,
-                    "started_at": bundle.meta.get("started_at")}
+                    "started_at": bundle.meta.get("started_at"),
+                    "result": acc.result_block(records)}       # what the dialog below shows
             try:
                 acc.save_accuracy_report(out_dir, records, meta)
                 end_session()
-                ov = acc.summarize(records).get('_overall', {})
+                ov = meta["result"]
                 messagebox.showinfo("Accuracy Test Complete",
                     f"Recorded {len(records)} point(s).\n"
                     f"Mean accuracy: raw {ov.get('raw_mean_deg', 0):.2f} deg / {ov.get('raw_mean_px', 0):.0f} px "
@@ -3370,6 +3462,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             # General settings
             'user_name': self.user_var.get(),
             'operator_code': self.operator_code_var.get(),
+            'chronus_participant': self.chronus_participant_var.get(),
             'calib_dir': self.calib_dir_var.get(),
 
             # Tracker settings
@@ -3464,6 +3557,22 @@ Controls: SPACE = Record point, Q = Cancel"""
             if now[1] != was[1]:
                 session_bundle.app_event("calib_dir_changed", old=was[1], new=now[1], reason=reason)
         self._logged_identity = now
+        self._note_sol_builtin()         # picks up an edited Chronus participant code as well
+
+    def _note_sol_builtin(self):
+        """Hand the operator's Sol built-in calibration confirmation to the session record."""
+        session_bundle.note_sol_builtin(self.sol_builtin_done_var.get(), self.sol_builtin_done_at,
+                                        self.chronus_participant_var.get())
+
+    def _on_sol_builtin_toggled(self):
+        """The "Sol built-in calibration done" checkbox: ticking it stamps the time."""
+        done = self.sol_builtin_done_var.get()
+        self.sol_builtin_done_at = session_bundle.now_iso() if done else None
+        self.lbl_sol_builtin_at.configure(text=f"confirmed at {self.sol_builtin_done_at[11:19]}" if done else "")
+        self._note_sol_builtin()
+        session_bundle.app_event("sol_builtin_calib_confirmed", confirmed=done,
+                                 performed_at=self.sol_builtin_done_at,
+                                 chronus_participant=self.chronus_participant_var.get().strip() or None)
 
     def report_callback_exception(self, exc, val, tb):
         """Tk calls this for an exception in any callback. Print it as Tk does, and record it: in
@@ -3492,7 +3601,7 @@ Controls: SPACE = Record point, Q = Cancel"""
     def _setup_auto_save_traces(self):
         """Attach trace callbacks to all settings variables for auto-save."""
         tracked_vars = [
-            self.user_var, self.operator_code_var, self.calib_dir_var,
+            self.user_var, self.operator_code_var, self.chronus_participant_var, self.calib_dir_var,
             self.gaze_color_var, self.gaze_radius_var, self.gaze_width_var,
             self.stim_var, self.pass_dur_var, self.blank_var, self.rad_var,
             self.rotate_var, self.rot_speed_var, self.rot_dir_var,
@@ -3567,6 +3676,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'user_name' in data: self.user_var.set(data['user_name'])
             if 'calib_dir' in data: self.calib_dir_var.set(data['calib_dir'])
             if 'operator_code' in data: self.operator_code_var.set(data['operator_code'])
+            if 'chronus_participant' in data: self.chronus_participant_var.set(data['chronus_participant'])
 
             if 'enable_webcam' in data: self.enable_webcam_var.set(data['enable_webcam'])
             if 'enable_sol' in data: self.enable_sol_var.set(data['enable_sol'])
