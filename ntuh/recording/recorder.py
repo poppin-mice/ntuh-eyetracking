@@ -9,6 +9,9 @@ import threading
 import queue
 import copy
 
+from ntuh.vavf.hold_tracker import TRIAL_QUALITY_COLUMNS
+
+
 class Recorder:
     def __init__(self, output_dir="VA_output", subject_id="test", session_num="1", is_va=True,
                  screen_max_height=1080):
@@ -69,6 +72,16 @@ class Recorder:
             "trial_type"
         ])
 
+        # 4. Trial quality (VA only): what the pass rule saw in each trial, one row per trial of
+        # trial_events.csv (ntuh/vavf/hold_tracker.py). A separate file: trial_events.csv is read
+        # by the replayer and the model repo and keeps its columns.
+        self.quality_csv_file = self.quality_csv_writer = None
+        if is_va:
+            self.quality_csv_file = open(os.path.join(self.session_dir, "trial_quality.csv"), "w", newline="", encoding='utf-8')
+            self.quality_csv_writer = csv.DictWriter(self.quality_csv_file, fieldnames=TRIAL_QUALITY_COLUMNS)
+            self.quality_csv_writer.writeheader()
+            self.quality_csv_file.flush()
+
         self.frame_count = 0
         self.running = True
 
@@ -117,6 +130,15 @@ class Recorder:
             self.trial_csv_file.flush()
         except Exception as e:
             print(f"Error writing trial event: {e}")
+
+    def log_trial_quality(self, row):
+        """Log one row of trial_quality.csv (a dict from hold_tracker.trial_quality_row)."""
+        try:
+            if self.quality_csv_writer:
+                self.quality_csv_writer.writerow(row)
+                self.quality_csv_file.flush()
+        except Exception as e:
+            print(f"Error writing trial quality: {e}")
 
     def process_and_record(self, frame, screen_surface,
                            stim_pos=None,
@@ -516,6 +538,9 @@ class Recorder:
         if self.trial_csv_file:
             try: self.trial_csv_file.close()
             except: pass
+        if self.quality_csv_file:
+            try: self.quality_csv_file.close()
+            except: pass
         print("Recorder Stopped.")
 
 
@@ -530,6 +555,9 @@ class DummyRecorder:
         self.frame_count += 1
 
     def log_trial_event(self, *args, **kwargs):
+        pass
+
+    def log_trial_quality(self, *args, **kwargs):
         pass
 
     def close(self):

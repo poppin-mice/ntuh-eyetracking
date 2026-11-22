@@ -29,7 +29,9 @@ from ntuh.vavf.stimuli import (
 )
 from ntuh.tracking.sol_quality import (
     DashboardState, SolQualityTracker, build_summary_lines, build_quality_summary,
+    sol_sample_usable,
 )
+from ntuh.vavf.hold_tracker import GazeSample, HoldTracker, trial_quality_row
 from ntuh.tracking.sol_session import run_sol_worker
 from ntuh.ui.tester_dashboard import TesterDashboard
 
@@ -882,7 +884,19 @@ def run_test(cfg, sol_context=None):
 
         start  = time.time()
         passed = False
-        hold_start = None
+        # The pass rule (ntuh/vavf/hold_tracker.py): only valid, fresh gaze counts toward the hold.
+        hold = HoldTracker(cfg['pass_dur'], cfg.get('hold_max_sample_age_s', 0.2),
+                           cfg.get('hold_blink_grace_s', 0.3))
+        sol_evidence = None      # the newest Sol sample as evidence: when received, usable, which side
+        trial_sol_samples = []   # (receive time, usable) of every Sol sample of this trial
+
+        def on_target_side(pt):
+            """The point is on the screen and in the half the target is shown in."""
+            if not pt:
+                return False
+            return 0 <= pt[0] < W and 0 <= pt[1] < H and (
+                (pt[0] >= W // 2) if side == 'right' else (pt[0] < W // 2))
+
         if sol_quality is not None:
             sol_quality.set_in_trial(True)  # count these samples toward the trial-only metric
         dash_state.update(trial_number=trial_number, cpd=cpd, side=side, phase='stimulus')
@@ -995,6 +1009,7 @@ def run_test(cfg, sol_context=None):
                             try:
                                 latest_gaze = sol_gaze_queue.get_nowait()
                                 got_new_gaze_data = True
+                                trial_sol_samples.append((time.time(), sol_sample_usable(latest_gaze)))
                                 if sol_quality is not None:
                                     sol_quality.add_sample(latest_gaze)  # count every received sample (trial)
                             except queue.Empty:
@@ -1107,42 +1122,41 @@ def run_test(cfg, sol_context=None):
                 if not got_new_gaze_data and sol_gaze_pt is not None:
                     sol_debug_counters['used_cached_gaze'] += 1
 
-            # --- Evaluation Logic ---
-            eval_pt = None
-            if cfg['eval_source'] == "Webcam": eval_pt = webcam_gaze_pt
-            else: eval_pt = sol_gaze_pt
+                # The newest Sol sample as evidence for the pass rule: usable, and mapped to the
+                # screen in THIS frame. A frame without a new sample keeps the previous evidence,
+                # which then ages out; the persisted sol_gaze_pt is never evidence.
+                if got_new_gaze_data:
+                    sol_evidence = GazeSample(
+                        time.time(),
+                        sol_sample_usable(latest_gaze) and sol_mapped_gaze_pt_for_csv is not None,
+                        on_target_side(sol_mapped_gaze_pt_for_csv))
 
-            # Validation Area Logic
-            valid_sample = False
-            in_correct_half = False
-            
-            if eval_pt:
-                gx, gy = eval_pt
-                # Check Bounds
-                if 0 <= gx < W and 0 <= gy < H:
-                    valid_sample = True
-                    # Check Correct Half
-                    if side == 'right': in_correct_half = (gx >= W // 2)
-                    else: in_correct_half = (gx < W // 2)
-                    
-                    # Draw Marker (only if within screen bounds)
-                    if cfg.get('show_gaze_marker', True) and 0 <= gx < W and 0 <= gy < H:
-                         pygame.draw.circle(win, to_rgb_tuple(cfg['gaze_marker_color']), (gx, gy), cfg['gaze_marker_radius'], cfg['gaze_marker_width'])
+            # --- Evaluation Logic ---
+            # eval_pt is what the marker shows (for Sol: the last mapped point, also an old one).
+            # The pass rule gets the evidence instead: the webcam gaze is read anew every frame,
+            # so a frame without one is "no gaze".
+            now = time.time()
+            if cfg['eval_source'] == "Webcam":
+                eval_pt = webcam_gaze_pt
+                evidence = GazeSample(now, eval_pt is not None, on_target_side(eval_pt))
+            else:
+                eval_pt = sol_gaze_pt
+                evidence = sol_evidence
+
+            # Draw Marker (only if within screen bounds)
+            if eval_pt and cfg.get('show_gaze_marker', True) and 0 <= eval_pt[0] < W and 0 <= eval_pt[1] < H:
+                pygame.draw.circle(win, to_rgb_tuple(cfg['gaze_marker_color']), eval_pt, cfg['gaze_marker_radius'], cfg['gaze_marker_width'])
 
             # Pass/Fail Logic
-            if valid_sample and in_correct_half:
-                if hold_start is None: hold_start = time.time()
-                if time.time() - hold_start >= cfg['pass_dur']:
-                    passed = True
-                    break
-            else:
-                hold_start = None
+            if hold.update(now, evidence):
+                passed = True
+                break
 
             # Render & Record
             # Status Bar
             msg_txt = f"{cpd:.2f} cpd  ({cs:.1f} cyc/screen)  t={t:.1f}s"
-            if hold_start:
-                msg_txt += f"  hold={time.time() - hold_start:.1f}/{cfg['pass_dur']:.1f}s"
+            if hold.in_progress:
+                msg_txt += f"  hold={hold.held_s:.1f}/{cfg['pass_dur']:.1f}s"
             txt = status_font.render(msg_txt, True, (255, 255, 255))
             win.blit(txt, (10, 10))
 
@@ -1211,7 +1225,7 @@ def run_test(cfg, sol_context=None):
             clock.tick(60)
             if dashboard is not None:
                 dashboard.pump()   # tester dashboard on the MAIN thread (stimulus phase)
-            if t > cfg['stim_dur'] and hold_start is None: break
+            if t > cfg['stim_dur'] and not hold.in_progress: break
           except Exception as frame_err:
             # [FIX] Log frame-level errors but continue
             import traceback
@@ -1237,6 +1251,9 @@ def run_test(cfg, sol_context=None):
             eval_source=cfg.get('eval_source', 'Webcam'),
             trial_type="catch" if is_catch else "normal"
         )
+        # What the pass rule saw in this trial (trial_quality.csv; trial_events.csv is unchanged).
+        recorder.log_trial_quality(trial_quality_row(
+            trial_number, trial_sol_samples, start, trial_end_ts, cfg['pass_dur'], hold.hold_start))
 
         # Pass/Fail Feedback
         # Seed display gaze with trial's last position to prevent flash of incorrect gaze

@@ -149,6 +149,25 @@ VA_center_opt
            negatives already), so a low-VA subject gets few or no catch trials instead of a
            block of them at the end; only what is still owed is forced in when the staircase
            ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
+    1.10.0 The VA pass rule changed: only VALID, FRESH gaze counts toward the Pass Duration.
+           (1.6.0 - 1.9.0 are the profile guard, the session bundle and the VA threshold
+           result.) Until now a trial took the last mapped Sol gaze point every frame, whether
+           or not the sample behind it was valid, and kept it when no new sample arrived: a
+           frozen point on the target's side passed a trial with no eye detected. On
+           2026-09-18, 4 of 54 passes had under 50 % valid gaze in their last 2 s, one catch
+           trial 0 %. Now (ntuh/vavf/hold_tracker.py, rule version 2) a sample counts only
+           when the glasses report it valid, at least one eye is seen, it could be mapped to
+           the screen in that frame and it is at most 0.2 s old. Without such a sample the
+           timer pauses; after 0.3 s (longer than a blink) the hold starts over, and valid
+           gaze on the other side starts it over at once. The same rule applies when the
+           webcam is the evaluation source. PASS / FAIL can therefore differ from earlier
+           versions on the same gaze. The two thresholds are new settings (VA Stimulus: Max
+           Gaze Age, Blink Grace); their defaults are the audit's suggestion and still to be
+           confirmed. New file trial_quality.csv in each VA session folder: per trial the
+           number of Sol samples, the valid fraction of the trial and of its last Pass
+           Duration, when the passing hold began, the longest time without a sample, the
+           gaps over 0.3 s and the rule version (trial_events.csv is unchanged).
+           tools/replay_va_hold.py replays recorded sessions through the rule.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -232,7 +251,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.5.0",
+    "VA_center_opt": "1.10.0",
     "calibration": "1.2.0",
     "replayer": "1.2.0",
 }

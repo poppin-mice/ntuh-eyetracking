@@ -21,6 +21,25 @@ def sol_sample_is_valid(sample):
             return False
 
 
+def _eye_status(sample, attr):
+    """EyeStatus of one eye as an int (0 NO_EYE, 1 BLINK, 2 NORMAL); None when not available."""
+    try:
+        es = getattr(getattr(sample, attr), 'eye_status', None)
+        return None if es is None else int(getattr(es, 'value', es))
+    except Exception:
+        return None
+
+
+def sol_sample_usable(sample):
+    """True when a Sol sample may count as evidence of where the subject looks: the combined gaze
+    is valid (sol_sample_is_valid) AND the glasses see at least one eye. A sample with both eyes
+    NO_EYE can still carry a gaze point - frozen at its last place - and is not evidence. This is
+    the validity the VA pass rule uses (ntuh/vavf/hold_tracker.py)."""
+    if not sol_sample_is_valid(sample):
+        return False
+    return not (_eye_status(sample, 'left_eye') == 0 and _eye_status(sample, 'right_eye') == 0)
+
+
 def _sol_eye_valid(sample, attr):
     """Per-eye Sol validity: True if that eye's gaze is valid (SDK confidence threshold), else
     fall back to eye_status == NORMAL. attr is 'left_eye' or 'right_eye'."""
