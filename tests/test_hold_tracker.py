@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """The VA pass rule (ntuh/vavf/hold_tracker.py): only valid, fresh gaze on the target's side
-counts toward the hold. Synthetic samples.
+counts toward the hold. Synthetic samples; the replay of the 2026-09-18 field data at the end
+runs only when NTUH_VA_0918_ROOT points at it.
 """
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -158,3 +160,12 @@ def test_trial_quality_row_without_any_sample():
     assert (row["n_sol_samples"], row["valid_fraction_trial"], row["valid_fraction_final_window"]) == (0, "", "")
     assert (row["hold_start_s"], row["max_sample_age_ms"], row["n_gaps_gt_300ms"]) == ("", 5000, 1)
 
+
+# ---------- the 2026-09-18 field data (opt-in, never in CI) ----------
+@pytest.mark.skipif(not os.environ.get("NTUH_VA_0918_ROOT"),
+                    reason="set NTUH_VA_0918_ROOT to the folder of the 2026-09-18 VA sessions")
+def test_the_0918_catch_trial_without_valid_gaze_no_longer_passes():
+    from tools import replay_va_hold
+    results = replay_va_hold.replay_root(os.environ["NTUH_VA_0918_ROOT"])
+    outcome = {(r["session"], r["trial"]): (r["trial_type"], r["was"], r["now"]) for r in results}
+    assert outcome[("s02_c5", 5)] == ("catch", "PASS", "FAIL")
