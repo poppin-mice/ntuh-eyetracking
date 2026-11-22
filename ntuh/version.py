@@ -160,6 +160,17 @@ VA_center_opt
            General tab. The accuracy-test folder is created when the test starts and named
            after the start time; accuracy_report.json meta gains started_at (the ten existing
            keys are unchanged). tools/check_session_bundle.py checks the folders.
+    1.9.0  Session bundle v1, part 2 (doc/session_bundle.md). (1.8.0 is the VA threshold
+           result.) session_meta.json now says which calibration profiles a test looked for,
+           whether each was loaded, its sha256 and which profiles the folder held, and the
+           folder keeps a byte copy of every loaded profile (calib_profile_snapshot.json,
+           calib_profiles/). New "Sol built-in calibration done" checkbox and Chronus
+           participant code on the Sol tab, stored in every session. Every Sol 2D offset
+           calibration run writes its own folder under calibration_sessions/ with the
+           per-point statistics and leave-one-out errors (calib_points.csv), a copy of the
+           profile it saved, and whether the save worked. New result files va_result.json and
+           vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
+           scores a session again from its own files into a separate _derived folder.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -245,7 +256,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.7.0",
+    "VA_center_opt": "1.9.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
