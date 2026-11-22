@@ -126,7 +126,8 @@ The Sol child process has no console of its own; what it reports to the main pro
 
 - The computer name is stored only as a short hash.
 - Paths are stored relative to the program folder, or with the user folder written as `%USERPROFILE%`.
-  The console and crash logs replace the user folder the same way.
+  The console log, the crash logs (also the copied `*_crash_log.txt`) and free text in an event
+  (an error message) replace the user folder the same way.
 - Use codes in the User Name and Operator Code fields: they are stored as typed.
 
 ## Checking bundles

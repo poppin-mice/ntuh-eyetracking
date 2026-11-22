@@ -17,7 +17,6 @@ import io
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
@@ -88,7 +87,7 @@ def portable_path(path, app_dir=None):
             return prefix + Path(text).resolve().relative_to(base.resolve()).as_posix()
         except (ValueError, OSError):
             pass
-    return text
+    return _scrub(text)
 
 
 def _home_pattern():
@@ -106,16 +105,17 @@ def _scrub(text):
 
 
 def _clean(value):
-    """JSON-ready copy of settings or event details with every absolute path made portable."""
+    """JSON-ready copy of settings or event details with every absolute path made portable, also
+    a path inside free text (an error message)."""
     if isinstance(value, dict):
         return {str(k): _clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_clean(v) for v in value]
     if isinstance(value, Path) or (isinstance(value, str) and os.path.isabs(value)):
         return portable_path(value)
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, (int, float, bool)) or value is None:
         return value
-    return str(value)
+    return _scrub(str(value))
 
 
 def parse_identity(user_name):
@@ -508,12 +508,15 @@ class SessionBundle:
         return files
 
     def _collect_crash_logs(self):
-        """The apps' own *_crash_log.txt (written to the working directory) from this session."""
+        """The apps' own *_crash_log.txt (written to the working directory) from this session,
+        with the user-profile folder hidden like everywhere else in the bundle."""
         for base in {Path.cwd(), Path(_APP.app_dir)}:
             for p in base.glob("*_crash_log.txt"):
                 try:
                     if p.stat().st_mtime >= self._t0 - 1:
-                        shutil.copy2(p, self.folder / p.name)
+                        # read as the apps wrote it (open() default encoding), store as UTF-8
+                        (self.folder / p.name).write_text(_scrub(p.read_text(errors="replace")),
+                                                          encoding="utf-8")
                 except OSError:
                     pass
 

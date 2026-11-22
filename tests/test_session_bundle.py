@@ -122,6 +122,30 @@ def test_paths_do_not_carry_this_pcs_folder_names(folder, bundle_app):
     assert str(Path.home()) not in (folder / sb.META_FILE).read_text(encoding="utf-8")
 
 
+def test_a_path_inside_an_error_message_is_hidden_too(folder):
+    home = Path.home()
+    bundle = sb.start(folder, "va", cfg=CFG)
+    bundle.event("exception", where="trial", error=f"FileNotFoundError: {home / 'app' / 'ball.jpg'}")
+    bundle.event("worker_message", message=f"could not open {home}/app/sol.log: denied")
+    bundle.event("worker_message", message=f"{home}\\app: not a folder | or a file")   # absolute, not a path
+    bundle.finish()
+    details = [json.loads(e["detail_json"]) for e in _events(folder)[1:4]]
+    assert "%USERPROFILE%" in details[0]["error"] and details[0]["error"].endswith("ball.jpg")
+    assert "%USERPROFILE%" in details[1]["message"] and details[1]["message"].endswith("sol.log: denied")
+    assert home.name not in (folder / sb.EVENTS_FILE).read_text(encoding="utf-8")
+
+
+def test_a_copied_app_crash_log_hides_the_user_profile_folder(folder, bundle_app):
+    bundle = sb.start(folder, "va", cfg=CFG)
+    (bundle_app / "va_trial_crash_log.txt").write_text(      # what va_test.py writes next to the exe
+        f'  File "{Path.home() / "app" / "ntuh" / "flows" / "va_test.py"}", line 1300\nKeyError: 3\n')
+    bundle.finish()
+    copy = (folder / "va_trial_crash_log.txt").read_text(encoding="utf-8")
+    assert "KeyError: 3" in copy and "%USERPROFILE%" in copy
+    assert Path.home().name not in copy
+    assert "va_trial_crash_log.txt" in _meta(folder)["bundle"]["files"]
+
+
 def test_settings_changed_by_the_flow_are_in_the_final_meta(folder):
     cfg = dict(CFG)
     bundle = sb.start(folder, "va", cfg=cfg)
