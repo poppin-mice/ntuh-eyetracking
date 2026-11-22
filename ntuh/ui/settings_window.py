@@ -143,6 +143,9 @@ class SettingsWindow(tk.Tk):
         self.gaze_width_var  = tk.StringVar(value="4")
         self.stim_var   = tk.StringVar(value="5.0")
         self.pass_dur_var = tk.StringVar(value="2.0")
+        # VA pass rule (ntuh/vavf/hold_tracker.py). Defaults are the audit's suggestion, to be confirmed.
+        self.hold_max_age_var = tk.StringVar(value="0.2")       # a gaze sample older than this does not count
+        self.hold_blink_grace_var = tk.StringVar(value="0.3")   # a hold survives this long without valid gaze
         self.blank_var  = tk.StringVar(value="1.0")
         self.rad_var    = tk.StringVar(value="400")
         self.rotate_var = tk.BooleanVar(value=False)
@@ -676,6 +679,17 @@ class SettingsWindow(tk.Tk):
 
         ttk.Label(self.grp_va_stim, text="Pass Duration (s):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         ttk.Spinbox(self.grp_va_stim, textvariable=self.pass_dur_var, from_=0.1, to=10.0, increment=0.1, font=e_font, width=10).grid(row=r, column=1, sticky="w", **pad); r += 1
+
+        # Only valid, fresh gaze counts toward the Pass Duration (the VA pass rule).
+        ttk.Label(self.grp_va_stim, text="Max Gaze Age (s):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        ttk.Spinbox(self.grp_va_stim, textvariable=self.hold_max_age_var, from_=0.05, to=1.0, increment=0.05, font=e_font, width=10).grid(row=r, column=1, sticky="w", **pad)
+        ttk.Label(self.grp_va_stim, text="(a gaze sample older than this does not count toward the pass)",
+                  font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", **pad); r += 1
+
+        ttk.Label(self.grp_va_stim, text="Blink Grace (s):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        ttk.Spinbox(self.grp_va_stim, textvariable=self.hold_blink_grace_var, from_=0.0, to=1.0, increment=0.05, font=e_font, width=10).grid(row=r, column=1, sticky="w", **pad)
+        ttk.Label(self.grp_va_stim, text="(the hold pauses this long without valid gaze, then starts over)",
+                  font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", **pad); r += 1
 
         ttk.Label(self.grp_va_stim, text="Blank Duration (s):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         ttk.Spinbox(self.grp_va_stim, textvariable=self.blank_var, from_=0.2, to=10.0, increment=0.1, font=e_font, width=10).grid(row=r, column=1, sticky="w", **pad); r += 1
@@ -3193,6 +3207,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'calib_dir': self.calib_dir_var.get().strip(),
             'stim_dur': self.safe_get_float(self.stim_var, 5.0),
             'pass_dur': self.safe_get_float(self.pass_dur_var, 2.0),
+            'hold_max_sample_age_s': self.safe_get_float(self.hold_max_age_var, 0.2),
+            'hold_blink_grace_s': self.safe_get_float(self.hold_blink_grace_var, 0.3),
             'blank_dur': self.safe_get_float(self.blank_var, 1.0),
             'radius': self.safe_get_int(self.rad_var, 400),
             'rotate': self.rotate_var.get(),
@@ -3338,6 +3354,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'gaze_width': self.gaze_width_var.get(),
             'stim_duration': self.stim_var.get(),
             'pass_duration': self.pass_dur_var.get(),
+            'hold_max_sample_age_s': self.hold_max_age_var.get(),
+            'hold_blink_grace_s': self.hold_blink_grace_var.get(),
             'blank_duration': self.blank_var.get(),
             'radius': self.rad_var.get(),
             'rotate': self.rotate_var.get(),
@@ -3401,6 +3419,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.user_var, self.calib_dir_var,
             self.gaze_color_var, self.gaze_radius_var, self.gaze_width_var,
             self.stim_var, self.pass_dur_var, self.blank_var, self.rad_var,
+            self.hold_max_age_var, self.hold_blink_grace_var,
             self.rotate_var, self.rot_speed_var, self.rot_dir_var,
             self.color_light_var, self.color_dark_var, self.bg_color_var,
             self.scr_width_cm_var, self.view_dist_cm_var,
@@ -3514,6 +3533,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'gaze_width' in data: self.gaze_width_var.set(str(data['gaze_width']))
             if 'stim_duration' in data: self.stim_var.set(str(data['stim_duration']))
             if 'pass_duration' in data: self.pass_dur_var.set(str(data['pass_duration']))
+            if 'hold_max_sample_age_s' in data: self.hold_max_age_var.set(str(data['hold_max_sample_age_s']))
+            if 'hold_blink_grace_s' in data: self.hold_blink_grace_var.set(str(data['hold_blink_grace_s']))
             if 'blank_duration' in data: self.blank_var.set(str(data['blank_duration']))
             if 'radius' in data: self.rad_var.set(str(data['radius']))
             if 'rotate' in data: self.rotate_var.set(data['rotate'])
