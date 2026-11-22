@@ -37,6 +37,7 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| Operator Code | Code of the person running the test (e.g. `OT1`), never a real name. Remembered between runs and stored in each session's `session_meta.json` (since 1.7.0) | (empty) |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
@@ -200,8 +201,18 @@ VA_output/
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
     trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
+    session_meta.json           - Program version, settings, identity, start/end, status (since 1.7.0)
+    events.csv                  - Operator and program events (since 1.7.0)
+    console.log                 - What the program printed during the session (since 1.7.0)
+    crash_log.txt               - Only after an exception (since 1.7.0)
     review_labels.json          - Created later by replayer (review labels)
 ```
+
+> **Session record (since 1.7.0).** `session_meta.json`, `events.csv` and `console.log` are written
+> into every VA, VF and accuracy-test folder; [session_bundle.md](session_bundle.md) describes them.
+> Everything the program prints is also kept in `logs/console_<date>_<time>.log` next to the exe.
+> The accuracy-test folder (`accuracy_test/<User Name>_<date>_<time>/`) is now created when the test
+> starts and named after the start time, and a test aborted before its first point leaves a folder too.
 
 > The screen video may be downscaled (e.g. 4K → 1080p); `screen_meta.json` records the
 > original screen resolution so the replayer can align the gaze overlays.

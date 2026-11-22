@@ -149,6 +149,17 @@ VA_center_opt
            negatives already), so a low-VA subject gets few or no catch trials instead of a
            block of them at the end; only what is still owed is forced in when the staircase
            ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
+    1.7.0  Session bundle v1, part 1 (doc/session_bundle.md): every VA, VF and accuracy-test
+           folder now carries session_meta.json (program version and build, the settings the
+           test ran with, subject / condition / operator as separate fields, start and end
+           time, status completed / aborted / crashed, and a sha256 manifest of the folder),
+           events.csv (aborts, the SPACE override of the quality gate, Clear Offset, a changed
+           User Name or Calibration Folder, scene stalls, Sol worker crashes, exceptions,
+           including what happened since the previous session) and console.log. Everything
+           printed is also kept in logs/console_<time>.log. New "Operator Code" field on the
+           General tab. The accuracy-test folder is created when the test starts and named
+           after the start time; accuracy_report.json meta gains started_at (the ten existing
+           keys are unchanged). tools/check_session_bundle.py checks the folders.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -187,6 +198,8 @@ calibration
            clinic screens (more so now that the app is per-monitor DPI aware and Windows no
            longer stretches the window). It retunes Tk's named fonts, so the whole window
            follows at once.
+    1.3.0  Everything the program prints is kept in logs/console_<time>.log next to the exe
+           (session bundle v1, doc/session_bundle.md).
 replayer
     1.0.0  Baseline: versioning introduced.
     1.1.0  A "Font" spinner in the menu-bar corner, applied live and remembered between runs
@@ -232,8 +245,8 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.5.0",
-    "calibration": "1.2.0",
+    "VA_center_opt": "1.7.0",
+    "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
 
