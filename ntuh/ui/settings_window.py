@@ -28,7 +28,8 @@ from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
 from ntuh.common.pygame_utils import ensure_pygame_focus
-from ntuh.common.win_monitors import get_monitor_info_windows, screen_options, valid_screen_option
+from ntuh.common.win_monitors import (centered_on_monitor_at, get_monitor_info_windows,
+                                      screen_options, valid_screen_option)
 from ntuh.ui.face_overlay import (
     draw_face_quality_overlay,
     _GUIDE_OVAL_SIZE_FRAC, _GUIDE_OVAL_BOTTOM_X_FRAC, _GUIDE_OVAL_BOTTOM_Y_FRAC,
@@ -2528,6 +2529,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         """Start dialog of the accuracy test: the operator must pick the condition (there is no
         default) and sees what it means for our calibration profile. Returns 'C1'..'C5' or None."""
         dlg = tk.Toplevel(self)
+        dlg.withdraw()                      # shown once it is placed (see below), so it does not jump
         dlg.title("Accuracy Test - 測試條件 Condition")
         dlg.transient(self)
         dlg.resizable(False, False)
@@ -2562,6 +2564,16 @@ Controls: SPACE = Record point, Q = Cancel"""
             btn_start.config(state="normal")
 
         box.bind("<<ComboboxSelected>>", on_pick)
+        # Tk opens a Toplevel at the top-left corner. Centre it on the monitor the settings window
+        # is on, which is the operator's screen and not necessarily the primary one.
+        dlg.update_idletasks()
+        x, y = centered_on_monitor_at(
+            getattr(self, 'monitor_info_list', None) or get_monitor_info_windows(),
+            self.winfo_rootx() + self.winfo_width() // 2, self.winfo_rooty() + self.winfo_height() // 2,
+            dlg.winfo_reqwidth(), dlg.winfo_reqheight())
+        dlg.geometry(f"+{x}+{y}")
+        dlg.deiconify()
+        dlg.wait_visibility()
         dlg.grab_set()
         dlg.lift()
         box.focus_set()
