@@ -72,6 +72,10 @@ python -m pytest
 `pytest.ini` sets `-p no:cacheprovider`, so no `.pytest_cache/` is written. Test data must be
 synthetic or use participant **codes** only (s01, K03 ...) — never real names or field recordings.
 
+One test reads field data and is skipped unless you point it at the data: set `NTUH_VA_0918_ROOT`
+to the 2026-09-18 VA dataset folder to replay those runs through the VA scoring
+(`tests/test_va_scoring.py`; it reads `trial_events.csv` only).
+
 ## Build the executables
 
 PyInstaller **onedir** builds, one `.spec` per app, staged by `stage_release.py`:

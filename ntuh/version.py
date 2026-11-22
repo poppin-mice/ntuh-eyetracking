@@ -149,6 +149,21 @@ VA_center_opt
            negatives already), so a low-VA subject gets few or no catch trials instead of a
            block of them at the end; only what is still owed is forced in when the staircase
            ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
+    1.8.0  THE VA RESULT CHANGES MEANING. Until now the result screen showed the level the
+           staircase would have shown NEXT ("Final Spatial Freq"), which after a final PASS is
+           2 cpd above anything the subject passed (two field runs reported a level that was
+           never passed), and an "Estimated VA Score" from an uncited cpd / 20 table. It now
+           shows a threshold the subject actually reached, in cpd, by a selectable rule (new
+           setting "VA Threshold Rule": last4_reversal_mean [default, placeholder until agreed
+           with the clinicians], highest_passed, legacy_next_level). A run without 4 reversals
+           reports the highest level passed; 4 FAILs in a row ending at 2 cpd show "Not
+           measurable (<= 2 cpd floor)" instead of 0.1. A decimal acuity is shown only when the
+           new setting "VA Conversion" asks for it (none [default], cpd_div_30,
+           cpd_div_20_legacy). Every result is marked "PROVISIONAL - not for clinical use".
+           New file va_result.json in each VA session folder: every rule's value, the
+           reversals, the trial sequence, the stop reason, both conversions and the old value
+           (legacy.next_level_cpd / legacy.va_score) for comparison with scores already
+           written down. The staircase itself is unchanged; trial_events.csv is unchanged.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -232,7 +247,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.5.0",
+    "VA_center_opt": "1.8.0",
     "calibration": "1.2.0",
     "replayer": "1.2.0",
 }
