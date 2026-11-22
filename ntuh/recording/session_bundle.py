@@ -601,6 +601,7 @@ class SessionBundle:
                 "role": role, "saved": bool(saved),
                 "save_error": _scrub(str(error)) if error else None, **_clean(facts),
                 **self._profile_evidence(role, path, "snapshot" if saved else None)}
+            del result["age_s_at_start"]        # the run wrote the profile itself: it has no age
             self._safe_write_meta()
             self.event("calib_saved", role=role, saved=bool(saved),
                        path=result["looked_for_path"], error=result["save_error"])

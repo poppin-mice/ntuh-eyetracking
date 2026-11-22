@@ -105,6 +105,7 @@ def test_a_calibration_run_folder_records_the_points_and_whether_the_profile_was
     result = meta["calibration_result"]
     assert (result["saved"], result["trained"], result["points_recorded"]) == (save_works, True, 5)
     assert "our_calibration" not in meta                                # a calibration run applies none
+    assert "age_s_at_start" not in result                               # it wrote the profile itself
     assert chk.check_session(folder)["verdict"] == "PASS"               # the record is intact either way
     with open(folder / "calib_points.csv", newline="", encoding="utf-8") as f:
         assert len(list(csv.DictReader(f))) == 5
