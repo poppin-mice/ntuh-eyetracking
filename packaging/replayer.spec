@@ -44,7 +44,8 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=['IPython', 'jupyter', 'matplotlib', 'scipy', 'mediapipe', 'PIL',
-              'MNN', '_mnncengine', 'tkinter', 'pygame', 'ganzin', 'gazefollower'],
+              'MNN', '_mnncengine', 'tkinter', 'pygame', 'ganzin', 'gazefollower',
+              'tools'],   # tools/ = developer scripts, never in the exe
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
