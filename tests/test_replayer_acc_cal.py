@@ -291,3 +291,47 @@ def test_calibration_view_clouds_and_offset_field(cal):
     x, y, dx, dy = field[0]
     assert (x + dx, y + dy) == pytest.approx(s["model"].predict((x, y)))
     assert qc.offset_field({**s, "model": None}, 3840, 2160) == []
+
+
+@pytest.fixture
+def data_root(acc, cal, tmp_path):
+    root = tmp_path / "data"
+    shutil.copytree(acc, root / "accuracy_test" / acc.name)
+    shutil.copytree(cal, root / "calibration_sessions" / cal.name)
+    (root / "VA_output" / "VA_s01_c3_sess1").mkdir(parents=True)                 # not exported
+    (root / "VA_output" / "VA_s01_c3_sess1" / qc.META_FILE).write_text('{"session_kind": "va"}', encoding="utf-8")
+    return root
+
+
+def test_batch_export_writes_qc_summary_outside_the_sessions(data_root, tmp_path):
+    before = files_state(data_root)
+    summary, pngs = qc.export_all(data_root, tmp_path / "out")
+    assert files_state(data_root) == before and pngs == []
+    rows = car_read(summary)
+    assert list(rows[0]) == qc.QC_COLUMNS == [
+        "session_id", "session_kind", "subject", "condition", "our_calib_expected", "our_calib_loaded",
+        "gate", "n_points", "aborted", "h_state_mix", "validity_pct", "drift"]
+    acc_row, cal_row = rows
+    assert (acc_row["session_kind"], acc_row["subject"], acc_row["condition"]) == ("accuracy_test", "s01", "C3")
+    assert (acc_row["our_calib_expected"], acc_row["our_calib_loaded"], acc_row["gate"]) == ("1", "1", "ok")
+    assert (acc_row["n_points"], acc_row["aborted"], acc_row["drift"]) == ("3", "0", "")
+    assert sum(float(kv.split(":")[1]) for kv in acc_row["h_state_mix"].split(";")) == pytest.approx(1.0, abs=0.01)
+    assert 90.0 < float(acc_row["validity_pct"]) < 100.0
+    assert (cal_row["session_kind"], cal_row["n_points"], cal_row["h_state_mix"]) == ("sol2d_calibration", "3", "LIVE:1.000")
+    assert float(cal_row["validity_pct"]) == pytest.approx(100 * (1440 - 3 * 24) / 1440, abs=0.05)
+
+
+def test_batch_export_refuses_an_output_folder_inside_a_session(data_root):
+    session = qc.find_sessions(data_root)[0]
+    for out in (session, session / "qc"):
+        with pytest.raises(ValueError):
+            qc.export_all(data_root, out)
+        assert not (session / "qc").exists() and not (session / qc.QC_FILE).exists()
+
+
+def test_batch_export_renders_one_png_per_session(data_root, tmp_path, qapp):
+    from ntuh.replayer.acc_cal_view import render_png
+    before = files_state(data_root)
+    _, pngs = qc.export_all(data_root, tmp_path / "out", render_png)
+    assert [p.name for p in pngs] == [f.name + ".png" for f in qc.find_sessions(data_root)]
+    assert all(p.stat().st_size > 10000 for p in pngs) and files_state(data_root) == before

@@ -122,6 +122,8 @@ class ScreenCanvas(QWidget):
         for tx, ty, gx, gy in st["done"]:
             p.setPen(QPen(QColor("#fdd835"), 2))
             p.drawLine(*map(int, m(tx, ty)), *map(int, m(gx, gy)))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QRectF(*m(tx, ty), 0, 0).adjusted(-6, -6, 6, 6))     # its target
             p.setBrush(QColor("#fdd835"))
             p.drawEllipse(QRectF(*m(gx, gy), 0, 0).adjusted(-4, -4, 4, 4))
         if st["target"] is not None:
@@ -204,9 +206,9 @@ class CalCanvas(ScreenCanvas):
 class AccCalView(QWidget):
     """One session: header, subject screen, per-point table, timeline."""
 
-    def __init__(self, folder, parent=None):
+    def __init__(self, folder, parent=None, s=None):
         super().__init__(parent)
-        self.s = qc.load(folder)
+        self.s = s if s is not None else qc.load(folder)
         self.t = 0.0
         self.setStyleSheet("QWidget { background: #1e1e1e; color: #ddd; }")
         lay = QVBoxLayout(self)
@@ -299,3 +301,17 @@ class AccCalWindow(QMainWindow):
     def closeEvent(self, e):
         self.view._timer.stop()
         super().closeEvent(e)
+
+
+def render_png(s, path):
+    """The view of a loaded session at its end (every point recorded), saved as a PNG: the
+    picture of the batch QC export (session_qc.export_all)."""
+    v = AccCalView(s["folder"], s=s)
+    v.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
+    v.resize(1600, 1000)
+    v.show()
+    v.set_time(s["duration"])
+    ok = v.grab().save(str(path))
+    v.close()
+    if not ok:
+        raise OSError(f"could not write {path}")

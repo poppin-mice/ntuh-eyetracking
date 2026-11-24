@@ -7,6 +7,7 @@
 Only reads the session folder: nothing is ever written into it. Numpy and the program's own
 recompute code (ntuh/sol/accuracy_replay.py); no pandas, no Qt, so it is tested on CI.
 """
+import csv
 import json
 from pathlib import Path
 
@@ -395,3 +396,68 @@ def offset_field(s, w, h, nx=16, ny=9):
             cx, cy = model.predict((float(x), float(y)))
             out.append((float(x), float(y), float(cx - x), float(cy - y)))
     return out
+
+
+# ---------- batch QC export ----------
+QC_FILE = "qc_summary.csv"
+QC_COLUMNS = ["session_id", "session_kind", "subject", "condition", "our_calib_expected",
+              "our_calib_loaded", "gate", "n_points", "aborted", "h_state_mix", "validity_pct", "drift"]
+H_STATES = ("LIVE", "CACHED", "STALE", "WAITING")
+
+
+def _blank(v):
+    return "" if v is None else int(v) if isinstance(v, bool) else v
+
+
+def qc_row(s):
+    """One qc_summary.csv row. h_state_mix: share of the samples per homography state;
+    validity_pct: valid samples (gaze_2d valid, both eyes NORMAL) in %; drift: empty until the
+    drift check of LOGGING_SPEC 9 is logged."""
+    m = s["meta"]
+    oc = m.get("our_calibration") or {}
+    n = len(s["h_state"])
+    mix = ";".join(f"{h}:{np.mean(s['h_state'] == h):.3f}" for h in H_STATES if n and (s["h_state"] == h).any())
+    n_points = (len(s["points"]) if s["kind"] == "acc" else
+                sum(1 for p in s["calib_points"] if p.get("used_x", "") != ""))
+    return {"session_id": m.get("session_id") or s["folder"].name, "session_kind": m.get("session_kind"),
+            "subject": (m.get("subject") or {}).get("subject_code"),
+            "condition": (m.get("condition") or {}).get("condition_code"),
+            "our_calib_expected": _blank(oc.get("expected")) if s["kind"] == "acc" else "",
+            "our_calib_loaded": _blank(oc.get("loaded")) if s["kind"] == "acc" else "",
+            "gate": gate_status(s) or "", "n_points": n_points,
+            "aborted": int(m.get("status") != "completed"), "h_state_mix": mix,
+            "validity_pct": round(float(s["valid"].mean()) * 100.0, 1) if n else "", "drift": ""}
+
+
+def find_sessions(root):
+    """Every accuracy-test / calibration session folder at or below root, sorted."""
+    return sorted(p.parent for p in Path(root).rglob(META_FILE) if session_mode(p.parent))
+
+
+def export_all(root, out_dir, render=None):
+    """For every session below root: render(s, png_path) (the Qt view saves its picture) and one
+    row of <out_dir>/qc_summary.csv. Refuses an out_dir inside a session folder: nothing is ever
+    written into one. Returns (summary path, [png paths])."""
+    out = Path(out_dir).resolve()
+    sessions = find_sessions(root)
+    for f in sessions:
+        if out == f.resolve() or f.resolve() in out.parents:
+            raise ValueError(f"the output folder is inside the session folder {f}")
+    out.mkdir(parents=True, exist_ok=True)
+    rows, pngs = [], []
+    for f in sessions:
+        s = load(f)
+        rows.append(qc_row(s))
+        if render is not None:
+            name = rows[-1]["session_id"]
+            png = out / f"{name}.png"
+            k = 2
+            while png in pngs:                  # two copies of one session in the tree
+                png, k = out / f"{name}_{k}.png", k + 1
+            render(s, png)
+            pngs.append(png)
+    with open(out / QC_FILE, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=QC_COLUMNS)
+        w.writeheader()
+        w.writerows(rows)
+    return out / QC_FILE, pngs
