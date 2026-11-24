@@ -236,6 +236,14 @@ class ReplayerApp(QMainWindow):
                                              os.path.join(os.path.dirname(__file__), "VA_output"))
         if not d:
             return
+        from ntuh.replayer import session_qc
+        if session_qc.session_mode(d):      # accuracy test / Sol calibration: own window, read-only
+            from ntuh.replayer.acc_cal_view import AccCalWindow
+            self._acc_cal_windows = [w for w in getattr(self, "_acc_cal_windows", []) if w.isVisible()]
+            self._acc_cal_windows.append(AccCalWindow(d))
+            self._acc_cal_windows[-1].show()
+            self._status_label.setText(f"Opened as Calibration / Accuracy session: {os.path.basename(d)}")
+            return
         if self.engine.load_session(d):
             self._status_label.setText(f"Loaded: {os.path.basename(d)}")
         else:
