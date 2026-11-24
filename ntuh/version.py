@@ -221,6 +221,11 @@ VA_center_opt
            files are read only (legacy_profile). A webcam folder without a model is no longer
            replaced silently: the operator picks the default model, another folder or not
            to start, and the choice is recorded.
+    1.16.1 Fix (B-D10, REQ-0033): Clear Offset deleted the profile without asking and said
+           "cleared" with nothing to delete. It is out of the normal flow: an Advanced
+           "Delete profile..." confirms subject, condition and file, moves the file to
+           calibration_profiles/sol2d/_deleted/, says which profile is found now, says "no
+           profile to delete" when there is none, and is disabled while the identity is locked.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -311,7 +316,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.16.0",
+    "VA_center_opt": "1.16.1",
     "calibration": "1.5.0",
     "replayer": "1.2.0",
 }

@@ -171,7 +171,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 | Condition | Our calibration | What happens |
 |-----------|-----------------|--------------|
-| C1 practice, C2 no calibration, C4 Sol built-in | must **not** be applied | A profile that exists for the User Name is ignored (not deleted); the console says so. *Clear Offset* is no longer needed before these conditions. |
+| C1 practice, C2 no calibration, C4 Sol built-in | must **not** be applied | A profile that exists for the User Name is ignored (not deleted); the console says so. Nothing has to be cleared before these conditions (since 1.16.1 *Clear Offset* is no longer in the normal flow, see *Delete profile...* below). |
 | C3 our calibration, C5 both | **required** | With a profile: it is applied. Without one: the test does **not** start. |
 
 - **C3/C5 without a profile** shows an error dialog with the file that was looked for. *No* goes back, so the 5-point calibration can be run for this subject and condition. *Yes* continues **without** our calibration; it then asks for the operator code (a code, not a name) as confirmation, and the choice, the code and the time are written to the report.
@@ -230,7 +230,7 @@ Now nothing is applied unless the operator picks a profile in the group *Sol off
 - Besides the model and the fields of the old file, a profile holds `calib_session_id`, `subject_code`,
   `condition_code`, `app_version`, `build_id` and `per_point`: the `calib_points.csv` rows of the run
   (n, SD, leave-one-out errors ...). Every session that uses a profile records its sha256.
-- **Which profile the accuracy test uses** (and the status on this tab, the gaze preview and *Clear Offset*):
+- **Which profile the accuracy test uses** (and the status on this tab, the gaze preview and *Delete profile...*):
   the newest profile of the same Subject Code and Condition made **after the subject's previous test session
   in another condition** (VA, VF or accuracy test). A retake of the same condition still finds the profile;
   a profile from an earlier condition or an earlier visit does not. A profile not made today asks for a
@@ -239,8 +239,18 @@ Now nothing is applied unless the operator picks a profile in the group *Sol off
   (their subject and condition come from the User Name), never written or deleted. They are marked
   `legacy_profile: true` in `session_meta.json` and `LEGACY` / `舊格式` in the dialogs. Legacy files in other
   folders (for example inside `anonymous_9pt/`) are not looked at.
-- **Clear Offset** deletes the profile currently found for the subject and condition (the next one back, if any,
-  is then found); a legacy profile is never deleted.
+- **Delete profile... / 刪除校正檔…** (since 1.16.1, tracker REQ-0033; it replaces the *Clear Offset* button)
+  sits in the group *Advanced / 進階* at the bottom of the Sol Calib tab. It is **not** a routine step: the
+  condition already decides whether our calibration is applied. It takes the profile currently found for the
+  subject and condition, asks for a confirm that names the subject, the condition and the file, and then
+  **moves** the file to `calibration_profiles/sol2d/_deleted/` (nothing is deleted; a name already there gets a
+  time suffix). A moved profile is no longer found, and the VA/VF picker refuses it. The dialog after the move
+  says which profile is found now (an older one of the same subject and condition, or none). When that file was
+  picked in *Sol offset for VA/VF*, the pick is set back to OFF. With no profile the message is
+  `沒有校正檔可刪除 / No profile to delete`; a legacy profile is never moved; the button is disabled while
+  Subject Code and Condition are locked after *Start Calibration* (until that condition's accuracy test is
+  completed). Before 1.16.1 *Clear Offset* deleted the file without asking (1.16.0: the profile found; before:
+  `<User Name>_sol_2d_offset.json`) and said "cleared" also when there was nothing to delete.
 - **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
 
 ### Recording Tab
