@@ -72,10 +72,11 @@ def test_each_missing_required_file_fails(bundle_app, kind, missing):
     assert f"missing file: {missing}" in result["reasons"]
 
 
-def test_a_bundle_v1_folder_needs_no_v2_files(bundle_app, monkeypatch):
-    """An accuracy test recorded before bundle v2 (version 1) has no sample streams: still PASS."""
+@pytest.mark.parametrize("kind", ["accuracy_test", "sol2d_calibration"])
+def test_a_bundle_v1_folder_needs_no_v2_files(bundle_app, monkeypatch, kind):
+    """A session recorded before bundle v2 (version 1) has no sample streams: still PASS."""
     monkeypatch.setattr(sb, "BUNDLE_V2_FILES", {})
-    folder = make(bundle_app, "accuracy_test")
+    folder = make(bundle_app, kind)
     monkeypatch.undo()
     assert json.loads((folder / sb.META_FILE).read_text(encoding="utf-8"))["bundle"]["version"] == 1
     assert chk.check_session(folder)["verdict"] == "PASS"
@@ -142,6 +143,8 @@ def test_a_calibration_run_is_checked_against_the_profile_it_saved(bundle_app):
     folder = bundle_app / "calibration_sessions" / "s01_c3_20261122_100305"
     bundle = sb.start(folder, "sol2d_calibration", user_name="s01_c3")
     (folder / "calib_points.csv").write_text("point_idx,name,n\n0,center,30\n", encoding="utf-8")
+    for fname in sb.BUNDLE_V2_FILES["sol2d_calibration"]:
+        (folder / fname).write_text("x\n", encoding="utf-8")
     bundle.profile_written("sol2d_offset", profile, True)
     bundle.finish()
     result = chk.check_session(folder)

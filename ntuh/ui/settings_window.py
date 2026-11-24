@@ -37,7 +37,7 @@ from ntuh.ui.face_overlay import (
 )
 from ntuh.ui.widgets import Camera, ScrollableFrame
 from ntuh.ui.calib_status import draw_calib_status
-from ntuh.sol import calib_gate
+from ntuh.sol import calib_gate, stability
 from ntuh.tracking.sol_session import run_sol_worker
 
 try:
@@ -253,6 +253,9 @@ class SettingsWindow(tk.Tk):
         self.sol_offset_mode_var = tk.StringVar(value="Screen-space (recommended)")
         self.sol_offset_user_screen_var = tk.StringVar(value="0")
         self.sol_offset_tester_screen_var = tk.StringVar(value="1")
+        # Per calibration point: how long to collect, and how the point is estimated (stability.py)
+        self.calib_collect_s_var = tk.StringVar(value="3.0")
+        self.calib_point_estimator_var = tk.StringVar(value=stability.STEADIEST)
 
         self.cfg = None
 
@@ -992,6 +995,13 @@ class SettingsWindow(tk.Tk):
                      values=["Screen-space (recommended)", "Camera-space (legacy)"],
                      state="readonly", width=26).grid(row=3, column=1, columnspan=2, sticky="w", **pad)
 
+        ttk.Label(grp_target, text="Collect per Point (s):", font=l_font).grid(row=4, column=0, sticky="w", **pad)
+        ttk.Spinbox(grp_target, textvariable=self.calib_collect_s_var, from_=1.0, to=10.0, increment=0.5,
+                    width=10).grid(row=4, column=1, sticky="w", **pad)
+        ttk.Label(grp_target, text="Point Estimate:", font=l_font).grid(row=5, column=0, sticky="w", **pad)
+        ttk.Combobox(grp_target, textvariable=self.calib_point_estimator_var, values=list(stability.ESTIMATORS),
+                     state="readonly", width=26).grid(row=5, column=1, columnspan=2, sticky="w", **pad)
+
         # Display Settings moved to the General tab (Screen & Viewing): the same two monitors are
         # used by the VA/VF test and the accuracy test, not only by Sol calib.
 
@@ -1384,10 +1394,18 @@ Controls: SPACE = Record point, Q = Cancel"""
         target_pos_camera = None
 
         # Multi-sample collection (like GazeFollower's 45 frames per point)
-        SAMPLES_TO_COLLECT = 30  # Collect 30 samples (~1 second at 30fps)
+        SAMPLES_TO_COLLECT = 30  # at least 30 render-frame samples (legacy_30frame_mean) ...
+        collect_s = max(self.safe_get_float(self.calib_collect_s_var, 3.0), 0.0)   # ... and this long
+        estimator = self.calib_point_estimator_var.get()
+        if estimator not in stability.ESTIMATORS:
+            estimator = stability.STEADIEST
         collecting_samples = False
         collected_gaze_samples = []
+        collected_sdk = []          # every SDK sample of the point: (sdk ms, x, y, valid)
         collection_start_time = 0
+        point_note = ""             # why the last point was not accepted
+        scene_stale = True          # until the first scene frame (computed further down each frame)
+        logged_strict = None        # strict validity of the last homography_log row
 
         # Minimum frames to wait for stable homography
         MIN_FRAMES_FOR_HOMOGRAPHY = 100
@@ -1437,8 +1455,13 @@ Controls: SPACE = Record point, Q = Cancel"""
                      "pose_smooth": self.safe_get_float(self.sol_pose_smooth_var, 0.1), "eval_source": "Sol"},
             protocol_params={"offset_mode": calibrator.offset_mode, "n_points_planned": len(calibrator.positions),
                              "samples_per_point_render_frames": SAMPLES_TO_COLLECT,
+                             "calib_collect_s": collect_s, "calib_point_estimator": estimator,
                              "target_display_size_px": calibrator.target_display_size},
             config=self._collect_gui_values())
+        # Bundle v2: every SDK sample and every homography of the run (doc/session_bundle.md).
+        from ntuh.recording import replay_streams
+        from ntuh.sol import sol_ipc
+        streams = replay_streams.SolStreams(bundle.folder, None)
         shown_points = []           # per point shown: name, target and the statistics of its samples
         collected_gaze_valid = []   # gaze_2d validity of each collected sample
         abort_key = None            # "q" / "window_close" when the operator cancelled
@@ -1478,29 +1501,66 @@ Controls: SPACE = Record point, Q = Cancel"""
                         collecting_samples = True
                         collected_gaze_samples = []
                         collected_gaze_valid = []
+                        collected_sdk, point_note = [], ""
                         collection_start_time = time.time()
+                        bundle.event("collect_start", target_idx=len(shown_points),
+                                     target_name=calibrator.get_current_position_name(),
+                                     sdk_ts=streams.last_sdk_ts)
                         print(f"[2D Cal] Starting sample collection for point {calibrator.current_point_index + 1}...")
                     elif not homography_good:
                         print(f"[2D Cal] Cannot record - homography not stable yet. Wait for quality check to pass.")
 
-                # Get latest gaze data (drain queue but only use the last one)
-                # Limit to 20 items per frame to prevent long delays when queue builds up
+                # Drain the gaze queue (at most 20 per frame so a backlog cannot stall the loop)
+                drained = []
                 for _ in range(20):
                     try:
-                        gaze = self.sol_gaze_queue.get_nowait()
-                        latest_gaze = gaze
+                        drained.append(self.sol_gaze_queue.get_nowait())
                     except queue.Empty:
                         break
+                if drained:
+                    latest_gaze = drained[-1]
 
-                # If collecting samples, add ONE sample per render frame (30fps)
-                # This ensures collection takes ~1 second regardless of gaze queue rate
+                # Bundle v2: a homography_log row whenever the projector's homography or its strict
+                # validity changes, then every drained sample mapped through it.
+                H_log = sol_projector.get_homography()
+                strict_now = sol_projector.is_homography_valid(strict=True)
+                if (H_log is not None or streams.H is not None) and (
+                        strict_now != logged_strict or not np.array_equal(H_log, streams.H)):
+                    streams.homography(H_log, strict_now, source="inprocess",
+                                       marker_ids=sol_projector.get_detected_marker_ids())
+                    logged_strict = strict_now
+                # (in the shape the Sol child sends: plain eye_status, timestamp = SDK timestamp_ms)
+                sdk = [sol_ipc.reconstruct(d) for d in map(sol_ipc.gaze_to_dict, drained) if d is not None]
+                streams.samples(sdk, replay_streams.h_state(scene_stale, strict_now, H_log is not None),
+                                None if last_scene_t is None else time.time() - last_scene_t,
+                                "collecting" if collecting_samples else "idle", len(shown_points))
+                if collecting_samples:
+                    collected_sdk += [(g.timestamp, g.combined.gaze_2d.x, g.combined.gaze_2d.y,
+                                       replay_streams.sample_valid(g)) for g in sdk]
+
+                # If collecting samples, add ONE sample per render frame (30fps): the legacy estimate
                 if collecting_samples and latest_gaze:
                     g2d = latest_gaze.combined.gaze_2d
                     collected_gaze_samples.append((g2d.x, g2d.y))
                     collected_gaze_valid.append(bool(getattr(g2d, 'validity', False)))
 
-                # Check if we've collected enough samples
-                if collecting_samples and len(collected_gaze_samples) >= SAMPLES_TO_COLLECT:
+                # Collected long enough (calib_collect_s, and at least 30 render frames)? Then the
+                # point estimate; a point without a steady valid second is not accepted: SPACE again.
+                est = None
+                if (collecting_samples and len(collected_gaze_samples) >= SAMPLES_TO_COLLECT
+                        and time.time() - collection_start_time >= collect_s):
+                    est = stability.point_estimate(estimator, collected_gaze_samples, collected_sdk)
+                    if est is None:
+                        point_note = "NOT STEADY (no 1 s of steady valid gaze) - press SPACE again"
+                        print(f"[2D Cal] Point {calibrator.current_point_index + 1} not accepted: {point_note}")
+                        bundle.event("collect_discard", target_idx=len(shown_points),
+                                     target_name=calibrator.get_current_position_name(),
+                                     reason="no_steady_window", n_sdk_samples=len(collected_sdk),
+                                     n_sdk_valid=sum(s[3] for s in collected_sdk))
+                        collecting_samples = False
+                        collected_gaze_samples = []
+
+                if est is not None:
                     try:
                         # For the calibration record: this point's target and sample statistics,
                         # whether or not the point ends up in the model.
@@ -1508,22 +1568,25 @@ Controls: SPACE = Record point, Q = Cancel"""
                         point_target = calibrator.get_current_target_screen_position() or ("", "")
                         shown_points.append({"name": calibrator.get_current_position_name(),
                                              "target_x": point_target[0], "target_y": point_target[1],
-                                             **sample_stats(collected_gaze_samples, collected_gaze_valid)})
-                        # Compute average gaze_2d from all samples
-                        avg_x = np.mean([s[0] for s in collected_gaze_samples])
-                        avg_y = np.mean([s[1] for s in collected_gaze_samples])
-                        std_x = np.std([s[0] for s in collected_gaze_samples])
-                        std_y = np.std([s[1] for s in collected_gaze_samples])
+                                             **sample_stats(collected_gaze_samples, collected_gaze_valid),
+                                             "collect_start_ms": int(collection_start_time * 1000),
+                                             "collect_end_ms": int(time.time() * 1000),
+                                             "n_render_samples": len(collected_gaze_samples),
+                                             "n_sdk_samples": len(collected_sdk),
+                                             "n_sdk_valid": sum(s[3] for s in collected_sdk), **est})
+                        # The point's gaze_2d: calib_point_estimator (stability.point_estimate)
+                        avg_x, avg_y = est["est_x"], est["est_y"]
                         avg_gaze_2d = (avg_x, avg_y)
 
-                        print(f"[2D Cal] Collected {len(collected_gaze_samples)} samples: "
-                              f"avg=({avg_x:.1f}, {avg_y:.1f}), std=({std_x:.1f}, {std_y:.1f})")
+                        print(f"[2D Cal] Collected {len(collected_gaze_samples)} render / {len(collected_sdk)} SDK "
+                              f"samples: {estimator}=({avg_x:.1f}, {avg_y:.1f}), window "
+                              f"{est['window_start_sdk_ms']}-{est['window_end_sdk_ms']} ms")
 
                         if calibrator.offset_mode == OFFSET_MODE_SCREEN:
                             # SCREEN-SPACE: map the averaged raw gaze through the CURRENT forward
                             # homography (no offset/cull/smoothing) and record vs the target screen
                             # position. The learned offset is applied AFTER the homography.
-                            H_now = sol_projector.get_homography()
+                            H_now = H_log       # the matrix logged this frame (streams.h_id)
                             target_screen = calibrator.get_current_target_screen_position()
                             mapped_screen = None
                             if H_now is not None:
@@ -1549,9 +1612,14 @@ Controls: SPACE = Record point, Q = Cancel"""
                                 if calibrator.current_point_index >= len(calibrator.positions):
                                     calibrator.calibration_complete = True
                         recorded = len(calibrator.model.calibration_points) > points_before
+                        if recorded:        # the profile keeps how its point was estimated
+                            calibrator.model.calibration_points[-1].update(est)
                         bundle.event("collect_end" if recorded else "point_skipped",
                                      target_idx=len(shown_points) - 1, target_name=shown_points[-1]["name"],
-                                     n=shown_points[-1]["n"], n_valid=shown_points[-1]["n_valid"])
+                                     n=shown_points[-1]["n"], n_valid=shown_points[-1]["n_valid"],
+                                     sdk_ts=streams.last_sdk_ts, h_id=streams.h_id,
+                                     n_sdk_samples=shown_points[-1]["n_sdk_samples"],
+                                     n_sdk_valid=shown_points[-1]["n_sdk_valid"])
                     except Exception as e:
                         print(f"[2D Cal] Error recording calibration point: {e}")
                         traceback.print_exc()
@@ -1674,10 +1742,10 @@ Controls: SPACE = Record point, Q = Cancel"""
                     status_text = f"Position: {pos_name} ({point_num}/{total_points})"
 
                     if collecting_samples:
-                        homog_status = f"COLLECTING... {len(collected_gaze_samples)}/{SAMPLES_TO_COLLECT}"
+                        homog_status = f"COLLECTING... {time.time() - collection_start_time:.1f}/{collect_s:.1f} s"
                         homog_color = (0, 255, 255)  # Yellow
                     elif homography_good:
-                        homog_status = "READY - Press SPACE"
+                        homog_status = point_note or "READY - Press SPACE"
                         homog_color = (0, 255, 0)
                     elif homography_ready:
                         homog_status = f"Stabilizing... ({frame_count}/{MIN_FRAMES_FOR_HOMOGRAPHY})"
@@ -1755,10 +1823,11 @@ Controls: SPACE = Record point, Q = Cancel"""
                                    + " - reconnect Sol / restart Chronus, then calibrate again")
                 elif collecting_samples:
                     status_color = (255, 255, 100)  # Yellow
-                    detect_text = f"COLLECTING... {len(collected_gaze_samples)}/{SAMPLES_TO_COLLECT} - Keep looking at target!"
+                    detect_text = (f"COLLECTING... {time.time() - collection_start_time:.1f}/{collect_s:.1f} s"
+                                   " - Keep looking at target!")
                 elif homography_good:
                     status_color = (100, 255, 100)
-                    detect_text = "READY - Press SPACE to start recording"
+                    detect_text = point_note or "READY - Press SPACE to start recording"
                 elif homography_ready:
                     status_color = (255, 200, 100)
                     detect_text = f"Stabilizing homography... ({frame_count}/{MIN_FRAMES_FOR_HOMOGRAPHY})"
@@ -1845,6 +1914,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                                    calib_point_rows(shown_points, calibrator.model, to_deg))
             except Exception as e:
                 print(f"[2D Cal] Could not write calib_points.csv: {e}")
+            bundle.update(streams=streams.close())
             if calibrator.calibration_complete:
                 bundle.finish("completed")
             else:
@@ -3690,6 +3760,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_offset_mode': self.sol_offset_mode_var.get(),
             'sol_offset_user_screen': self.sol_offset_user_screen_var.get(),
             'sol_offset_tester_screen': self.sol_offset_tester_screen_var.get(),
+            'calib_collect_s': self.calib_collect_s_var.get(),
+            'calib_point_estimator': self.calib_point_estimator_var.get(),
             'sol_quality_window': self.sol_quality_window_var.get(),
             'webcam_oval_size': self.webcam_oval_size_var.get(),
             'webcam_oval_bottom_x': self.webcam_oval_bottom_x_var.get(),
@@ -3818,6 +3890,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.sol_offset_target_img_var, self.sol_offset_target_size_var,
             self.sol_offset_num_points_var, self.sol_offset_mode_var, self.sol_offset_user_screen_var,
             self.sol_offset_tester_screen_var,
+            self.calib_collect_s_var, self.calib_point_estimator_var,
             self.sol_quality_window_var,
             self.webcam_oval_size_var,
             self.webcam_oval_bottom_x_var,
@@ -3907,6 +3980,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                 self.sol_offset_user_screen_var.set(valid_screen_option(data['sol_offset_user_screen'], test_opts))
             if 'sol_offset_tester_screen' in data:
                 self.sol_offset_tester_screen_var.set(valid_screen_option(data['sol_offset_tester_screen'], test_opts))
+            if 'calib_collect_s' in data: self.calib_collect_s_var.set(str(data['calib_collect_s']))
+            if data.get('calib_point_estimator') in stability.ESTIMATORS:
+                self.calib_point_estimator_var.set(data['calib_point_estimator'])
             if 'sol_quality_window' in data: self.sol_quality_window_var.set(str(data['sol_quality_window']))
             if 'webcam_oval_size' in data: self.webcam_oval_size_var.set(str(data['webcam_oval_size']))
             if 'webcam_oval_bottom_x' in data: self.webcam_oval_bottom_x_var.set(str(data['webcam_oval_bottom_x']))

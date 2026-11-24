@@ -99,6 +99,8 @@ def test_a_calibration_run_folder_records_the_points_and_whether_the_profile_was
     shown = [{"name": name, "target_x": t[0], "target_y": t[1], **oc.sample_stats([g] * 30, [True] * 30)}
              for name, g, t in POINTS]
     oc.write_calib_points(folder / "calib_points.csv", oc.calib_point_rows(shown, model))
+    from ntuh.recording import replay_streams
+    bundle.update(streams=replay_streams.SolStreams(bundle.folder, None).close())   # bundle v2
     bundle.finish("completed")
 
     meta = json.loads((folder / sb.META_FILE).read_text(encoding="utf-8"))

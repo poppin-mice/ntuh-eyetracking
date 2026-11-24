@@ -57,6 +57,7 @@ REQUIRED_WHEN_CRASHED = [CRASH_FILE]
 BUNDLE_V2_FILES = {
     "accuracy_test": ["sol_gaze_data.csv", "homography_log.csv", "targets.csv", "points.csv",
                       "trial_events.csv"],
+    "sol2d_calibration": ["sol_gaze_data.csv", "homography_log.csv"],
 }
 # Calibration profile evidence (bundle.profile): where the byte copies go.
 SNAPSHOT_FILE = "calib_profile_snapshot.json"   # the Sol profile the session applied, or wrote

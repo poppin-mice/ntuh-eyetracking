@@ -941,7 +941,11 @@ def clear_sol_2d_offset(username, calib_dir):
 CALIB_POINT_COLUMNS = ["point_idx", "name", "target_x", "target_y", "n", "n_valid",
                        "mean_x", "mean_y", "median_x", "median_y", "sd_x", "sd_y",
                        "used_x", "used_y", "offset_x", "offset_y",
-                       "loo_idw_err_px", "loo_const_err_px", "loo_idw_err_deg", "loo_const_err_deg"]
+                       "loo_idw_err_px", "loo_const_err_px", "loo_idw_err_deg", "loo_const_err_deg",
+                       # bundle v2 (LOGGING_SPEC 4.6): the collection and the point estimate
+                       "collect_start_ms", "collect_end_ms", "n_render_samples", "n_sdk_samples",
+                       "n_sdk_valid", "estimator", "est_x", "est_y", "window_start_sdk_ms",
+                       "window_end_sdk_ms", "window_n", "window_spread_px"]
 
 
 def sample_stats(samples, valid):
