@@ -124,6 +124,20 @@ def point_estimate(estimator, render_xy, sdk):
     return out
 
 
+def dwell_estimate(dwell):
+    """The calibration point under auto-advance, as point_estimate's columns, or None (no
+    window). The Dwell items must be (sdk ms, gaze_2d x, gaze_2d y, valid): est = the per-axis
+    median gaze_2d of the window's valid samples, window_spread_px their 2-D MAD (scene-camera px,
+    as for steadiest_1s_median)."""
+    w = dwell.window
+    if w is None:
+        return None
+    med, spread = spread_of([s[1:3] for s in w["valid_items"]])
+    return {"estimator": STABLE_DWELL, "est_x": float(med[0]), "est_y": float(med[1]),
+            "window_start_sdk_ms": w["start_ms"], "window_end_sdk_ms": w["end_ms"], "window_n": w["n"],
+            "window_spread_px": spread}
+
+
 class Dwell:
     """Auto-advance of one point (module docstring). feed() every SDK sample as it arrives; it
     returns None while waiting, then ADVANCE or INSUFFICIENT (and the same from then on).

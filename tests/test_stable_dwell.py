@@ -116,6 +116,32 @@ def test_the_threshold_is_in_degrees_of_the_90th_percentile_distance():
     assert st.spread_of(xy, 50)[1] == st.spread_of(xy)[1]   # the default spread stays the 2-D MAD
 
 
+def test_the_calibration_point_is_the_median_gaze_2d_of_the_stable_window(tmp_path):
+    """As _run_sol_2d_offset_calibration feeds it: raw_screen (here 3 x gaze_2d) decides, the items
+    carry gaze_2d, the point goes to calib_points.csv with the dwell columns."""
+    from ntuh.sol import offset_calibration_2d as oc
+    stream = make_sol_stream(5.0, 120, invalid=[(1.3, 1.5)],
+                             xy=lambda t: (TARGET[0] + 300 - 200 * t, TARGET[1]) if t < 1.0 else tremor(t))
+    dwell = st.Dwell(st.THRESHOLD_DEG, lambda px: px / 150.0)          # 3 x 50 px = 1 deg on screen
+    for _, g in stream:
+        x, y, ok = g.combined.gaze_2d.x, g.combined.gaze_2d.y, rs.sample_valid(g)
+        if dwell.feed(g.timestamp, (3 * x, 3 * y), ok, True, (g.timestamp, x, y, ok)):
+            break
+    est = st.dwell_estimate(dwell)
+    valid = np.array([s[1:3] for s in dwell.window["valid_items"]])
+    assert est["estimator"] == st.STABLE_DWELL and est["window_n"] == len(valid)
+    assert (est["est_x"], est["est_y"]) == tuple(np.median(valid, axis=0))
+    assert est["window_start_sdk_ms"] >= 900 and math.dist((est["est_x"], est["est_y"]), TARGET) < 1.0
+    assert st.dwell_estimate(st.Dwell(1.0, to_deg)) is None                 # undecided / no window
+    model = oc.Sol2DOffsetModel(offset_mode=oc.OFFSET_MODE_SCREEN)
+    model.add_calibration_point((est["est_x"], est["est_y"]), (1920.0, 1080.0), "center")
+    rows = oc.calib_point_rows([{"name": "center", "target_x": 1920.0, "target_y": 1080.0, **est,
+                                 **dwell.columns()}], model)
+    oc.write_calib_points(tmp_path / "calib_points.csv", rows)
+    head, row = (tmp_path / "calib_points.csv").read_text(encoding="utf-8").splitlines()
+    assert head.split(",")[-4:] == st.DWELL_COLUMNS and row.split(",")[-2:] == ["0", str(st.THRESHOLD_DEG)]
+
+
 def test_dwell_columns_are_appended_at_the_end_of_both_files():
     from ntuh.sol import accuracy_test as acc
     from ntuh.sol import offset_calibration_2d as oc

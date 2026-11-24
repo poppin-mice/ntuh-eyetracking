@@ -14,6 +14,7 @@ from ntuh.recording import replay_streams as rs
 from ntuh.recording import session_bundle as sb
 from ntuh.sol import accuracy_test as acc
 from ntuh.sol import offset_calibration_2d as oc
+from ntuh.sol import stability as st
 from tools import check_accuracy_replay as car
 
 SCREEN_W, SCREEN_H, VIEW_CM, WIDTH_CM = 3840, 2160, 60.0, 59.5
@@ -34,12 +35,12 @@ def read(path):
         return list(csv.DictReader(f))
 
 
-def run_session(app_dir, profile=True, start_frames=(15, 100, 200), first_h_frame=0):
+def run_session(app_dir, profile=True, start_frames=(15, 100, 200), first_h_frame=0, auto=False):
     """A 3-target accuracy session, frame by frame like run_sol_accuracy_test: 120 Hz gaze drained
     at 30 Hz, a homography message every 5th frame, a stream gap (the render loop then reuses its
     last sample) and an invalid span (a blink) inside the collect windows. Without `profile` it is
     a C2 test; `start_frames` are the frames SPACE is pressed at; no homography before
-    `first_h_frame`."""
+    `first_h_frame`. `auto`: Point Advance auto (stability.Dwell) instead of SPACE."""
     model_in = oc.Sol2DOffsetModel(offset_mode=oc.OFFSET_MODE_SCREEN)
     for name, gaze, target in CAL:
         model_in.add_calibration_point(gaze, target, name)
@@ -69,16 +70,21 @@ def run_session(app_dir, profile=True, start_frames=(15, 100, 200), first_h_fram
             k += 1
             strict = frame % 10 == 0
             streams.homography(homography(k), strict, 0.02, [0, 1, 2], pc_ms=int(t0 * 1000))
-        if frame in start_frames and idx < len(targets):
+        if idx < len(targets) and (frame in start_frames or (auto and not collecting)):
             collecting, raw_s, corr_s, picks, window = True, [], [], [], []
             t_start = int(t0 * 1000)
+            dwell = st.Dwell(st.THRESHOLD_DEG, lambda px: acc.px_to_deg(px, VIEW_CM, SCREEN_W, WIDTH_CM))
         hom = rs.h_state(False, strict, streams.H is not None)
+        n0 = streams.n_samples
         logged = streams.samples(batch, hom, 0.02, "collecting" if collecting else "idle", idx,
                                  pc_ms=int(t0 * 1000))
         if batch:
             latest_pick = streams.n_samples - 1
         if collecting:
             window += logged
+        if auto and collecting:
+            for s in logged:
+                dwell.feed(batch[s[0] - n0].timestamp, s[1], s[3], s[4] in ("LIVE", "CACHED"), s)
         live_raw = live_corr = None
         if latest is not None:
             live_raw, live_corr = acc.map_raw_and_corrected(
@@ -87,7 +93,17 @@ def run_session(app_dir, profile=True, start_frames=(15, 100, 200), first_h_fram
             if live_raw is not None:
                 raw_s.append(live_raw); corr_s.append(live_corr)
                 picks.append([latest_pick, streams.h_id])
-            if len(corr_s) >= 30:
+            if auto and dwell.state:
+                tgt = targets[idx]
+                rec, row = acc.auto_point(idx, tgt, dwell, raw_s, corr_s, t_start, int(t1 * 1000),
+                                          VIEW_CM, SCREEN_W, WIDTH_CM)
+                records.append(rec); point_rows.append(row)
+                trial_rows.append(acc.trial_event_row(idx, tgt, t_start, int(t1 * 1000), "REC"))
+                bundle.event("point_auto_advance", target_idx=idx, **dwell.columns())
+                bundle.event("collect_end", target_idx=idx, render_samples=picks[-30:],
+                             n_sdk_samples=row["n_sdk_samples"])
+                collecting, latest, idx = False, None, idx + 1
+            elif not auto and len(corr_s) >= 30:
                 tgt = targets[idx]
                 rec = acc.compute_point_record(tgt, raw_s, corr_s, VIEW_CM, SCREEN_W, WIDTH_CM)
                 records.append(rec)
@@ -218,6 +234,38 @@ def test_three_minutes_at_120_hz_lose_no_row_and_stay_under_15_mb(tmp_path):
     path = tmp_path / rs.SOL_GAZE_FILE
     assert len(read(path)) == 21600
     assert path.stat().st_size < 15 * 1024 * 1024
+
+
+def test_space_mode_keeps_the_30_frame_headline_and_leaves_the_dwell_columns_empty(session):
+    rows = read(session / "points.csv")
+    assert list(rows[0])[-4:] == st.DWELL_COLUMNS
+    assert all(p[c] == "" for p in rows for c in st.DWELL_COLUMNS)
+    assert all(int(p["n_samples"]) == 30 for p in rows) and car.check_r3(car.load(session))["ok"]
+
+
+def test_auto_mode_session_records_the_stable_window_and_stays_replayable(bundle_app):
+    from tools import check_session_bundle as chk
+    folder = run_session(bundle_app, start_frames=(), auto=True)
+    assert chk.check_session(folder)["verdict"] == "PASS"
+    assert all(r["ok"] for r in car.check_folder(folder))                 # R3: last 30 render frames
+    rows = read(folder / "points.csv")
+    assert len(rows) == 3
+    for p in rows:
+        assert p["insufficient"] == "0" and float(p["threshold_deg"]) == st.THRESHOLD_DEG
+        assert 0.95 <= float(p["dwell_s"]) <= 1.6                           # a steady subject: ~1 s a point
+        assert int(p["n_stable"]) == int(p["n_sdk_valid"]) > 60            # medians over the stable window
+        assert int(p["n_samples"]) == 30
+    events = [e["event"] for e in read(folder / "events.csv")]
+    assert events.count("point_auto_advance") == 3
+
+
+def test_a_session_written_before_the_dwell_columns_still_checks(bundle_app, monkeypatch):
+    from tools import check_session_bundle as chk
+    monkeypatch.setattr(acc, "POINT_COLUMNS", acc.POINT_COLUMNS[:-len(st.DWELL_COLUMNS)])
+    folder = run_session(bundle_app)
+    assert list(read(folder / "points.csv")[0])[-1] == "err_corr_valid_median_deg"
+    assert chk.check_session(folder)["verdict"] == "PASS"
+    assert car.main([str(folder)]) == 0
 
 
 def test_h_state():

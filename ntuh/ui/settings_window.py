@@ -256,6 +256,12 @@ class SettingsWindow(tk.Tk):
         # Per calibration point: how long to collect, and how the point is estimated (stability.py)
         self.calib_collect_s_var = tk.StringVar(value="3.0")
         self.calib_point_estimator_var = tk.StringVar(value=stability.STEADIEST)
+        # Per point auto-advance (stability.Dwell), shared by the calibration and the accuracy test
+        self.calib_point_advance_var = tk.StringVar(value="auto")
+        self.acc_point_advance_var = tk.StringVar(value="auto")
+        self.point_stable_s_var = tk.StringVar(value=str(stability.STABLE_S))
+        self.point_max_dwell_s_var = tk.StringVar(value=str(stability.MAX_DWELL_S))
+        self.point_threshold_deg_var = tk.StringVar(value=str(stability.THRESHOLD_DEG))
 
         self.cfg = None
 
@@ -955,6 +961,11 @@ class SettingsWindow(tk.Tk):
         self.btn_sol_accuracy_test.grid(row=2, column=2, **pad)
 
         ttk.Label(grp_preview, text="Press Q or ESC to exit preview", font=self.f_hint, foreground="gray").grid(row=3, column=0, columnspan=4, sticky="w", **pad)
+        ttk.Label(grp_preview, text="Accuracy Test Advance:", font=self.f_body).grid(row=4, column=0, sticky="w", **pad)
+        ttk.Combobox(grp_preview, textvariable=self.acc_point_advance_var, values=["auto", "space"], state="readonly",
+                     width=10).grid(row=4, column=1, sticky="w", **pad)
+        ttk.Label(grp_preview, text="auto: next point after enough stable gaze (Sol Calib tab settings); space: operator",
+                  font=self.f_hint, foreground="gray").grid(row=4, column=2, columnspan=2, sticky="w", **pad)
 
     def build_sol_offset_tab(self, parent, l_font, e_font):
         """Build the Sol Offset Calibration tab (simplified, auto-detects 2D/3D method)."""
@@ -1001,6 +1012,22 @@ class SettingsWindow(tk.Tk):
         ttk.Label(grp_target, text="Point Estimate:", font=l_font).grid(row=5, column=0, sticky="w", **pad)
         ttk.Combobox(grp_target, textvariable=self.calib_point_estimator_var, values=list(stability.ESTIMATORS),
                      state="readonly", width=26).grid(row=5, column=1, columnspan=2, sticky="w", **pad)
+        # Auto-advance (stability.Dwell): Point Advance is the calibration's; the three values below
+        # also drive the accuracy test (its Advance is next to the Accuracy Test button).
+        ttk.Label(grp_target, text="Point Advance:", font=l_font).grid(row=6, column=0, sticky="w", **pad)
+        ttk.Combobox(grp_target, textvariable=self.calib_point_advance_var, values=["auto", "space"],
+                     state="readonly", width=10).grid(row=6, column=1, sticky="w", **pad)
+        for _row, (_text, _var, _lo, _hi, _inc) in enumerate((
+                ("Stable per Point (s):", self.point_stable_s_var, 0.5, 5.0, 0.1),
+                ("Max per Point (s):", self.point_max_dwell_s_var, 1.0, 30.0, 0.5),
+                ("Stable Spread (deg):", self.point_threshold_deg_var, 0.1, 10.0, 0.1)), start=7):
+            ttk.Label(grp_target, text=_text, font=l_font).grid(row=_row, column=0, sticky="w", **pad)
+            ttk.Spinbox(grp_target, textvariable=_var, from_=_lo, to=_hi, increment=_inc,
+                        width=10).grid(row=_row, column=1, sticky="w", **pad)
+        ttk.Label(grp_target, text="auto (calibration and accuracy test): a point ends after 'Stable per Point' of "
+                  "gaze within 'Stable Spread',\nor after 'Max per Point' (marked insufficient). R = redo the point, "
+                  "S = skip it. Collect per Point and Point Estimate apply to space only.",
+                  font=self.f_hint, foreground="gray", justify="left").grid(row=10, column=0, columnspan=3, sticky="w", **pad)
 
         # Display Settings moved to the General tab (Screen & Viewing): the same two monitors are
         # used by the VA/VF test and the accuracy test, not only by Sol calib.
@@ -1055,13 +1082,14 @@ class SettingsWindow(tk.Tk):
         instr_text = """1. Connect Sol glasses in 'Sol Settings' tab and select Gaze Method (2D/3D).
 2. Select a target image above.
 3. Click 'Start Calibration' - target appears on user screen.
-4. Have user look at each target. Press SPACE when gaze is stable.
+4. Have user look at each target. Point Advance auto: the next target follows once the gaze is
+   stable (R = redo, S = skip); space: press SPACE when gaze is stable.
 5. Repeat for all calibration points.
 
 • 3D Method: Corrects angular offset (pitch/yaw) in camera frame.
 • 2D Method: Uses IDW/constant offset for position-dependent correction.
 
-Controls: SPACE = Record point, Q = Cancel"""
+Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
 
         ttk.Label(grp_instr, text=instr_text, font=self.f_body, justify="left").pack(anchor="w", **pad)
 
@@ -1399,6 +1427,13 @@ Controls: SPACE = Record point, Q = Cancel"""
         estimator = self.calib_point_estimator_var.get()
         if estimator not in stability.ESTIMATORS:
             estimator = stability.STEADIEST
+        # Auto-advance (default): a point starts when the homography is good and ends by
+        # stability.Dwell; "space": SPACE starts it and it collects collect_s (the two lines above).
+        auto = self.calib_point_advance_var.get() != "space"
+        dwell_cfg = {"threshold_deg": self.safe_get_float(self.point_threshold_deg_var, stability.THRESHOLD_DEG),
+                     "stable_s": self.safe_get_float(self.point_stable_s_var, stability.STABLE_S),
+                     "max_dwell_s": self.safe_get_float(self.point_max_dwell_s_var, stability.MAX_DWELL_S)}
+        dwell = None
         collecting_samples = False
         collected_gaze_samples = []
         collected_sdk = []          # every SDK sample of the point: (sdk ms, x, y, valid)
@@ -1433,6 +1468,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         # Allows SPACE/Q to work even when the OpenCV tester window has focus
         _prev_space_down = False
         _prev_q_down = False
+        _prev_r_down = _prev_s_down = False
         try:
             _user32_key = ctypes.windll.user32
         except Exception:
@@ -1456,11 +1492,13 @@ Controls: SPACE = Record point, Q = Cancel"""
             protocol_params={"offset_mode": calibrator.offset_mode, "n_points_planned": len(calibrator.positions),
                              "samples_per_point_render_frames": SAMPLES_TO_COLLECT,
                              "calib_collect_s": collect_s, "calib_point_estimator": estimator,
-                             "target_display_size_px": calibrator.target_display_size},
+                             "target_display_size_px": calibrator.target_display_size,
+                             "point_advance": "auto" if auto else "space", **dwell_cfg},
             config=self._collect_gui_values())
         # Bundle v2: every SDK sample and every homography of the run (doc/session_bundle.md).
         from ntuh.recording import replay_streams
         from ntuh.sol import sol_ipc
+        from ntuh.sol.accuracy_test import px_to_deg
         streams = replay_streams.SolStreams(bundle.folder, None)
         shown_points = []           # per point shown: name, target and the statistics of its samples
         collected_gaze_valid = []   # gaze_2d validity of each collected sample
@@ -1468,7 +1506,7 @@ Controls: SPACE = Record point, Q = Cancel"""
 
         try:
             while running and not calibrator.calibration_complete:
-                space_pressed = False
+                space_pressed = retry_pressed = skip_pressed = False
 
                 # Handle events from pygame (works when user screen has focus)
                 for ev in pygame.event.get():
@@ -1481,6 +1519,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                             abort_key = abort_key or "q"
                         elif ev.key == pygame.K_SPACE:
                             space_pressed = True
+                        elif _user32_key is None:   # R / S once only: the async poll below has them
+                            retry_pressed = retry_pressed or ev.key == pygame.K_r
+                            skip_pressed = skip_pressed or ev.key == pygame.K_s
 
                 # Focus-independent key detection via Win32 GetAsyncKeyState
                 # Detects key presses regardless of which window has focus
@@ -1494,9 +1535,25 @@ Controls: SPACE = Record point, Q = Cancel"""
                         abort_key = abort_key or "q"
                     _prev_space_down = space_down
                     _prev_q_down = q_down
+                    r_down = bool(_user32_key.GetAsyncKeyState(0x52) & 0x8000)
+                    s_down = bool(_user32_key.GetAsyncKeyState(0x53) & 0x8000)
+                    retry_pressed, skip_pressed = r_down and not _prev_r_down, s_down and not _prev_s_down
+                    _prev_r_down, _prev_s_down = r_down, s_down
+
+                # Auto-advance: a point starts once the homography is good (again after R)
+                if (auto and running and not collecting_samples and homography_good and not scene_stale
+                        and H_screen_to_image is not None):
+                    collecting_samples = True
+                    collected_gaze_samples, collected_gaze_valid, collected_sdk, point_note = [], [], [], ""
+                    collection_start_time = time.time()
+                    dwell = stability.Dwell(to_deg=lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm),
+                                            **dwell_cfg)
+                    bundle.event("collect_start", target_idx=len(shown_points),
+                                 target_name=calibrator.get_current_position_name(),
+                                 sdk_ts=streams.last_sdk_ts, mode="auto")
 
                 # Process SPACE press (from any source)
-                if space_pressed and running:
+                if space_pressed and running and not auto:
                     if homography_good and not collecting_samples and H_screen_to_image is not None:
                         collecting_samples = True
                         collected_gaze_samples = []
@@ -1531,12 +1588,18 @@ Controls: SPACE = Record point, Q = Cancel"""
                     logged_strict = strict_now
                 # (in the shape the Sol child sends: plain eye_status, timestamp = SDK timestamp_ms)
                 sdk = [sol_ipc.reconstruct(d) for d in map(sol_ipc.gaze_to_dict, drained) if d is not None]
-                streams.samples(sdk, replay_streams.h_state(scene_stale, strict_now, H_log is not None),
-                                None if last_scene_t is None else time.time() - last_scene_t,
-                                "collecting" if collecting_samples else "idle", len(shown_points))
+                _n0 = streams.n_samples                      # sample_idx of sdk[0]
+                _logged = streams.samples(sdk, replay_streams.h_state(scene_stale, strict_now, H_log is not None),
+                                          None if last_scene_t is None else time.time() - last_scene_t,
+                                          "collecting" if collecting_samples else "idle", len(shown_points))
                 if collecting_samples:
                     collected_sdk += [(g.timestamp, g.combined.gaze_2d.x, g.combined.gaze_2d.y,
                                        replay_streams.sample_valid(g)) for g in sdk]
+                if auto and collecting_samples:     # in raw_screen; items for stability.dwell_estimate
+                    for _s in _logged:
+                        _g = sdk[_s[0] - _n0]
+                        dwell.feed(_g.timestamp, _s[1], _s[3], homography_good and not scene_stale,
+                                   (_g.timestamp, _g.combined.gaze_2d.x, _g.combined.gaze_2d.y, _s[3]))
 
                 # If collecting samples, add ONE sample per render frame (30fps): the legacy estimate
                 if collecting_samples and latest_gaze:
@@ -1547,7 +1610,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                 # Collected long enough (calib_collect_s, and at least 30 render frames)? Then the
                 # point estimate; a point without a steady valid second is not accepted: SPACE again.
                 est = None
-                if (collecting_samples and len(collected_gaze_samples) >= SAMPLES_TO_COLLECT
+                if (not auto and collecting_samples and len(collected_gaze_samples) >= SAMPLES_TO_COLLECT
                         and time.time() - collection_start_time >= collect_s):
                     est = stability.point_estimate(estimator, collected_gaze_samples, collected_sdk)
                     if est is None:
@@ -1557,6 +1620,33 @@ Controls: SPACE = Record point, Q = Cancel"""
                                      target_name=calibrator.get_current_position_name(),
                                      reason="no_steady_window", n_sdk_samples=len(collected_sdk),
                                      n_sdk_valid=sum(s[3] for s in collected_sdk))
+                        collecting_samples = False
+                        collected_gaze_samples = []
+
+                # Auto-advance decided (or R / S): the point is the median gaze_2d of the stable second
+                # (insufficient: of the steadiest second; none: not trained, the next point follows).
+                if auto and collecting_samples and (dwell.state or retry_pressed or skip_pressed):
+                    _key = "point_retry" if retry_pressed else "point_skip" if skip_pressed else None
+                    bundle.event(_key or ("point_auto_advance" if dwell.state == stability.ADVANCE
+                                          else "point_insufficient"),
+                                 target_idx=len(shown_points), target_name=calibrator.get_current_position_name(),
+                                 spread_deg=dwell.spread_deg, **dwell.columns())
+                    est = None if _key else stability.dwell_estimate(dwell)
+                    if est is None and not retry_pressed:   # a calib_points.csv row without a model point
+                        point_target = calibrator.get_current_target_screen_position() or ("", "")
+                        shown_points.append({"name": calibrator.get_current_position_name(),
+                                             "target_x": point_target[0], "target_y": point_target[1],
+                                             **(sample_stats(collected_gaze_samples, collected_gaze_valid)
+                                                if collected_gaze_samples else {}),
+                                             "collect_start_ms": int(collection_start_time * 1000),
+                                             "collect_end_ms": int(time.time() * 1000),
+                                             "n_render_samples": len(collected_gaze_samples),
+                                             "n_sdk_samples": len(collected_sdk),
+                                             "n_sdk_valid": sum(s[3] for s in collected_sdk), **dwell.columns()})
+                        calibrator.current_point_index += 1
+                        if calibrator.current_point_index >= len(calibrator.positions):
+                            calibrator.calibration_complete = True
+                    if est is None:
                         collecting_samples = False
                         collected_gaze_samples = []
 
@@ -1573,7 +1663,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                                              "collect_end_ms": int(time.time() * 1000),
                                              "n_render_samples": len(collected_gaze_samples),
                                              "n_sdk_samples": len(collected_sdk),
-                                             "n_sdk_valid": sum(s[3] for s in collected_sdk), **est})
+                                             "n_sdk_valid": sum(s[3] for s in collected_sdk), **est,
+                                             **(dwell.columns() if auto else {})})
                         # The point's gaze_2d: calib_point_estimator (stability.point_estimate)
                         avg_x, avg_y = est["est_x"], est["est_y"]
                         avg_gaze_2d = (avg_x, avg_y)
@@ -1741,7 +1832,18 @@ Controls: SPACE = Record point, Q = Cancel"""
 
                     status_text = f"Position: {pos_name} ({point_num}/{total_points})"
 
-                    if collecting_samples:
+                    if collecting_samples and auto:
+                        # Point progress: usable time of max, the spread of the latest second vs the threshold
+                        _sp = "--" if dwell.spread_deg is None else f"{dwell.spread_deg:.2f}"
+                        homog_status = (f"AUTO {dwell.dwell_ms / 1000.0:.1f}/{dwell_cfg['max_dwell_s']:.1f} s  spread "
+                                        f"{_sp}/{dwell_cfg['threshold_deg']:.2f} deg"
+                                        + ("" if homography_good and not scene_stale else "  (paused)"))
+                        homog_color = (0, 255, 255)
+                        _f = min(1.0, dwell.dwell_ms / (1000.0 * dwell_cfg['max_dwell_s'] or 1.0))
+                        _ok = dwell.spread_deg is not None and dwell.spread_deg <= dwell_cfg['threshold_deg']
+                        cv2.rectangle(tester_view, (0, 61), (int(tester_view.shape[1] * _f), 66),   # under the bar
+                                      (0, 220, 0) if _ok else (0, 200, 255), -1)
+                    elif collecting_samples:
                         homog_status = f"COLLECTING... {time.time() - collection_start_time:.1f}/{collect_s:.1f} s"
                         homog_color = (0, 255, 255)  # Yellow
                     elif homography_good:
@@ -1759,7 +1861,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                     cv2.putText(tester_view, homog_status, (10, 50),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, homog_color, 2)
-                    cv2.putText(tester_view, "SPACE=Record  Q=Quit", (tester_view.shape[1] - 250, 25),
+                    cv2.putText(tester_view, "R=Redo S=Skip Q=Quit" if auto else "SPACE=Record  Q=Quit",
+                                (tester_view.shape[1] - 250, 25),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
 
                     cv2.imshow(tester_win_name, tester_view)
@@ -1823,8 +1926,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                                    + " - reconnect Sol / restart Chronus, then calibrate again")
                 elif collecting_samples:
                     status_color = (255, 255, 100)  # Yellow
-                    detect_text = (f"COLLECTING... {time.time() - collection_start_time:.1f}/{collect_s:.1f} s"
-                                   " - Keep looking at target!")
+                    detect_text = ("COLLECTING" if auto else      # auto: progress on the examiner view only
+                                   f"COLLECTING... {time.time() - collection_start_time:.1f}/{collect_s:.1f} s"
+                                   ) + " - Keep looking at target!"
                 elif homography_good:
                     status_color = (100, 255, 100)
                     detect_text = point_note or "READY - Press SPACE to start recording"
@@ -1907,8 +2011,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             # The calibration record: calib_points.csv (also for a cancelled or crashed run), then
             # the session is closed. LOO errors in degrees only in screen mode, where px are screen px.
             try:
-                from ntuh.sol.accuracy_test import px_to_deg
-                to_deg = ((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
+                to_deg =((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
                           if calibrator.offset_mode == OFFSET_MODE_SCREEN else None)
                 write_calib_points(bundle.folder / "calib_points.csv",
                                    calib_point_rows(shown_points, calibrator.model, to_deg))
@@ -3002,7 +3105,15 @@ Controls: SPACE = Record point, Q = Cancel"""
         collecting = False
         raw_samples, corr_samples = [], []
         SAMPLES = 30
-        bundle.update(protocol_params={"samples_per_point_render_frames": SAMPLES})
+        # Auto-advance (default): each point ends by stability.Dwell; "space": the operator, as before.
+        auto = self.acc_point_advance_var.get() != "space"
+        dwell_cfg = {"threshold_deg": self.safe_get_float(self.point_threshold_deg_var, stability.THRESHOLD_DEG),
+                     "stable_s": self.safe_get_float(self.point_stable_s_var, stability.STABLE_S),
+                     "max_dwell_s": self.safe_get_float(self.point_max_dwell_s_var, stability.MAX_DWELL_S)}
+        bundle.update(protocol_params={"samples_per_point_render_frames": SAMPLES,
+                                       "point_advance": "auto" if auto else "space", **dwell_cfg})
+        dwell = None
+        USABLE = ("LIVE", "CACHED")
         detected_marker_ids = []
         latest_gaze = None
         # For the replay files: the collect window, its SDK samples, which sample and homography
@@ -3013,7 +3124,7 @@ Controls: SPACE = Record point, Q = Cancel"""
 
         # Focus-independent SPACE/Q detection so the controls still work when the operator has
         # clicked the tester window (which then holds the OS keyboard focus, not the pygame window).
-        _prev_space_async = _prev_q_async = False
+        _prev_space_async = _prev_q_async = _prev_r_async = _prev_s_async = False
         try:
             _u32_keys = ctypes.windll.user32
         except Exception:
@@ -3092,6 +3203,15 @@ Controls: SPACE = Record point, Q = Cancel"""
                 s2 = ("SCENE VIDEO STALLED - recording blocked until it recovers" if got is not None
                       else "waiting for scene video - recording blocked")
                 s2col = (60, 60, 255)
+            elif collecting_now and auto:
+                # Point progress: usable time of max, and the spread of the latest second vs the threshold
+                _sp = "--" if dwell.spread_deg is None else f"{dwell.spread_deg:.2f}"
+                s2 = (f"AUTO {dwell.dwell_ms / 1000.0:.1f}/{dwell_cfg['max_dwell_s']:.1f}s  spread {_sp}/"
+                      f"{dwell_cfg['threshold_deg']:.2f}deg" + ("" if hom in USABLE else "  (paused)"))
+                s2col = (0, 255, 255)
+                _f = min(1.0, dwell.dwell_ms / (1000.0 * dwell_cfg['max_dwell_s'] or 1.0))
+                _ok = dwell.spread_deg is not None and dwell.spread_deg <= dwell_cfg['threshold_deg']
+                cv2.rectangle(canvas, (0, 86), (int(W_img * _f), 92), (0, 220, 0) if _ok else (0, 200, 255), -1)
             elif collecting_now:
                 s2, s2col = f"COLLECTING {n_collected}/{SAMPLES} - subject must hold fixation", (0, 255, 255)
             elif hom in ("LIVE", "CACHED"):
@@ -3129,7 +3249,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                         cv2.FONT_HERSHEY_SIMPLEX, 0.54, (0, 220, 220), 1, cv2.LINE_AA)
             cv2.putText(canvas, "green = subject gaze   gray = raw   (target is visible in the video)",
                         (12, H_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
-            cv2.putText(canvas, "SPACE = record    Q/ESC = abort",
+            cv2.putText(canvas, "R = redo  S = skip  Q/ESC = abort" if auto else "SPACE = record    Q/ESC = abort",
                         (W_img - 340, H_img - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1, cv2.LINE_AA)
             # Always on screen: is our calibration applied to what is being measured right now?
             draw_calib_status(canvas, gate.status, calib_banner)
@@ -3145,7 +3265,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                 except Exception:
                     break
 
-                space_pressed = False
+                space_pressed = retry_pressed = skip_pressed = False
                 for ev in pygame.event.get():
                     if ev.type == pygame.QUIT:
                         running = False; aborted = True
@@ -3157,6 +3277,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                                          else ("esc", "operator_esc")))
                         elif ev.key == pygame.K_SPACE:
                             space_pressed = True
+                        elif _u32_keys is None:     # R / S once only: the async poll below has them
+                            retry_pressed = retry_pressed or ev.key == pygame.K_r
+                            skip_pressed = skip_pressed or ev.key == pygame.K_s
 
                 # Focus-independent SPACE/Q (works even when the tester window has focus).
                 if _u32_keys is not None:
@@ -3168,6 +3291,10 @@ Controls: SPACE = Record point, Q = Cancel"""
                         running = False; aborted = True
                         note_abort("q", "operator_q")
                     _prev_space_async, _prev_q_async = _sd, _qd
+                    _rd = bool(_u32_keys.GetAsyncKeyState(0x52) & 0x8000)
+                    _kd = bool(_u32_keys.GetAsyncKeyState(0x53) & 0x8000)
+                    retry_pressed, skip_pressed = _rd and not _prev_r_async, _kd and not _prev_s_async
+                    _prev_r_async, _prev_s_async = _rd, _kd
 
                 _gl = sol_client.drain_gaze()
                 if _gl:
@@ -3237,7 +3364,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                             else None if sol_projector.is_homography_valid() else "no_homography")
                     bundle.event("space_pressed", target_idx=idx, target_name=tgt['name'],
                                  accepted=_rej is None, reject_reason=_rej)
-                if space_pressed and not collecting and running:
+                if space_pressed and not collecting and running and not auto:
                     if scene_stale:
                         _age_txt = "no data" if scene_age_s is None else f"{scene_age_s:.1f}s old"
                         print(f"[Accuracy] scene video stalled ({_age_txt}) - the homography is "
@@ -3255,7 +3382,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                 # Samples are gaze mapped THROUGH the homography, so a frozen head pose silently
                 # biases them while gaze keeps streaming and precision still looks healthy. Drop
                 # the partial point rather than bank it.
-                if collecting and scene_stale:
+                # (Auto-advance does not drop it: stale samples add no time and break the stable run.)
+                if collecting and scene_stale and not auto:
                     print(f"[Accuracy] scene stalled mid-point ({tgt['name']}); discarding "
                           f"{len(corr_samples)} sample(s) - repeat this point")
                     bundle.event("collect_discard", target_idx=idx, target_name=tgt['name'],
@@ -3263,6 +3391,14 @@ Controls: SPACE = Record point, Q = Cancel"""
                     trial_rows.append(acc.trial_event_row(idx, tgt, collect_t0, int(time.time() * 1000),
                                                           "DISCARDED"))
                     collecting = False; raw_samples, corr_samples = [], []
+                # Auto-advance: a point collects from the moment its target shows (again after R).
+                if auto and not collecting and running:
+                    collecting = True; raw_samples, corr_samples = [], []
+                    collect_t0, window, picks = int(time.time() * 1000), [], []
+                    dwell = stability.Dwell(to_deg=lambda px: acc.px_to_deg(px, view_dist_cm, screen_w, screen_width_cm),
+                                            **dwell_cfg)
+                    bundle.event("collect_start", target_idx=idx, target_name=tgt['name'],
+                                 sdk_ts=streams.last_sdk_ts, mode="auto")
 
                 # Every SDK sample drained this frame -> sol_gaze_data.csv, mapped through the
                 # homography the test holds now (the same one live_raw below uses).
@@ -3271,11 +3407,15 @@ Controls: SPACE = Record point, Q = Cancel"""
                 if hom != last_hom:
                     bundle.event("h_state_change", target_idx=idx, **{"from": last_hom, "to": hom})
                     last_hom = hom
+                _n0 = streams.n_samples                      # sample_idx of _gl[0]
                 _logged = streams.samples(_gl, hom, scene_age_s, "collecting" if collecting else "idle", idx)
                 if _gl:
                     latest_pick = streams.n_samples - 1      # the sample_idx of latest_gaze
                 if collecting:
                     window += _logged
+                if auto and collecting:     # every SDK sample once, by its device time, in raw_screen
+                    for _s in _logged:
+                        dwell.feed(_gl[_s[0] - _n0].timestamp, _s[1], _s[3], _s[4] in USABLE, _s)
 
                 # Live gaze -> screen (raw + offset-corrected), computed every frame so the tester
                 # view can show where the subject is looking right now (not only while recording).
@@ -3290,10 +3430,39 @@ Controls: SPACE = Record point, Q = Cancel"""
                         live_raw = live_corr = None
 
                 if collecting:
-                    if live_raw is not None and live_corr is not None:
+                    if live_raw is not None and live_corr is not None and (not auto or hom in USABLE):
                         raw_samples.append(live_raw); corr_samples.append(live_corr)
                         picks.append([latest_pick, streams.h_id])
-                    if len(corr_samples) >= SAMPLES:
+                    if auto and (retry_pressed or skip_pressed):
+                        bundle.event("point_retry" if retry_pressed else "point_skip", target_idx=idx,
+                                     target_name=tgt['name'], **dwell.columns())
+                        trial_rows.append(acc.trial_event_row(idx, tgt, collect_t0, int(time.time() * 1000),
+                                                              "DISCARDED"))
+                        collecting = False                  # R: the point starts again next frame
+                        if not retry_pressed:
+                            idx += 1; latest_gaze = None
+                            continue
+                    elif auto and dwell.state:
+                        # Headline = the legacy mean of the last 30 render frames; the result of the
+                        # stable data = the medians over the Dwell window (acc.auto_point).
+                        _t1 = int(time.time() * 1000)
+                        rec, _row = acc.auto_point(idx, tgt, dwell, raw_samples, corr_samples, collect_t0, _t1,
+                                                   view_dist_cm, screen_w, screen_width_cm, SAMPLES)
+                        records.append(rec); point_rows.append(_row)
+                        trial_rows.append(acc.trial_event_row(idx, tgt, collect_t0, _t1, "REC"))
+                        bundle.event("point_auto_advance" if dwell.state == stability.ADVANCE
+                                     else "point_insufficient", target_idx=idx, target_name=tgt['name'],
+                                     spread_deg=dwell.spread_deg, **dwell.columns())
+                        bundle.event("collect_end", target_idx=idx, target_name=tgt['name'],
+                                     sdk_ts=streams.last_sdk_ts, n_render_samples=rec["n_samples"],
+                                     n_sdk_samples=_row["n_sdk_samples"], n_sdk_valid=_row["n_sdk_valid"],
+                                     render_samples=picks[-SAMPLES:])
+                        print(f"[Accuracy] {idx + 1}/{len(targets)} {tgt['name']}: {dwell.state} after "
+                              f"{_row['dwell_s']:.1f} s, stable median err corr="
+                              f"{_row['err_corr_valid_median_deg'] or float('nan'):.2f} deg")
+                        collecting = False; idx += 1; latest_gaze = None
+                        continue
+                    elif not auto and len(corr_samples) >= SAMPLES:
                         rec = acc.compute_point_record(tgt, raw_samples, corr_samples,
                                                        view_dist_cm, screen_w, screen_width_cm)
                         records.append(rec)
@@ -3320,15 +3489,15 @@ Controls: SPACE = Record point, Q = Cancel"""
                         pygame.draw.circle(win, (0, 180, 0),
                                            (pos[0] + marker_container_size // 2, pos[1] + marker_container_size // 2), 8)
                 tx, ty = int(tgt['x']), int(tgt['y'])
-                col = (255, 80, 80) if collecting else (255, 255, 0)
+                col = (255, 80, 80) if collecting and not auto else (255, 255, 0)   # auto: subject sees no change
                 pygame.draw.circle(win, col, (tx, ty), 26, 3)
                 pygame.draw.circle(win, col, (tx, ty), 6)
                 pygame.draw.line(win, col, (tx - 36, ty), (tx + 36, ty), 1)
                 pygame.draw.line(win, col, (tx, ty - 36), (tx, ty + 36), 1)
 
-                if collecting:
+                if collecting and not auto:
                     msg = f"Collecting {len(corr_samples)}/{SAMPLES} - hold still"
-                elif dual_screen:
+                elif dual_screen or auto:
                     # Subject screen: the operator presses SPACE from the tester monitor.
                     msg = f"Look at the target and hold still ({idx + 1}/{len(targets)})"
                 else:
@@ -3762,6 +3931,11 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_offset_tester_screen': self.sol_offset_tester_screen_var.get(),
             'calib_collect_s': self.calib_collect_s_var.get(),
             'calib_point_estimator': self.calib_point_estimator_var.get(),
+            'calib_point_advance': self.calib_point_advance_var.get(),
+            'acc_point_advance': self.acc_point_advance_var.get(),
+            'point_stable_s': self.point_stable_s_var.get(),
+            'point_max_dwell_s': self.point_max_dwell_s_var.get(),
+            'point_threshold_deg': self.point_threshold_deg_var.get(),
             'sol_quality_window': self.sol_quality_window_var.get(),
             'webcam_oval_size': self.webcam_oval_size_var.get(),
             'webcam_oval_bottom_x': self.webcam_oval_bottom_x_var.get(),
@@ -3891,6 +4065,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.sol_offset_num_points_var, self.sol_offset_mode_var, self.sol_offset_user_screen_var,
             self.sol_offset_tester_screen_var,
             self.calib_collect_s_var, self.calib_point_estimator_var,
+            self.calib_point_advance_var, self.acc_point_advance_var, self.point_stable_s_var,
+            self.point_max_dwell_s_var, self.point_threshold_deg_var,
             self.sol_quality_window_var,
             self.webcam_oval_size_var,
             self.webcam_oval_bottom_x_var,
@@ -3983,6 +4159,15 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'calib_collect_s' in data: self.calib_collect_s_var.set(str(data['calib_collect_s']))
             if data.get('calib_point_estimator') in stability.ESTIMATORS:
                 self.calib_point_estimator_var.set(data['calib_point_estimator'])
+            for _key, _var in (('calib_point_advance', self.calib_point_advance_var),
+                               ('acc_point_advance', self.acc_point_advance_var)):
+                if data.get(_key) in ("auto", "space"):
+                    _var.set(data[_key])
+            for _key, _var in (('point_stable_s', self.point_stable_s_var),
+                               ('point_max_dwell_s', self.point_max_dwell_s_var),
+                               ('point_threshold_deg', self.point_threshold_deg_var)):
+                if _key in data:
+                    _var.set(str(data[_key]))
             if 'sol_quality_window' in data: self.sol_quality_window_var.set(str(data['sol_quality_window']))
             if 'webcam_oval_size' in data: self.webcam_oval_size_var.set(str(data['webcam_oval_size']))
             if 'webcam_oval_bottom_x' in data: self.webcam_oval_bottom_x_var.set(str(data['webcam_oval_bottom_x']))

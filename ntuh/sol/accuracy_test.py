@@ -278,6 +278,20 @@ def point_extras(target_idx, target, window, n_render, collect_start_ms, collect
     return out
 
 
+def auto_point(target_idx, target, dwell, raw_render, corr_render, collect_start_ms, collect_end_ms,
+               view_dist_cm, screen_w, screen_width_cm, n_legacy=30):
+    """A point decided by auto-advance (stability.Dwell, fed the SolStreams.samples() tuples):
+    (record, points.csv row). The record (accuracy_data.csv, the report) is the legacy estimate of
+    the last n_legacy render-frame samples before the decision, so R3 still recomputes it. The
+    extras (sample counts, h_state_mix, the medians) are over the Dwell window: the stable second,
+    or when insufficient the steadiest second (none: counts 0, medians empty); then DWELL_COLUMNS."""
+    raw, corr = raw_render[-n_legacy:], corr_render[-n_legacy:]
+    rec = compute_point_record(target, raw, corr, view_dist_cm, screen_w, screen_width_cm)
+    ex = point_extras(target_idx, target, (dwell.window or {}).get("items", []), len(corr),
+                      collect_start_ms, collect_end_ms, view_dist_cm, screen_w, screen_width_cm)
+    return rec, {**rec, **ex, **dwell.columns()}
+
+
 def trial_event_row(order_idx, target, start_ms, end_ms, result):
     """One trial_events.csv row (LOGGING_SPEC 7.2): a point, its collect window in seconds,
     REC or DISCARDED."""
