@@ -187,6 +187,12 @@ VA_center_opt
            profile it saved, and whether the save worked. New result files va_result.json and
            vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
            scores a session again from its own files into a separate _derived folder.
+    1.11.0 VA and VF no longer apply our Sol offset by User Name (REQ-0031). New setting "Sol
+           offset for VA/VF" on the Sol Calib tab: OFF (default) or a 2D profile picked from
+           the Calibration Folder, shown with its user, points and time (a confirm when not
+           made today), applied with the 2D gaze method only. The examiner view shows the
+           status for the whole test; session_meta.json our_calibration.expected = a profile
+           was picked, plus gaze_method; events.csv gains profile_selected.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -272,7 +278,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.9.0",
+    "VA_center_opt": "1.11.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }

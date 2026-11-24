@@ -36,7 +36,7 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the accuracy test looks up the Sol offset profile `<code>_sol_2d_offset.json` by this exact string (VA/VF do not, since 1.11.0: see *Sol offset for VA/VF*) | anonymous |
 | Operator Code | Code of the person running the test (e.g. `OT1`), never a real name. Remembered between runs and stored in each session's `session_meta.json` (since 1.7.0) | (empty) |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
@@ -130,7 +130,7 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 >
 > **Silent fallback (tracker REQ-0041).** If the selected folder holds no webcam profile (no `svr_x.xml`), *Start* switches the Calibration Folder to `anonymous_9pt` without a warning (only the console says so) and keeps that setting for later runs.
 >
-> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found. The **accuracy test** then refuses to start a C3/C5 condition (since 1.6.0, see *Sol Calib Tab*). The **VA/VF test** still runs on uncorrected Sol gaze without a warning on the test screens; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0031).
+> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test looks it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found. The **accuracy test** then refuses to start a C3/C5 condition (since 1.6.0, see *Sol Calib Tab*). The **VA/VF test** no longer looks a profile up at all (since 1.11.0): it applies only the one picked under *Sol offset for VA/VF*.
 
 ### Sol Tab
 
@@ -180,6 +180,24 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
   | `profile_path` | The profile file the User Name maps to, relative to the program folder when it is inside it. It was loaded only if `calib_model_loaded` is `true` |
   | `profile_calibration_timestamp` | Calibration time stored in the profile; `null` unless the profile was applied |
   | `gate` | `{status, message, condition, operator_code, time}`. `status` is `ok` (applied), `not_applied_by_condition` (C1/C2/C4) or `no_calib_by_operator` (C3/C5 run without it by the operator's choice; `operator_code` and `time` are set) |
+
+**Sol offset for VA/VF (since 1.11.0, tracker REQ-0031).** VA and VF **no longer apply our offset by
+User Name**: before 1.11.0 they applied `<User Name>_sol_2d_offset.json` (2D gaze) or
+`<User Name>_sol_offset.json` (3D gaze) whenever the file existed, and nothing in the output said so.
+Now nothing is applied unless the operator picks a profile in the group *Sol offset for VA/VF* on this tab:
+
+- **OFF** (the default, and after every program start): VA/VF use the Sol gaze without our offset.
+- **Select profile...**: pick a `*_sol_2d_offset.json` directly in the Calibration Folder. The group then
+  shows the file, the user name it was made under, the number of points and the calibration time. A
+  profile not made today asks for a confirm. The pick is not remembered when the program closes.
+- The profile is applied only with *Gaze Method* 2D; with 3D it is recorded but not applied. No 3D
+  angular offset is applied in VA/VF any more.
+- During the test the examiner view (Examiner Screen) has a strip under its panels with a status dot:
+  green `OUR CALIB: APPLIED <file> user <name> <n> pts <time>`, or grey `OUR CALIB: NOT APPLIED (...)`.
+- A picked file that can no longer be read stops the test before it starts, with an error dialog.
+- The session records the choice: `session_meta.json` → `our_calibration.expected` (a profile was picked),
+  `gaze_method`, the profile entry with its sha256 and the copy `calib_profile_snapshot.json`, and the
+  event `profile_selected` in `events.csv` ([session_bundle.md](session_bundle.md)).
 
 **Calibration NOT saved.** When *Start Calibration* finishes but the profile file cannot be written (for example a read-only Calibration Folder), an error dialog **Calibration NOT saved / 校正未存檔** shows the path instead of *Calibration Complete*. The calibration is kept in memory, so an accuracy test run next under the same User Name still uses it (the status then reads `NOT SAVED (in memory)`); it is lost when the program closes.
 
