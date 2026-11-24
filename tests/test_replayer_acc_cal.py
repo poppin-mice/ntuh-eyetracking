@@ -216,3 +216,26 @@ def test_calibration_table_recomputes_the_estimate_and_its_screen_point(cal, tmp
     edit_csv(copy / "calib_points.csv", 0, "used_x", 0.02)
     edit_csv(copy / "calib_points.csv", 2, "est_y", 0.02)
     assert qc.point_table(qc.load(copy))["flags"] == [True, False, True]
+
+
+def test_runs_compress_equal_labels():
+    assert qc.runs([0, 1, 2, 3, 4], ["LIVE", "LIVE", "STALE", "STALE", "LIVE"]) == [
+        (0.0, 2.0, "LIVE"), (2.0, 4.0, "STALE"), (4.0, 4.0, "LIVE")]
+    assert qc.runs([], []) == []
+
+
+def test_timeline_lanes_of_the_accuracy_test(acc):
+    s = qc.load(acc)
+    tl = qc.timeline(s)
+    assert [name for _, name in tl["targets"]] == [t["name"] for t in car_read(acc / "targets.csv")]
+    assert [c[2] for c in tl["collect"]] == ["REC"] * 3 and all(a < b for a, b, _ in tl["collect"])
+    assert [ok for _, ok in tl["space"]] == [False, True] * 3
+    assert len(tl["crash"]) == 1 and tl["crash"][0][1] == "worker_crash"
+    assert {label for *_, label in tl["valid"]} == {True, False}      # the blink
+    assert sum(b - a for a, b, _ in tl["h_state"]) == pytest.approx(s["t"][-1] - s["t"][0])
+    assert {label for *_, label in tl["h_state"]} <= {"LIVE", "CACHED", "STALE", "WAITING"}
+
+
+def test_timeline_of_the_calibration_run(cal):
+    tl = qc.timeline(qc.load(cal))
+    assert len(tl["collect"]) == len(tl["targets"]) == 3 and not tl["space"] and not tl["crash"]

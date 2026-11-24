@@ -225,6 +225,45 @@ def _cal_table(s):
     return cols, out
 
 
+def runs(t, labels):
+    """[(t_start, t_end, label)] of consecutive equal labels; a run ends where the next begins."""
+    t, labels = np.asarray(t, dtype=float), np.asarray(labels)
+    if not len(t):
+        return []
+    cut = np.r_[0, np.flatnonzero(labels[1:] != labels[:-1]) + 1, len(t)]
+    return [(float(t[a]), float(t[min(b, len(t) - 1)]), labels[a].item())
+            for a, b in zip(cut[:-1], cut[1:])]
+
+
+def timeline(s):
+    """The timeline lanes on the session clock (s): targets [(t, name)], collect windows
+    [(t0, t1, REC|DISCARDED|SKIPPED)], h_state and validity runs, worker crashes [(t, event)],
+    SPACE presses [(t, accepted)]."""
+    out = {"duration": s["duration"], "targets": [], "collect": [], "crash": [], "space": [],
+           "h_state": runs(s["t"], s["h_state"]), "valid": runs(s["t"], s["valid"])}
+    open_at = None
+    ends = {"collect_end": "REC", "collect_discard": "DISCARDED", "point_skipped": "SKIPPED"}
+    for e in s["events"]:
+        t, name = ev_time(s, e), e["event"]
+        if name == "target_show" or (name == "collect_start" and s["kind"] == "cal"):
+            out["targets"].append((t, e["target_name"] or e["target_idx"]))
+        if name == "collect_start":
+            open_at = t
+        elif name in ends and open_at is not None:
+            out["collect"].append((open_at, t, ends[name]))
+            open_at = None
+        elif name in ("worker_crash", "worker_failed"):
+            out["crash"].append((t, name))
+        elif name == "space_pressed":
+            out["space"].append((t, bool(e["detail"].get("accepted"))))
+    if not out["collect"]:                      # no collect events: the windows of the point files
+        for p in s["points"] or s["calib_points"]:
+            if p.get("collect_start_ms") and p.get("collect_end_ms"):
+                out["collect"].append(((float(p["collect_start_ms"]) - s["t0_ms"]) / 1000.0,
+                                       (float(p["collect_end_ms"]) - s["t0_ms"]) / 1000.0, "REC"))
+    return out
+
+
 def point_table(s):
     """The per-point table: {"columns", "rows" (cells), "flags" (True = check by hand), "t_s"
     (collect start on the session clock, for seeking)}.
