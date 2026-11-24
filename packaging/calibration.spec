@@ -98,7 +98,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[os.path.join(SPECPATH, 'hooks', 'runtime_hook_mediapipe.py')],
-    excludes=['IPython', 'jupyter', 'MNN', '_mnncengine'],
+    excludes=['IPython', 'jupyter', 'MNN', '_mnncengine', 'tools'],   # tools/ = developer scripts, never in the exe
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
