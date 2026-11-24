@@ -18,8 +18,8 @@ Participants are referred to by **code only** everywhere.
 | Accuracy test | `accuracy_test/<User Name>_<date>_<time>/` | 1.7.0 |
 | Sol 2D offset calibration | `calibration_sessions/<User Name>_<date>_<time>/` | 1.9.0 |
 
-Practice mode writes no folder and therefore no bundle. The Sol 3D offset calibration does not write
-a folder yet.
+Practice mode writes no folder and therefore no bundle. The Sol 3D offset calibration never wrote a
+folder; it was removed in 1.15.0 (tracker REQ-0034).
 
 ## Files the bundle adds
 
@@ -47,7 +47,7 @@ Required files per kind, as the check tool enforces them
 | `vf` | `session_meta.json`, `events.csv`, `console.log`, `trial_events.csv` | `vf_result.json` |
 | `accuracy_test` | `session_meta.json`, `events.csv`, `console.log` | `accuracy_report.json`, `accuracy_data.csv` |
 | `sol2d_calibration` | `session_meta.json`, `events.csv`, `console.log`, `calib_points.csv` | |
-| `sol3d_calibration` (not written yet) | `session_meta.json`, `events.csv`, `console.log` | |
+| `sol3d_calibration` (never written; 3D removed in 1.15.0) | `session_meta.json`, `events.csv`, `console.log` | |
 
 A `crashed` session also needs `crash_log.txt`.
 
@@ -73,7 +73,7 @@ A `crashed` session also needs `crash_log.txt`.
 | `our_calibration` | *1.9.0*, VA / VF / accuracy test. See [Calibration profiles](#calibration-profiles) |
 | `calibration_result` | *1.9.0*, calibration run. See [Sol calibration runs](#sol-calibration-runs) |
 | `display` | `screen_w_px`, `screen_h_px`, `screen_width_cm`, `view_dist_cm`, `dpi_scale`, `subject_monitor_index`, `tester_monitor_index` |
-| `mapping` | `gaze_method` (2D / 3D), `gaze_smooth`, `pose_smooth`, `eval_source` |
+| `mapping` | `gaze_method` (2D; `3D` only in sessions recorded before 1.15.0), `gaze_smooth`, `pose_smooth`, `eval_source` |
 | `protocol_params` | VA: `pass_dur_s`, `stim_dur_s`, `catch_enabled`, `catch_trials`, `quality_gate_enabled`, `quality_gate_threshold_pct`, `radius_px`. VF: the quality gate and every `vf_*` setting. Accuracy test: `n_targets_planned`, `samples_per_point_render_frames`, ring layout. Calibration run: `offset_mode`, `n_points_planned`, `samples_per_point_render_frames`, `target_display_size_px` |
 | `config` | The full settings the test ran with |
 | `bundle` | `version` (1) and `files`: every file in the folder with its `sha256` and `bytes`, except `session_meta.json` itself |
@@ -102,13 +102,13 @@ could not be saved; `calibration_result.saved` says so.
 | Field | Meaning |
 |-------|---------|
 | `expected` | Accuracy test: whether this condition is run with our offset calibration: `true` for C3 and C5, `false` for C1, C2 and C4, `null` when the condition is unknown. VA / VF (*1.11.0*): whether the operator picked a profile under *Sol offset for VA/VF* (`false` = OFF, or Sol off) |
-| `gaze_method` | *1.11.0*, VA / VF: `2D` or `3D`. A picked profile is applied only with `2D` |
+| `gaze_method` | *1.11.0*, VA / VF: always `2D` since 1.15.0. Before, it could be `3D`, and then a picked profile was recorded but not applied |
 | `loaded` | Whether the Sol offset profile the test applies was loaded. `false` also when Sol was off |
 | `profiles` | One entry per profile looked for, below |
 
 | Entry field | Meaning |
 |-------------|---------|
-| `role` | `sol2d_offset` (`<User Name>_sol_2d_offset.json`), `sol3d_offset` (`<User Name>_sol_offset.json`) or `webcam` (the Calibration Folder with the webcam model) |
+| `role` | `sol2d_offset` (`<User Name>_sol_2d_offset.json`), `sol3d_offset` (`<User Name>_sol_offset.json`; only in sessions recorded before 1.11.0, the 3D method was removed in 1.15.0) or `webcam` (the Calibration Folder with the webcam model) |
 | `applied` | `true` for the Sol profile the test's gaze method uses. Since 1.11.0 VA / VF have a Sol entry only when a profile was picked (the file picked, not one named after the User Name); before, VA looked for both Sol profiles by User Name and applied one |
 | `looked_for_path` | The file (or folder) the program looked for |
 | `loaded`, `load_error` | Whether it was loaded; why not, when the file was there but unusable |
@@ -194,7 +194,7 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `app_start` | The settings window opened | `user_name`, `calib_dir` |
 | `user_name_changed` | The User Name changed (logged once it has settled, not per keystroke) | `old`, `new` |
 | `calib_dir_changed` | The Calibration Folder changed | `old`, `new`, `reason`: `operator`, or `fallback_anonymous_9pt` when Start Test replaced it |
-| `clear_offset` | Clear Offset was pressed | `method` (2D / 3D), `user_name`, `file`, `existed`, `cleared` |
+| `clear_offset` | Clear Offset was pressed | `method` (2D; `3D` only before 1.15.0), `user_name`, `file`, `existed`, `cleared` |
 | `profile_loaded`, `profile_missing` | *1.9.0*. A calibration profile was looked for, by a test or by the gaze preview | `role`, `applied`, `looked_for_path`, `exists`, `present`. From the preview only `role`, `where`, `looked_for_path` |
 | `profile_selected` | *1.11.0*. The *Sol offset for VA/VF* setting: picked or set OFF in the settings (`where: settings`), the answer at Start when the picked profile was made under another User Name (`where: start_confirm`), and what a VA / VF test started with (`where: test_start`) | `where`, `path` (`null` = OFF); settings: `username`, `calibration_timestamp`, `n_points`, `not_today_confirmed`; start confirm: `username` (the profile's), `other_user_confirmed`; test start: `applied`, `gaze_method` |
 | `sol_builtin_calib_confirmed` | *1.9.0*. The Sol built-in calibration checkbox was ticked or unticked | `confirmed`, `performed_at`, `chronus_participant` |

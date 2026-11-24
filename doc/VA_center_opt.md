@@ -140,7 +140,7 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Markers (HxV) | ArUco marker grid layout | 8 x 5 |
 | Pattern Size (px) | Size of each ArUco marker on screen | 200 |
 | Dict | ArUco dictionary type | DICT_4X4_250 |
-| Gaze Method | 3D (ray-plane) or 2D (homography) | 2D |
+| Gaze Method | 2D (homography) only. The 3D method and its offset calibration were removed in 1.15.0 (tracker REQ-0034); a saved `3D` setting is read as 2D, with a console notice | 2D |
 | Pose Smooth / Gaze Smooth | Smoothing factors (0-1, higher = more smooth) | 1 / 1 |
 | Sol built-in calibration done | Tick it after the Sol built-in calibration (Chronus, lighthouse mode) was done for this subject; untick it for the next subject. The program cannot read this from the glasses, so the tick and its time are what every session records (since 1.9.0). Not remembered between runs | OFF |
 | Chronus participant code | The participant code used in the Chronus app. Remembered between runs and stored in every session (since 1.9.0) | (empty) |
@@ -190,8 +190,9 @@ Now nothing is applied unless the operator picks a profile in the group *Sol off
 - **Select profile...**: pick a `*_sol_2d_offset.json` directly in the Calibration Folder. The group then
   shows the file, the user name it was made under, the number of points and the calibration time. A
   profile not made today asks for a confirm. The pick is not remembered when the program closes.
-- The profile is applied only with *Gaze Method* 2D; with 3D it is recorded but not applied. No 3D
-  angular offset is applied in VA/VF any more.
+- The profile is applied in 2D, the only gaze method (since 1.15.0; from 1.11.0 to 1.14.x a picked
+  profile was recorded but not applied when *Gaze Method* was 3D). No 3D angular offset is applied in
+  VA/VF any more.
 - During the test the examiner view (Examiner Screen) has a strip under its panels with a status dot:
   green `OUR CALIB: APPLIED <file> user <name> <n> pts <time>`, or grey `OUR CALIB: NOT APPLIED (...)`.
 - The pick stays when the User Name changes. *Start* asks for a confirm when the picked profile was made

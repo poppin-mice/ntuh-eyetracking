@@ -194,6 +194,8 @@ VA_center_opt
            the 2D gaze method only. The examiner view shows the
            status for the whole test; session_meta.json our_calibration.expected = a profile
            was picked, plus gaze_method; events.csv gains profile_selected.
+    1.15.0 The 3D Sol gaze method and its 3D offset calibration are removed (REQ-0034): 2D
+           is the only method; a saved "3D" setting is read as 2D with a console notice.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -279,7 +281,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.11.0",
+    "VA_center_opt": "1.15.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
