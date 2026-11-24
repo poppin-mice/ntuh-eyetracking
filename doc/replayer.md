@@ -103,6 +103,59 @@ A training pipeline can then keep sessions where `record.label == "keep"` and tr
 so the pipeline should not read a catch trial's `pass` (the subject happened to hold on the
 target circle) as a positive.
 
+## Calibration / Accuracy sessions (1.3.0)
+
+An accuracy-test folder (`accuracy_test/...`) or a Sol 2D calibration folder
+(`calibration_sessions/...`) written as bundle v2 (VA_center_opt 1.12.0 / 1.17.0,
+`doc/session_bundle.md`) has no video. **Open Session** recognises it by `session_kind` in
+`session_meta.json` and opens it in its own window. Any other folder (VA, VF, or without
+`session_meta.json`) opens in the video replayer exactly as before.
+
+**This window never writes into the session folder** (no `review_labels.json`).
+
+- **Header badges:** subject, condition, operator, program version; *Our calib LOADED (profile,
+  age at start) / NOT LOADED*, red when that is not what the condition expects (C3 / C5 with,
+  C1 / C2 / C4 without); *Sol built-in* as the operator confirmed it, red when it does not fit the
+  condition (C4 / C5 need it); the start *Gate*, red when blocked or missing; the *Status*, red
+  unless completed. A calibration run shows *Profile SAVED / NOT SAVED* instead of the calibration
+  and gate badges.
+- **Subject screen**, drawn from the log: the ArUco markers, the current target, the last 0.5 s of
+  raw gaze (grey) and corrected gaze (green), invalid samples (gaze_2d invalid or an eye not
+  NORMAL) in red, and every point recorded so far (yellow: target -> gaze). The marker layout is
+  computed from the marker settings the session ran with.
+- **Calibration run:** also the offset the saved profile adds over the screen (blue arrows) and,
+  per point, the sample cloud, mean (+) and median (o) of the valid samples, the 1-SD ellipse,
+  target -> used, and the leave-one-out error as a dashed circle around the target.
+- **Timeline:** targets, collect windows (blue recorded, orange discarded), homography state
+  (green LIVE, amber CACHED, red STALE, grey WAITING), validity, Sol child crashes (red bar) and
+  SPACE presses (green accepted, orange rejected). Click or drag to seek; **Play** runs it.
+- **Per-point table:** each point's logged values next to the same values recomputed from the
+  raw samples by the program's own code. Accuracy test: the raw and corrected centroid
+  (`points.csv` and `accuracy_data.csv`) from the 30 render-frame samples `collect_end` lists.
+  Calibration run: `est` (steadiest second, from the logged SDK samples) and `used` (= `est`
+  through the logged homography). A red row differs by more than 0.01 px or cannot be
+  recomputed (a `legacy_30frame_mean` point: its render-frame samples are not logged). Click a
+  row to go to that point.
+- No scene-video panel yet: no session writes `sol_video.mp4` (Tier 2). A label says so when the
+  file is there.
+
+**File > Batch QC export (accuracy / calibration)**: pick a folder that holds sessions, then an
+output folder (refused when it is inside a session folder). Every accuracy / calibration session
+below the first folder gets `<session_id>.png` (its window at the end of the session), and
+`qc_summary.csv` gets one row per session:
+
+| Column | Meaning |
+|--------|---------|
+| `session_id`, `session_kind` | From `session_meta.json` |
+| `subject`, `condition` | Subject and condition codes |
+| `our_calib_expected`, `our_calib_loaded` | 1 / 0, accuracy test only |
+| `gate` | Status of the last `gate_check` event, accuracy test only |
+| `n_points` | Points recorded (`points.csv` rows; calibration: points with a `used` value) |
+| `aborted` | 1 when the status is not `completed` |
+| `h_state_mix` | Share of the samples per homography state, e.g. `LIVE:0.950;CACHED:0.050` |
+| `validity_pct` | Valid samples in % (gaze_2d valid and both eyes NORMAL) |
+| `drift` | Empty: no drift check is logged yet (LOGGING_SPEC 9) |
+
 ## Troubleshooting
 
 | Problem | Solution |

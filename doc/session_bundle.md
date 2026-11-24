@@ -216,8 +216,9 @@ from `calib_profile_snapshot.json` (or `corr` = `raw` without a profile), R3 the
 or points it compared and the largest difference in px; PASS at 1e-6 px. Exit code 0 when all pass.
 
 `accuracy_report.json` → `meta` gains `session_id`. The files are written by background threads; the
-test never waits for the disk. The replayer of today opens a folder only when it has a video, which an
-accuracy-test folder does not have yet.
+test never waits for the disk. The replayer (1.3.0) opens an accuracy-test or calibration folder
+without video in its Calibration / Accuracy mode (`doc/replayer.md`); it only reads the folder.
+The R1-R3 checks live in `ntuh/sol/accuracy_replay.py`, which the tool and the replayer share.
 
 ## Result files
 

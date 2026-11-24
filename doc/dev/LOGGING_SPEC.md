@@ -422,6 +422,13 @@ Detect by `session_meta.session_kind`. Panels:
   shows the points before the new mode exists. *As implemented (B-D15, ACC):* start/end in PC epoch seconds,
   one row per recorded or discarded point. Open issue: the current replayer (`playback_engine.load_session`)
   refuses a folder without a video and its timestamp file, and an ACC folder has no video before Tier 2 (§5).
+- *As implemented (B-D18, replayer 1.3.0):* ACC and CAL (`accuracy_test`, `sol2d_calibration`) open in a
+  separate read-only window with the panels above except the scene video (none is written yet); the
+  synthetic screen draws each recorded point's logged centroid and its error line. Per-point
+  table: ACC the R3 headline, CAL `est` / `used` (recomputable for `steadiest_1s_median` only).
+  `qc_summary.csv` columns: `session_id, session_kind, subject, condition, our_calib_expected,
+  our_calib_loaded, gate, n_points, aborted, h_state_mix, validity_pct, drift` (drift empty until §9).
+  `meta.aruco` is not written: the marker layout is recomputed from `config.sol_marker_k/_n/_size`.
 
 ---
 

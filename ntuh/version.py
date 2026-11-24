@@ -290,12 +290,23 @@ replayer
            unpacked 6, so the first repaint raised inside paintEvent and PyQt6 ended the
            process. The tooltip text now comes from a small Qt-free function that reads the
            whole trial, and it tags a catch trial CATCH, like the trial list does.
+    1.3.0  Calibration / Accuracy session mode: Open Session on an accuracy-test or Sol 2D
+           calibration folder (session_meta.session_kind; bundle v2, no video needed) opens a
+           read-only window: header badges (subject, condition, operator, version, our
+           calibration loaded vs expected, Sol built-in, gate, status; red where they disagree),
+           the subject screen re-drawn from the log with 0.5 s raw / corrected gaze trails, a
+           timeline (targets, collect windows, homography state, validity, crashes, SPACE), a
+           per-point table of logged vs recomputed-from-raw values (red above 0.01 px), and for a
+           calibration run the sample clouds, SD ellipses, leave-one-out errors and the offset
+           field. File > Batch QC export writes one PNG per session and qc_summary.csv into a
+           folder the user picks. Nothing is written into these session folders; VA / VF
+           sessions open exactly as before.
 """
 
 APP_VERSIONS = {
     "VA_center_opt": "1.17.0",
     "calibration": "1.3.0",
-    "replayer": "1.2.1",
+    "replayer": "1.3.0",
 }
 
 
