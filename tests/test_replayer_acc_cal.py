@@ -123,3 +123,43 @@ def test_the_window_opens_both_kinds_and_writes_nothing(acc, cal, qapp):
         qapp.processEvents()
         w.close()
         assert files_state(folder) == before
+
+
+def badges(meta, kind="acc", events=()):
+    return dict(qc.header_badges({"meta": meta, "kind": kind, "events": list(events)}))
+
+
+def test_header_badges_of_the_synthetic_test_are_all_fine(acc):
+    out = qc.header_badges(qc.load(acc))
+    texts = [t for t, _ in out]
+    assert texts[:3] == ["Subject s01", "Condition C3", "Operator OT1"]
+    assert any(t.startswith("Our calib LOADED s01_c3_sol_2d_offset.json") for t in texts)
+    assert "Gate ok" in texts and "Status completed" in texts
+    assert not any(red for _, red in out)
+
+
+def test_our_calibration_is_red_when_expected_and_loaded_differ():
+    gate = [{"event": "gate_check", "detail": {"status": "ok"}}]
+    for expected, loaded, red in ((True, False, True), (False, True, True), (True, True, False),
+                                  (False, False, False), (None, True, False)):
+        meta = {"condition": {"condition_code": "C3"}, "status": "completed",
+                "our_calibration": {"expected": expected, "loaded": loaded, "profiles": []}}
+        b = badges(meta, events=gate)
+        assert [r for t, r in b.items() if t.startswith("Our calib")] == [red]
+
+
+def test_sol_builtin_gate_and_status_badges():
+    meta = {"condition": {"condition_code": "C4"}, "status": "aborted", "abort_reason": "operator_q",
+            "sol_builtin_calibration": {"confirmed": False}}
+    b = badges(meta, events=[{"event": "gate_check", "detail": {"status": "blocked_missing"}}])
+    assert b["Sol built-in: operator says NOT DONE"] is True            # C4 needs it
+    assert b["Gate blocked_missing"] is True and b["Status aborted (operator_q)"] is True
+    meta["sol_builtin_calibration"] = {"confirmed": True, "performed_at": "2026-11-24T10:01:00.000+08:00"}
+    assert badges(meta)["Sol built-in: operator says DONE 10:01"] is False
+    assert badges(meta)["Gate ?"] is True                               # no gate_check event
+
+
+def test_a_calibration_run_shows_whether_its_profile_was_saved(cal):
+    texts = dict(qc.header_badges(qc.load(cal)))
+    assert texts["Profile SAVED s01_c3_sol_2d_offset.json"] is False
+    assert not any(t.startswith(("Gate", "Our calib")) for t in texts)

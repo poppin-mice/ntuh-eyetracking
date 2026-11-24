@@ -88,3 +88,63 @@ def load(folder):
 def ev_time(s, e):
     """An event's time on the session clock (s)."""
     return (float(e["pc_timestamp_ms"]) - s["t0_ms"]) / 1000.0
+
+
+# ---------- header badges ----------
+SOL_BUILTIN_EXPECTED = {"C1": False, "C2": False, "C3": False, "C4": True, "C5": True}   # LOGGING_SPEC 3
+
+
+def _age(seconds):
+    if seconds is None:
+        return "age ?"
+    m = float(seconds) / 60.0
+    return f"{m:.0f} min old" if m < 120 else f"{m / 60.0:.1f} h old"
+
+
+def _clock(iso):
+    return str(iso)[11:16] if iso else "?"     # HH:MM of an ISO time
+
+
+def gate_status(s):
+    """status of the last gate_check event (accuracy test), or None."""
+    checks = [e["detail"] for e in s["events"] if e["event"] == "gate_check"]
+    return checks[-1].get("status") if checks else None
+
+
+def header_badges(s):
+    """[(text, red)] for the header: who / which condition / which program, our calibration
+    (red when expected != loaded), the Sol built-in calibration the operator confirmed (red when
+    it does not fit the condition), the start gate and the session status."""
+    m = s["meta"]
+    cond = (m.get("condition") or {}).get("condition_code")
+    sw = m.get("software") or {}
+    out = [(f"Subject {(m.get('subject') or {}).get('subject_code') or '?'}", False),
+           (f"Condition {cond or '?'}", cond is None),
+           (f"Operator {(m.get('operator') or {}).get('operator_code') or '?'}", False),
+           (f"{sw.get('app', '?')} {sw.get('app_version', '?')}", False)]
+    if s["kind"] == "cal":
+        res = m.get("calibration_result") or {}
+        name = Path(res.get("looked_for_path") or "").name
+        out.append((f"Profile SAVED {name}" if res.get("saved") else
+                    f"Profile NOT SAVED {res.get('save_error') or ''}".strip(), not res.get("saved")))
+    else:
+        oc = m.get("our_calibration") or {}
+        loaded, expected = bool(oc.get("loaded")), oc.get("expected")
+        applied = next((p for p in oc.get("profiles") or [] if p.get("applied")), {})
+        name = Path(applied.get("source_path") or "").name
+        text = (f"Our calib LOADED {name}, {_age(applied.get('age_s_at_start'))}" if loaded
+                else "Our calib NOT LOADED")
+        text += {True: " (expected)", False: " (not expected)", None: " (expected ?)"}[expected]
+        out.append((text, expected is not None and expected != loaded))
+    sol = m.get("sol_builtin_calibration") or {}
+    done = bool(sol.get("confirmed"))
+    want = SOL_BUILTIN_EXPECTED.get(cond)
+    out.append((f"Sol built-in: operator says {'DONE ' + _clock(sol.get('performed_at')) if done else 'NOT DONE'}",
+                want is not None and want != done))
+    if s["kind"] == "acc":
+        gate = gate_status(s)
+        out.append((f"Gate {gate or '?'}", gate is None or gate.startswith("blocked")))
+    status = m.get("status") or "?"
+    out.append((f"Status {status}" + (f" ({m['abort_reason']})" if m.get("abort_reason") else ""),
+                status != "completed"))
+    return out
