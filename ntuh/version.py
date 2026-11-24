@@ -212,6 +212,15 @@ VA_center_opt
            site.collection_label, condition.repeat_index and condition.repeat_index_computed.
     1.15.0 The 3D Sol gaze method and its 3D offset calibration are removed (REQ-0034): 2D
            is the only method; a saved "3D" setting is read as 2D with a console notice.
+    1.16.0 Sol profiles (B-D09 part b, REQ-0041/REQ-0042): each Sol 2D calibration saves a new
+           file calibration_profiles/sol2d/<calib_session_id>.json, never overwritten, with
+           subject, condition, app version, build and the per-point record; the Calibration
+           Folder is for the webcam model only. The accuracy test uses the newest profile of
+           the same subject and condition made after the subject's previous test in another
+           condition, and asks when it is not from today. Legacy <name>_sol_2d_offset.json
+           files are read only (legacy_profile). A webcam folder without a model is no longer
+           replaced silently: the operator picks the default model, another folder or not
+           to start, and the choice is recorded.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -302,7 +311,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.15.0",
+    "VA_center_opt": "1.16.0",
     "calibration": "1.5.0",
     "replayer": "1.2.0",
 }

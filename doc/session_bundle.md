@@ -113,14 +113,15 @@ could not be saved; `calibration_result.saved` says so.
 
 | Entry field | Meaning |
 |-------------|---------|
-| `role` | `sol2d_offset` (`<User Name>_sol_2d_offset.json`), `sol3d_offset` (`<User Name>_sol_offset.json`; only in sessions recorded before 1.11.0, the 3D method was removed in 1.15.0) or `webcam` (the Calibration Folder with the webcam model) |
+| `role` | `sol2d_offset` (`calibration_profiles/sol2d/<calib_session_id>.json` since 1.16.0, or a legacy `<User Name>_sol_2d_offset.json`; an accuracy test that found none looked for `calibration_profiles/sol2d/<User Name>_*.json`), `sol3d_offset` (`<User Name>_sol_offset.json`; only in sessions recorded before 1.11.0, the 3D method was removed in 1.15.0) or `webcam` (the Calibration Folder with the webcam model) |
 | `applied` | `true` for the Sol profile the test's gaze method uses. Since 1.11.0 VA / VF have a Sol entry only when a profile was picked (the file picked, not one named after the User Name); before, VA looked for both Sol profiles by User Name and applied one |
 | `looked_for_path` | The file (or folder) the program looked for |
 | `loaded`, `load_error` | Whether it was loaded; why not, when the file was there but unusable |
 | `source_path`, `sha256`, `bytes` | The file that was found (`null` when there was none) |
 | `calibration_timestamp`, `age_s_at_start` | When the profile was made, and how old it was when the session started |
 | `n_points`, `offset_mode` | From the profile |
-| `present` | The profile files of that kind in the folder at that moment. This is what shows a C3 test that found only the C2 profile |
+| `calib_session_id`, `legacy_profile` | *1.16.0*. The calibration run that made the profile; `legacy_profile` is `true` for a file without `calib_session_id` (made before 1.16.0, read-only) |
+| `present` | The profile files of that kind in the folder at that moment (since 1.16.0 every `*.json` there). This is what shows a C3 test that found only the C2 profile |
 | `snapshot` | Name of the byte copy in the session folder; `null` when nothing was loaded |
 | `files` | `webcam` only: every file of the folder with `name`, `sha256`, `bytes`, `snapshot` |
 
@@ -152,8 +153,10 @@ as the operator left it until the program is closed: untick it for the next subj
 `calibration_result` in its `session_meta.json`: `saved` (`true` / `false`), `save_error` (why not),
 `trained`, `points_recorded`, and for the profile file the same fields as a profile entry above
 (`looked_for_path`, `sha256`, `bytes`, `calibration_timestamp`, `n_points`, `offset_mode`,
-`snapshot`). When the save failed and an older profile is still in place, these describe that older
-file: the tests that follow will load it.
+`calib_session_id`, `legacy_profile`, `snapshot`). Since 1.16.0 each run saves a new file
+`calibration_profiles/sol2d/<calib_session_id>.json`, `calib_session_id` being the name of this folder;
+it holds `per_point`, the rows of `calib_points.csv` below. Before 1.16.0, when the save failed and an
+older profile was still in place, these fields described that older file.
 
 `calib_points.csv` has one row per calibration point shown, in order:
 
@@ -200,10 +203,12 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `user_name_changed` | The User Name changed (logged once it has settled, not per keystroke) | `old`, `new` |
 | `identity_locked`, `identity_unlocked` | *1.13.0*. Start Calibration locked Subject Code and Condition; the lock ended because that condition's accuracy test completed, or the operator pressed Unlock | `subject_code`, `condition_code` / `reason` (`accuracy_test_completed`, `operator`), `operator_code` |
 | `repeat_index_manual` | *1.13.0*. A VA/VF test started with a run number other than the computed one | `computed`, `chosen` |
-| `calib_dir_changed` | The Calibration Folder changed | `old`, `new`, `reason`: `operator`, or `fallback_anonymous_9pt` when Start Test replaced it |
-| `clear_offset` | Clear Offset was pressed | `method` (2D; `3D` only before 1.15.0), `user_name`, `file`, `existed`, `cleared` |
+| `calib_dir_changed` | The (webcam) Calibration Folder changed | `old`, `new`, `reason`: `operator`; since 1.16.0 `default_model` or `picked_folder` when the operator chose so at Start (before: `fallback_anonymous_9pt` when Start Test replaced it silently) |
+| `webcam_model_choice` | *1.16.0*. The Calibration Folder had no webcam model and the operator answered (at `start` or `webcam_preview`) | `where`, `choice` (`default_model`, `picked_folder`, `run_webcam_calibration_first`, `default_model_missing`, `picked_folder_without_model`), `calib_dir`, `used` (the folder used, `null` = not started). The VA / VF session also stores `config.webcam_model_choice` (`calibration_folder` when the folder had a model) |
+| `profile_not_today` | *1.16.0*. Accuracy test: the Sol profile found was not made today; the operator's answer | `path`, `calibration_timestamp`, `legacy_profile`, `confirmed` |
+| `clear_offset` | Clear Offset was pressed | `method` (2D; `3D` only before 1.15.0), `user_name`, `file`, `existed`, `cleared`, `legacy_profile` (*1.16.0*: a legacy profile is not deleted) |
 | `profile_loaded`, `profile_missing` | *1.9.0*. A calibration profile was looked for, by a test or by the gaze preview | `role`, `applied`, `looked_for_path`, `exists`, `present`. From the preview only `role`, `where`, `looked_for_path` |
-| `profile_selected` | *1.11.0*. The *Sol offset for VA/VF* setting: picked or set OFF in the settings (`where: settings`), the answer at Start when the picked profile was made under another User Name (`where: start_confirm`), and what a VA / VF test started with (`where: test_start`) | `where`, `path` (`null` = OFF); settings: `username`, `calibration_timestamp`, `n_points`, `not_today_confirmed`; start confirm: `username` (the profile's), `other_user_confirmed`; test start: `applied`, `gaze_method` |
+| `profile_selected` | *1.11.0*. The *Sol offset for VA/VF* setting: picked or set OFF in the settings (`where: settings`), the answer at Start when the picked profile was made under another User Name (`where: start_confirm`), and what a VA / VF test started with (`where: test_start`) | `where`, `path` (`null` = OFF); settings: `username`, `calibration_timestamp`, `n_points`, `not_today_confirmed` (*1.16.0* also `calib_session_id`, `subject_code`, `condition_code`, `legacy_profile`); start confirm: `username` (the profile's subject code since 1.16.0), `other_user_confirmed`; test start: `applied`, `gaze_method` |
 | `sol_builtin_calib_confirmed` | *1.9.0*. The Sol built-in calibration checkbox was ticked or unticked | `confirmed`, `performed_at`, `chronus_participant` |
 | `gate_override` | SPACE started a VA trial before the signal was stable | `trial`, `waited_s`, `threshold_pct`, `sol_valid_pct`, `webcam_valid_pct` |
 | `abort` | Q, ESC or the window was closed | `key`, `where`, `trial` or `target_idx` |
