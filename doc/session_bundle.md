@@ -76,6 +76,7 @@ A `crashed` session also needs `crash_log.txt`. A folder with `bundle.version` 2
 | `display` | `screen_w_px`, `screen_h_px`, `screen_width_cm`, `view_dist_cm`, `dpi_scale`, `subject_monitor_index`, `tester_monitor_index` |
 | `mapping` | `gaze_method` (2D / 3D), `gaze_smooth`, `pose_smooth`, `eval_source` |
 | `protocol_params` | VA: `pass_dur_s`, `stim_dur_s`, `catch_enabled`, `catch_trials`, `quality_gate_enabled`, `quality_gate_threshold_pct`, `radius_px`. VF: the quality gate and every `vf_*` setting. Accuracy test: `n_targets_planned`, `samples_per_point_render_frames`, ring layout. Calibration run: `offset_mode`, `n_points_planned`, `samples_per_point_render_frames`, `target_display_size_px` |
+| `target` | *1.19.0*, accuracy test and Sol 2D calibration run: the target shown. `kind` (`ring` / `image` / `gif`), `file` (file name), `sha256` (of the file), `size_deg`, `size_px` (longest edge; the ring: 52), `n_frames`, `center_dot`, and for a picture that could not be used `fallback` (`target_image_missing` / `target_image_unreadable`) and `requested_file`. `file`, `sha256`, `size_deg` are `null` for the ring |
 | `config` | The full settings the test ran with |
 | `bundle` | `version` (1; 2 for a kind that writes the [v2 files](#bundle-v2-replayable)) and `files`: every file in the folder with its `sha256` and `bytes`, except `session_meta.json` itself |
 | `streams` | Bundle v2: per sample file `rows` written, `failed` (rows that could not be written) and, for `sol_gaze_data.csv`, `sdk_samples_received` |
@@ -264,6 +265,7 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `gate_override` | SPACE started a VA trial before the signal was stable | `trial`, `waited_s`, `threshold_pct`, `sol_valid_pct`, `webcam_valid_pct` |
 | `abort` | Q, ESC or the window was closed | `key`, `where`, `trial` or `target_idx` |
 | `exception` | An exception was caught | `where`, `error` |
+| `target_image_missing`, `target_image_unreadable` | *1.19.0*. Accuracy test / calibration run: the chosen target picture was not found or could not be decoded; the ring is shown instead | `file`, `fallback` (`ring`) |
 | `scene_stall` | Accuracy test: SPACE while the scene video was stalled | `scene_age_s` |
 | `collect_discard` | Accuracy test: a point was dropped because the scene stalled while collecting | `n_discarded` |
 | `collect_end`, `point_skipped` | *1.9.0*. Calibration run: a point was recorded, or skipped for lack of a homography | `n`, `n_valid`; *1.17.0*: `n_sdk_samples`, `n_sdk_valid`, `h_id` (the homography `used` was mapped through) |

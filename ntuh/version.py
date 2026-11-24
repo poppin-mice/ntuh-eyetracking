@@ -209,6 +209,12 @@ VA_center_opt
            point. SPACE stays selectable (Point Advance / Accuracy Test Advance). points.csv and
            calib_points.csv gain dwell_s, n_stable, insufficient, threshold_deg at the end;
            events point_auto_advance / point_insufficient / point_retry / point_skip.
+    1.19.0 The target of the Sol 2D calibration and of the accuracy test can be the ring, a
+           picture (PNG, JPG) or an animated GIF (Target Image / Accuracy Target Image; the
+           accuracy test keeps the ring by default), centred on the point, sized in degrees
+           (Target Size (deg), replaces the px setting), optional centre dot. session_meta.json
+           gains a target block; a missing or unreadable picture falls back to the ring with a
+           target_image_missing / target_image_unreadable event.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -294,7 +300,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.18.0",
+    "VA_center_opt": "1.19.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
