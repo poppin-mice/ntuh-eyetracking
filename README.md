@@ -114,7 +114,8 @@ packaging/            build & release: *.spec, build_exe.bat, stage_release.py, 
 doc/                  end-user docs + release notes; session_bundle.md = what each session folder records
 tests/                hardware-free pytest suite (see Tests)
 tools/                check_session_bundle.py: checks the session folders under a path;
-                      rescore_session.py: scores a session again from its own files
+                      rescore_session.py: scores a session again from its own files;
+                      check_accuracy_replay.py: recomputes an accuracy test from its samples (R1-R3)
 release/              built release zips (git-ignored)
 THIRD_PARTY_NOTICES.md  third-party licences + material under licence review
 ```

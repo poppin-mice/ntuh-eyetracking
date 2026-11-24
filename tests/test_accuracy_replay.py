@@ -14,6 +14,7 @@ from ntuh.recording import replay_streams as rs
 from ntuh.recording import session_bundle as sb
 from ntuh.sol import accuracy_test as acc
 from ntuh.sol import offset_calibration_2d as oc
+from tools import check_accuracy_replay as car
 
 SCREEN_W, SCREEN_H, VIEW_CM, WIDTH_CM = 3840, 2160, 60.0, 59.5
 FRAME_S = 1 / 30.0
@@ -33,22 +34,24 @@ def read(path):
         return list(csv.DictReader(f))
 
 
-def run_session(app_dir):
+def run_session(app_dir, profile=True, start_frames=(15, 100, 200), first_h_frame=0):
     """A 3-target accuracy session, frame by frame like run_sol_accuracy_test: 120 Hz gaze drained
     at 30 Hz, a homography message every 5th frame, a stream gap (the render loop then reuses its
-    last sample) and an invalid span (a blink) inside the collect windows."""
+    last sample) and an invalid span (a blink) inside the collect windows. Without `profile` it is
+    a C2 test; `start_frames` are the frames SPACE is pressed at; no homography before
+    `first_h_frame`."""
     model_in = oc.Sol2DOffsetModel(offset_mode=oc.OFFSET_MODE_SCREEN)
     for name, gaze, target in CAL:
         model_in.add_calibration_point(gaze, target, name)
     assert model_in.train()
     calib_dir = app_dir / "calibration_profiles"
     assert oc.save_sol_2d_offset("s01_c3", calib_dir, model_in, SCREEN_W, SCREEN_H)
-    model = oc.load_sol_2d_offset("s01_c3", calib_dir)["model"]       # as the gate loads it
+    model = oc.load_sol_2d_offset("s01_c3", calib_dir)["model"] if profile else None   # as the gate does
 
     folder = app_dir / "accuracy_test" / "s01_c3_c3_20261124_100000"
     bundle = sb.start(folder, "accuracy_test", user_name="s01_c3", operator_code="OT1", condition_code="C3")
-    bundle.profile("sol2d_offset", oc.get_sol_2d_offset_path("s01_c3", calib_dir, create=False), True,
-                   applied=True)
+    bundle.profile("sol2d_offset", oc.get_sol_2d_offset_path("s01_c3", calib_dir, create=False),
+                   model is not None, applied=True)
     streams = rs.SolStreams(bundle.folder, model)
     targets = acc.compute_accuracy_targets(SCREEN_W, SCREEN_H, VIEW_CM, WIDTH_CM)[:3]
     acc.write_csv(folder / "targets.csv", acc.TARGET_COLUMNS, acc.target_rows(targets))
@@ -57,13 +60,12 @@ def run_session(app_dir):
                            xy=lambda t: (640 + 25 * math.sin(t), 360 + 15 * math.cos(1.3 * t)))
     records, point_rows, trial_rows = [], [], []
     idx, collecting, latest, latest_pick, k, strict = 0, False, None, None, 0, False
-    start_frames = {15, 100, 200}               # SPACE pressed at these frames
     for frame in range(int(9.0 / FRAME_S)):
         t0, t1 = frame * FRAME_S, (frame + 1) * FRAME_S
         batch = [g for t, g in gaze if t0 <= t < t1]
         if batch:
             latest = batch[-1]
-        if frame % 5 == 0:                       # drain_msgs: a homography message
+        if frame % 5 == 0 and frame >= first_h_frame:   # drain_msgs: a homography message
             k += 1
             strict = frame % 10 == 0
             streams.homography(homography(k), strict, 0.02, [0, 1, 2], pc_ms=int(t0 * 1000))
@@ -99,8 +101,9 @@ def run_session(app_dir):
     bundle.update(streams=streams.close())
     acc.write_csv(folder / "points.csv", acc.POINT_COLUMNS, point_rows)
     acc.write_csv(folder / "trial_events.csv", acc.TRIAL_EVENT_COLUMNS, trial_rows)
-    acc.save_accuracy_report(str(folder), records, {"screen_w": SCREEN_W, "screen_h": SCREEN_H})
-    bundle.finish("completed")
+    if records:                                 # like the test: no report without a point
+        acc.save_accuracy_report(str(folder), records, {"screen_w": SCREEN_W, "screen_h": SCREEN_H})
+    bundle.finish("completed" if records else "aborted", None if records else "operator_q")
     return folder
 
 
@@ -111,6 +114,11 @@ def session(tmp_path_factory):
     sb.reset(app_dir=app_dir)
     yield run_session(app_dir)
     sb.reset()
+
+
+@pytest.fixture
+def bare_session(bundle_app):
+    return run_session(bundle_app, profile=False, start_frames=(), first_h_frame=30)
 
 
 def test_files_and_bundle_v2(session):
@@ -129,48 +137,50 @@ def test_files_and_bundle_v2(session):
 
 
 def test_r1_raw_screen_is_raw_gaze_through_the_logged_homography(session):
-    hom = {r["h_id"]: [[float(r[f"h{i}{j}"]) for j in range(3)] for i in range(3)]
-           for r in read(session / rs.HOMOGRAPHY_FILE)}
-    rows = read(session / rs.SOL_GAZE_FILE)
-    assert len({r["h_id"] for r in rows}) > 5                               # H changes during the run
-    for r in rows:
-        x, y = acc._apply_homography(hom[r["h_id"]], (float(r["raw_gaze_x"]), float(r["raw_gaze_y"])))
-        assert abs(x - float(r["raw_screen_x"])) < 1e-6 and abs(y - float(r["raw_screen_y"])) < 1e-6
-
-
-def _snapshot_model(session):
-    data = json.loads((session / sb.SNAPSHOT_FILE).read_text(encoding="utf-8"))
-    return oc.Sol2DOffsetModel.from_dict(data["model"])
+    s = car.load(session)
+    assert len({r["h_id"] for r in s["gaze"]}) > 5                        # H changes during the run
+    r1 = car.check_r1(s)
+    assert r1["ok"] and r1["compared"] == len(s["gaze"])
 
 
 def test_r2_the_profile_snapshot_reproduces_corr_screen(session):
-    model = _snapshot_model(session)
-    for r in read(session / rs.SOL_GAZE_FILE):
-        x, y = model.predict((float(r["raw_screen_x"]), float(r["raw_screen_y"])))
-        assert abs(x - float(r["corr_screen_x"])) < 1e-6 and abs(y - float(r["corr_screen_y"])) < 1e-6
-        assert (r["mapped_gaze_x"], r["mapped_gaze_y"]) == (r["corr_screen_x"], r["corr_screen_y"])
+    s = car.load(session)
+    assert s["model"] is not None and car.check_r2(s)["ok"]
+    assert all((r["mapped_gaze_x"], r["mapped_gaze_y"]) == (r["corr_screen_x"], r["corr_screen_y"])
+               for r in s["gaze"])
 
 
 def test_r3_legacy_centroids_recomputed_from_the_folder(session):
-    gaze = {int(r["sample_idx"]): (float(r["raw_gaze_x"]), float(r["raw_gaze_y"]))
-            for r in read(session / rs.SOL_GAZE_FILE)}
-    hom = {int(r["h_id"]): [[float(r[f"h{i}{j}"]) for j in range(3)] for i in range(3)]
-           for r in read(session / rs.HOMOGRAPHY_FILE)}
-    model = _snapshot_model(session)
-    ends = [json.loads(e["detail_json"]) for e in read(session / sb.EVENTS_FILE) if e["event"] == "collect_end"]
-    targets = read(session / "targets.csv")
-    points, legacy = read(session / "points.csv"), read(session / "accuracy_data.csv")
-    reused = 0
-    for end, point, old, tgt in zip(ends, points, legacy, targets):
-        picks = end["render_samples"]
-        reused += len(picks) - len({p[0] for p in picks})                 # a stale sample used again
-        mapped = [acc.map_raw_and_corrected(hom[h], gaze[s], model) for s, h in picks]
-        rec = acc.compute_point_record({k: tgt[k] for k in ("name", "group")} | {
-            "ecc_deg": float(tgt["ecc_deg"]), "x": float(tgt["x"]), "y": float(tgt["y"])},
-            [m[0] for m in mapped], [m[1] for m in mapped], VIEW_CM, SCREEN_W, WIDTH_CM)
-        for c in ("raw_x", "raw_y", "corr_x", "corr_y"):
-            assert abs(rec[c] - float(point[c])) < 1e-6 and point[c] == old[c]
-    assert len(ends) == 3 and reused > 0                                    # the gap was inside a window
+    s = car.load(session)
+    r3 = car.check_r3(s)
+    assert r3["ok"] and r3["compared"] == 3
+    picks = [json.loads(e["detail_json"])["render_samples"] for e in s["ends"]]
+    assert any(len(p) > len({x[0] for x in p}) for p in picks)             # a stale sample was reused
+
+
+def test_r3_fails_when_a_render_sample_points_at_the_wrong_homography(session):
+    s = car.load(session)
+    for e in s["ends"]:
+        d = json.loads(e["detail_json"])
+        d["render_samples"] = [[si, max(0, h - 1)] for si, h in d["render_samples"]]
+        e["detail_json"] = json.dumps(d)
+    assert not car.check_r3(s)["ok"]
+
+
+def test_the_tool_on_a_session_without_profile_homography_or_points(bare_session, capsys):
+    """Aborted C2 test: no profile applied, no homography for the first second, no point."""
+    s = car.load(bare_session)
+    r1, r2, r3 = car.check_r1(s), car.check_r2(s), car.check_r3(s)
+    assert r1["ok"] and 0 < r1["compared"] < len(s["gaze"]) and "without a homography" in r1["note"]
+    assert s["model"] is None and r2["ok"] and r2["compared"] == r1["compared"]
+    assert r3["ok"] and r3["compared"] == 0
+    assert car.main([str(bare_session)]) == 0
+    assert capsys.readouterr().out.count("PASS") == 3
+
+
+def test_the_tool_exit_codes(session, tmp_path):
+    assert car.main([str(session)]) == 0
+    assert car.main([str(tmp_path)]) == 2                                  # not a bundle v2 folder
 
 
 def test_points_add_sdk_sample_counts_and_valid_only_medians(session):
