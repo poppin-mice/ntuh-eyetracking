@@ -148,3 +148,92 @@ def header_badges(s):
     out.append((f"Status {status}" + (f" ({m['abort_reason']})" if m.get("abort_reason") else ""),
                 status != "completed"))
     return out
+
+
+# ---------- per-point table: logged next to recomputed ----------
+MISMATCH_PX = 0.01
+
+
+def _f(v):
+    return "" if v is None or v == "" else f"{float(v):.3f}"
+
+
+def _table_row(idx, name, n, pairs, t_ms, s, missing, also=()):
+    """pairs: [(logged (x, y) or None, recomputed (x, y) or None)], shown; `also`: more pairs that
+    count but are not shown. One table row, its flag and its seek time. `missing` (cannot be
+    recomputed) flags the row."""
+    worst = max((ar._diff(re, lo) for lo, re in list(pairs) + list(also)), default=0.0)
+    cells = [str(idx), name, str(n)]
+    for lo, re in pairs:
+        cells += [_f(v) for v in (lo or (None, None))] + [_f(v) for v in (re or (None, None))]
+    flag = missing or worst > MISMATCH_PX
+    cells += ["" if missing else f"{worst:.2g}",
+              "NOT RECOMPUTED" if missing else "MISMATCH" if flag else "ok"]
+    t = None if t_ms in (None, "") else (float(t_ms) - s["t0_ms"]) / 1000.0
+    return cells, flag, t
+
+
+def _acc_table(s):
+    cols = ["#", "target", "n", "raw x", "raw y", "recomp raw x", "recomp raw y",
+            "corr x", "corr y", "recomp corr x", "recomp corr y", "max |diff| px", "check"]
+    out = []
+    for i, (p, rec) in enumerate(zip(s["points"], ar.recompute_points(s))):
+        re = {k: None if rec is None else (rec[f"{k}_x"], rec[f"{k}_y"]) for k in ("raw", "corr")}
+        legacy = s["legacy"][i] if i < len(s["legacy"]) else None   # accuracy_data.csv: same (R3)
+        out.append(_table_row(p.get("target_idx", i), p["name"], p.get("n_samples", ""),
+                              [(ar._xy(p, k), re[k]) for k in ("raw", "corr")],
+                              p.get("collect_start_ms"), s, rec is None,
+                              also=[(ar._xy(legacy, k), re[k]) for k in ("raw", "corr")] if legacy else ()))
+    return cols, out
+
+
+def _cal_table(s):
+    from ntuh.sol import stability
+    from ntuh.sol.accuracy_test import _apply_homography
+    cols = ["#", "point", "n sdk", "est x", "est y", "recomp est x", "recomp est y",
+            "used x", "used y", "recomp used x", "recomp used y", "max |diff| px", "check"]
+    mode = getattr(s["model"], "offset_mode", None) or (s["meta"].get("protocol_params") or {}).get("offset_mode")
+    ends = {e["target_idx"]: e["detail"] for e in s["events"] if e["event"] == "collect_end"}
+    out = []
+    for p in s["calib_points"]:
+        k = p["point_idx"]
+        if p.get("used_x", "") == "":           # skipped for lack of a homography: nothing to compare
+            out.append(([k, p["name"], "", *[""] * 8, "", "skipped"], False,
+                        None if not p.get("collect_start_ms") else
+                        (float(p["collect_start_ms"]) - s["t0_ms"]) / 1000.0))
+            continue
+        t0, t1 = float(p.get("collect_start_ms") or "-inf"), float(p.get("collect_end_ms") or "inf")
+        win = [r for r in s["gaze"] if r["phase"] == "collecting" and r["target_idx"] == k
+               and t0 <= float(r["pc_timestamp_ms"]) <= t1]
+        logged_est = ar._xy(p, "est") if p.get("est_x", "") != "" else None
+        est, missing = logged_est, logged_est is None
+        if p.get("estimator") == stability.STEADIEST:
+            sdk = [(float(r["sdk_timestamp_ms"]), float(r["raw_gaze_x"]), float(r["raw_gaze_y"]), v)
+                   for r, v in zip(win, sample_valid(win))]
+            e = stability.point_estimate(stability.STEADIEST, [], sdk)
+            est = None if e is None else (e["est_x"], e["est_y"])
+            missing = est is None
+        else:
+            missing = True                      # legacy 30-frame mean: render samples are not logged
+        h_id = ends.get(k, {}).get("h_id", win[-1]["h_id"] if win else None)
+        H = s["homs"].get(int(h_id)) if h_id not in (None, "") else None
+        used = (None if est is None else est if mode != "screen" else _apply_homography(H, est))
+        pairs = [(logged_est, est if p.get("estimator") == stability.STEADIEST else None),
+                 (ar._xy(p, "used"), used)]
+        out.append(_table_row(k, p["name"], len(win), pairs, p.get("collect_start_ms"), s,
+                              missing or used is None))
+    return cols, out
+
+
+def point_table(s):
+    """The per-point table: {"columns", "rows" (cells), "flags" (True = check by hand), "t_s"
+    (collect start on the session clock, for seeking)}.
+
+    Accuracy test: the headline raw / corr centroid of points.csv (and accuracy_data.csv) next
+    to the one recomputed from the render-frame samples collect_end lists (accuracy_replay,
+    the R3 check). Calibration run: est (steadiest_1s_median, recomputed from the logged SDK
+    samples with ntuh/sol/stability.py) and used (= est through the homography collect_end
+    names, screen mode). A row is flagged above MISMATCH_PX or when it cannot be recomputed."""
+    cols, rows = (_cal_table if s["kind"] == "cal" else _acc_table)(s)
+    return {"columns": cols, "rows": [r[0] for r in rows], "flags": [r[1] for r in rows],
+            "t_s": [r[2] for r in rows]}

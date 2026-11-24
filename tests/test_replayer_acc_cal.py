@@ -5,6 +5,7 @@ window is only built when PyQt6 is installed (not on CI). Synthetic data only.""
 import csv
 import json
 import os
+import shutil
 
 import pytest
 
@@ -163,3 +164,55 @@ def test_a_calibration_run_shows_whether_its_profile_was_saved(cal):
     texts = dict(qc.header_badges(qc.load(cal)))
     assert texts["Profile SAVED s01_c3_sol_2d_offset.json"] is False
     assert not any(t.startswith(("Gate", "Our calib")) for t in texts)
+
+
+def edit_csv(path, row, col, delta):
+    rows = car_read(path)
+    rows[row][col] = repr(float(rows[row][col]) + delta)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+
+
+def test_accuracy_table_recomputes_every_point_and_finds_no_mismatch(acc):
+    t = qc.point_table(qc.load(acc))
+    assert len(t["rows"]) == 3 and len(t["columns"]) == len(t["rows"][0])
+    assert t["flags"] == [False] * 3 and [r[-1] for r in t["rows"]] == ["ok"] * 3
+    assert all(r[3] == r[5] and r[8] == r[10] for r in t["rows"])     # logged == recomputed, shown
+    assert all(x is not None and x >= 0 for x in t["t_s"])
+
+
+@pytest.mark.parametrize("name, col, delta, flagged", [
+    ("points.csv", "corr_x", 0.05, True), ("points.csv", "raw_y", -0.02, True),
+    ("accuracy_data.csv", "corr_y", 0.05, True),                      # the legacy copy counts too
+    ("points.csv", "corr_x", 0.005, False)])                         # below 0.01 px
+def test_an_altered_copy_of_the_point_results_is_flagged(acc, tmp_path, name, col, delta, flagged):
+    copy = tmp_path / acc.name
+    shutil.copytree(acc, copy)
+    edit_csv(copy / name, 1, col, delta)
+    t = qc.point_table(qc.load(copy))
+    assert t["flags"] == [False, flagged, False]
+    assert t["rows"][1][-1] == ("MISMATCH" if flagged else "ok")
+
+
+def test_a_point_that_cannot_be_recomputed_is_flagged(acc, tmp_path):
+    copy = tmp_path / acc.name
+    shutil.copytree(acc, copy)
+    rows = [e for e in car_read(copy / "events.csv") if not (e["event"] == "collect_end" and e["target_idx"] == "2")]
+    with open(copy / "events.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+    t = qc.point_table(qc.load(copy))
+    assert t["flags"] == [False, False, True] and t["rows"][2][-1] == "NOT RECOMPUTED"
+
+
+def test_calibration_table_recomputes_the_estimate_and_its_screen_point(cal, tmp_path):
+    t = qc.point_table(qc.load(cal))
+    assert [r[-1] for r in t["rows"]] == ["ok"] * 3 and [r[2] for r in t["rows"]] == ["360"] * 3
+    copy = tmp_path / cal.name
+    shutil.copytree(cal, copy)
+    edit_csv(copy / "calib_points.csv", 0, "used_x", 0.02)
+    edit_csv(copy / "calib_points.csv", 2, "est_y", 0.02)
+    assert qc.point_table(qc.load(copy))["flags"] == [True, False, True]

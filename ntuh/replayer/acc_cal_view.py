@@ -3,7 +3,9 @@
 
 Everything it shows comes from ntuh/replayer/session_qc.py. It only reads the session folder.
 """
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QTableWidget, QTableWidgetItem,
+                             QVBoxLayout, QWidget)
 
 from ntuh.replayer import session_qc as qc
 
@@ -29,7 +31,29 @@ class AccCalView(QWidget):
         lay.addLayout(header)
         if self.s["load_error"]:
             lay.addWidget(QLabel(f"No bundle v2 samples in this folder: {self.s['load_error']}"))
-        lay.addStretch(1)
+        lay.addWidget(self._point_table(), 1)
+
+    def _point_table(self):
+        t = qc.point_table(self.s)
+        self.table_seek = t["t_s"]
+        w = QTableWidget(len(t["rows"]), len(t["columns"]))
+        w.setHorizontalHeaderLabels(t["columns"])
+        w.verticalHeader().setVisible(False)
+        w.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        w.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        w.setStyleSheet("QTableWidget { background: #2a2a2a; gridline-color: #444; }"
+                        "QHeaderView::section { background: #333; color: #ccc; }")
+        for i, (cells, flag) in enumerate(zip(t["rows"], t["flags"])):
+            for j, text in enumerate(cells):
+                item = QTableWidgetItem(str(text))
+                if flag:
+                    item.setBackground(QColor("#8e2424"))
+                w.setItem(i, j, item)
+        w.resizeColumnsToContents()
+        w.setToolTip("Logged next to recomputed from the raw samples; red = differs by more than "
+                     f"{qc.MISMATCH_PX} px or cannot be recomputed")
+        self.table = w
+        return w
 
 
 class AccCalWindow(QMainWindow):
