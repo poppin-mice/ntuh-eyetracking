@@ -889,14 +889,15 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         return False
 
 
-def load_sol_2d_offset(username, calib_dir):
+def load_sol_2d_offset(username, calib_dir, filepath=None):
     """
-    Load the 2D offset calibration model from a JSON file.
+    Load the 2D offset calibration model from a JSON file: the User Name's profile, or
+    `filepath` when given (the profile picked for VA/VF, ntuh/sol/offset_choice.py).
 
     Returns:
         Dict with 'model' (Sol2DOffsetModel) and metadata, or None if not found
     """
-    filepath = get_sol_2d_offset_path(username, calib_dir)
+    filepath = Path(filepath) if filepath else get_sol_2d_offset_path(username, calib_dir)
 
     if not filepath.exists():
         return None

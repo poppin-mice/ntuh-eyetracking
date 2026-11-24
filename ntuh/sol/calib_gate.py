@@ -27,9 +27,10 @@ OK = "ok"                                           # profile loaded and applied
 BLOCKED_MISSING = "blocked_missing"                 # C3/C5 without a profile: must not start
 NOT_APPLIED_BY_CONDITION = "not_applied_by_condition"   # C1/C2/C4
 NO_CALIB_BY_OPERATOR = "no_calib_by_operator"       # C3/C5 run without it, by the operator's choice
+NOT_SELECTED = "not_selected"                       # VA/VF: no profile picked (ntuh/sol/offset_choice.py)
 
 _ICON = {OK: "green", NOT_APPLIED_BY_CONDITION: "grey", NO_CALIB_BY_OPERATOR: "grey",
-         BLOCKED_MISSING: "red"}
+         BLOCKED_MISSING: "red", NOT_SELECTED: "grey"}
 
 
 @dataclass(frozen=True)
