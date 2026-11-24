@@ -219,6 +219,15 @@ keeps loading it; append the rest.
 | 26-29 | `left/right_pupil2d_x/y` | eye-camera px — **headset-slip indicator** (slip moves the pupil image; a Chronus calibration does not) | SDK `leftEyePupil2dPositionX…` |
 | 30-35 | `gaze3d_x/y/z`, `gaze3d_valid`, … | optional, for 3D-method work | SDK |
 
+**As implemented (B-D15, ACC, VA_center_opt 1.12.0):** columns 1-29 as above, then `sample_idx` (running
+number of the SDK sample in the session, 0-based) as column 30; the optional 3D columns are not written.
+Missing values are empty cells, not `NaN` (pandas reads both as NaN): `raw_screen` / `corr_screen` / `h_id`
+before the first homography, `corr_screen` = `raw_screen` when no offset profile is applied. `mapped_gaze_x/y`
+is `-1` without a homography (the VA recorder's "no value"). `visual_angle_deg` and `angular_velocity_dps`
+are left empty (the VA definition is wrong, see row 9-10). `phase` is `idle` or `collecting`. The
+`session_meta.streams` counters are `rows`, `failed` (rows the writer could not write) and
+`sdk_samples_received`; the writer queue is unbounded, so a slow disk costs memory, never a row.
+
 **Rate rule: one row per SDK sample, every sample.** Today the calibration loop keeps only the last of up to
 20 drained samples per 30 Hz frame (`settings_window.py:1414-1419`), the accuracy test keeps only the last per
 frame (`settings_window.py:2815-2816`), and the VA recorder writes one row per render frame: on 0918 the VA
@@ -239,6 +248,12 @@ marker_ids(";"-joined), h00,h01,h02,h10,h11,h12,h20,h21,h22`  (image→screen, s
 uses). Optional: `reproj_err_px`, `rvec/tvec` if already available in the parent (do not compute new things in
 the child).
 
+**As implemented (B-D15, ACC):** the row holds the homography the parent's projector holds *after* the message
+(a message without `H` keeps the previous matrix), so a sample's `h_id` points at exactly the matrix it was
+mapped through. `valid` = a matrix exists (lenient), `strict_valid` = markers currently detected. `source` is
+`child`, `cached_seed` (the cached homography the test starts from) or `crash` (the Sol child died: same
+matrix, `strict_valid` 0). The optional columns are not written.
+
 ### 4.3 `events.csv`
 
 `pc_timestamp_ms, sdk_timestamp_ms_nearest, event, target_idx, target_name, repeat_idx, x, y, detail_json`
@@ -251,7 +266,7 @@ the child).
 | `space_pressed` | every SPACE (accepted or not) | `accepted`, `reject_reason` (stale / no homography / already collecting) |
 | `collect_start` / `collect_end` | window bounds | n render-frame samples, n SDK samples, n valid |
 | `collect_discard` | stall mid-point (`settings_window.py:2877-2880`) | n discarded |
-| `point_skipped` | CAL point skipped for lack of homography (`settings_window.py:1454-1458, 1465-1468`) | |
+| `point_skipped` | CAL point skipped for lack of homography (`settings_window.py:1454-1458, 1465-1468`); ACC has no skip | |
 | `h_state_change` | LIVE/CACHED/STALE/WAITING transitions | from, to |
 | `worker_crash` / `worker_respawn` / `worker_failed` | `settings_window.py:2844-2854` | exit code |
 | `calib_trained` / `calib_saved` | CAL end | profile path, sha256, LOO summary |
@@ -271,6 +286,15 @@ Today's `accuracy_data.csv` columns (`accuracy_test.py:192-194`) plus:
 h_state_mix, raw_median_x, raw_median_y, corr_median_x, corr_median_y, err_raw_median_deg, err_corr_median_deg`.
 Keep the legacy definition (mean of 30 render-frame samples, `settings_window.py:2894-2899`) as the headline
 so results stay comparable with 0918.
+
+**As implemented (B-D15):** `repeat_idx` is 0 (no repeats yet, §9). The medians are over the SDK samples of the
+collect window that have a screen point; appended after them, the same over the valid samples only
+(`gaze2d_valid` and both eyes NORMAL, the `valid_only` estimator of §8): `raw_valid_median_x/y`,
+`corr_valid_median_x/y`, `err_raw_valid_median_deg`, `err_corr_valid_median_deg`. `h_state_mix` is
+`STATE:count` pairs over those SDK samples, `;`-joined (`LIVE:352;CACHED:8`). The 30 render-frame samples are
+not separate rows (a render frame reuses the last SDK sample when none arrived, and maps it through the
+homography of that frame): the `collect_end` event lists them as `render_samples` = `[[sample_idx, h_id], …]`,
+which is what R3 recomputes the headline from.
 
 ### 4.6 `calib_points.csv` (CAL)
 `point_idx, name, target_x, target_y, collect_start_ms, collect_end_ms, n_render_samples, n_sdk_samples,
@@ -369,7 +393,9 @@ Detect by `session_meta.session_kind`. Panels:
 - Compat shim: write `trial_events.csv` with `trial_number=order_idx, cpd='', side=target_name,
   start/end=collect window (s), result=REC|DISCARDED, stim_x/stim_y=target, eval_source='Sol',
   trial_type='acc_target'|'calib_point'|'drift_check'` so the current timeline (`playback_engine.py:93`)
-  shows the points before the new mode exists.
+  shows the points before the new mode exists. *As implemented (B-D15, ACC):* start/end in PC epoch seconds,
+  one row per recorded or discarded point. Open issue: the current replayer (`playback_engine.load_session`)
+  refuses a folder without a video and its timestamp file, and an ACC folder has no video before Tier 2 (§5).
 
 ---
 

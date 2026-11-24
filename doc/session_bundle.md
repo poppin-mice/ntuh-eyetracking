@@ -49,7 +49,8 @@ Required files per kind, as the check tool enforces them
 | `sol2d_calibration` | `session_meta.json`, `events.csv`, `console.log`, `calib_points.csv` | |
 | `sol3d_calibration` (not written yet) | `session_meta.json`, `events.csv`, `console.log` | |
 
-A `crashed` session also needs `crash_log.txt`.
+A `crashed` session also needs `crash_log.txt`. A folder with `bundle.version` 2 also needs the
+[bundle v2 files](#bundle-v2-replayable) of its kind (`BUNDLE_V2_FILES`), whatever its status.
 
 ## `session_meta.json`
 
@@ -76,7 +77,8 @@ A `crashed` session also needs `crash_log.txt`.
 | `mapping` | `gaze_method` (2D / 3D), `gaze_smooth`, `pose_smooth`, `eval_source` |
 | `protocol_params` | VA: `pass_dur_s`, `stim_dur_s`, `catch_enabled`, `catch_trials`, `quality_gate_enabled`, `quality_gate_threshold_pct`, `radius_px`. VF: the quality gate and every `vf_*` setting. Accuracy test: `n_targets_planned`, `samples_per_point_render_frames`, ring layout. Calibration run: `offset_mode`, `n_points_planned`, `samples_per_point_render_frames`, `target_display_size_px` |
 | `config` | The full settings the test ran with |
-| `bundle` | `version` (1) and `files`: every file in the folder with its `sha256` and `bytes`, except `session_meta.json` itself |
+| `bundle` | `version` (1; 2 for a kind that writes the [v2 files](#bundle-v2-replayable)) and `files`: every file in the folder with its `sha256` and `bytes`, except `session_meta.json` itself |
+| `streams` | Bundle v2: per sample file `rows` written, `failed` (rows that could not be written) and, for `sol_gaze_data.csv`, `sdk_samples_received` |
 
 A name that cannot be parsed (for example `anonymous`) gives `null` codes; `user_name_legacy` still
 holds what was typed. `display`, `mapping`, `protocol_params` and `config` are read again at the end
@@ -167,6 +169,24 @@ file: the tests that follow will load it.
 scene-camera px in camera mode (`protocol_params.offset_mode`). A point skipped for lack of a
 homography has a row with empty model columns.
 
+## Bundle v2 (replayable)
+
+*1.12.0, accuracy test.* Every sample and homography the test used, so each number of the report can
+be computed again from the folder and other calibration methods can be tried on the same data
+(contract: `doc/dev/LOGGING_SPEC.md` 4.1-4.5, 7.2). The Sol 2D calibration run follows.
+
+| File | Content |
+|------|---------|
+| `sol_gaze_data.csv` | One row per Sol SDK sample (about 120 per second). The 14 columns of the VA file first, then `sdk_timestamp_ms`, `gaze2d_valid`, `raw_screen_x/y` (raw gaze through the homography), `corr_screen_x/y` (plus our offset), `h_id`, `h_state`, `scene_age_ms`, `phase` (`idle` / `collecting`), `target_idx`, `left/right_pupil2d_x/y`, `sample_idx`. `mapped_gaze_x/y` = `corr_screen`. Empty cell = no value |
+| `homography_log.csv` | One row per homography the test held (each message of the Sol child, the cached one it started from, a child crash): `pc_timestamp_ms, h_id, source, valid, strict_valid, frame_age_ms, n_markers, marker_ids, h00 ... h22` (image -> screen) |
+| `targets.csv` | `target_idx, name, group, ecc_deg, x, y, repeat_idx, order_idx` |
+| `points.csv` | One row per recorded point: the `accuracy_data.csv` columns (unchanged headline: mean of 30 render-frame samples), then `target_idx, repeat_idx, collect_start_ms, collect_end_ms, n_render_samples, n_sdk_samples, n_sdk_valid, h_state_mix`, the medians of the SDK samples of the collect window (`raw/corr_median_x/y`, `err_raw/corr_median_deg`) and the same over the valid ones only (`raw/corr_valid_median_x/y`, `err_raw/corr_valid_median_deg`; valid = `gaze_2d` valid and both eyes NORMAL) |
+| `trial_events.csv` | The VA columns, one row per recorded (`REC`) or discarded (`DISCARDED`) point: `trial_number` = target index, `side` = target name, start / end = collect window (seconds), `stim_x/y` = target, `trial_type` = `acc_target` |
+
+`accuracy_report.json` → `meta` gains `session_id`. The files are written by background threads; the
+test never waits for the disk. The replayer of today opens a folder only when it has a video, which an
+accuracy-test folder does not have yet.
+
 ## Result files
 
 *1.9.0.*
@@ -202,6 +222,11 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `scene_stall` | Accuracy test: SPACE while the scene video was stalled | `scene_age_s` |
 | `collect_discard` | Accuracy test: a point was dropped because the scene stalled while collecting | `n_discarded` |
 | `collect_end`, `point_skipped` | *1.9.0*. Calibration run: a point was recorded, or skipped for lack of a homography | `n`, `n_valid` |
+| `gate_check` | *1.12.0*. Accuracy test start: the calibration gate's decision | `status`, `message`, `condition`, `operator_code`, `time` |
+| `target_show` | *1.12.0*. Accuracy test: a target appeared (columns `target_idx`, `target_name`, `x`, `y`) | |
+| `space_pressed` | *1.12.0*. Accuracy test: every SPACE | `accepted`, `reject_reason` (`already_collecting`, `stale`, `no_homography`) |
+| `collect_start`, `collect_end` | *1.12.0*. Accuracy test: a point's collect window opened / the point was recorded | end: `n_render_samples`, `n_sdk_samples`, `n_sdk_valid`, `render_samples` (`[[sample_idx, h_id], ...]`: the SDK sample and homography each of the 30 averaged samples used) |
+| `h_state_change` | *1.12.0*. Accuracy test: Homography LIVE / CACHED / STALE / WAITING changed | `from`, `to` |
 | `calib_trained`, `calib_saved` | *1.9.0*. Calibration run: the model was trained; the profile was saved or not | `trained`, `n_points`, mean leave-one-out errors / `saved`, `path`, `error` |
 | `worker_crash`, `worker_respawn`, `worker_failed`, `worker_connected` | Accuracy test: the Sol child process crashed, was restarted, could not recover, (re)connected | `exit_code` |
 | `worker_message` | Accuracy test: a note from the Sol child process. Most are status notes (stream subscribed, first frame), not errors | `type`, `where`, `message` |
@@ -283,7 +308,8 @@ python tools/rescore_session.py <session folder> [--out <folder>]
 ## Compatibility
 
 - Bundle v1 file names and columns never change. Bundle v2 (full-rate samples, homography log, scene
-  video) only adds files or appends columns, and raises `bundle.version` to 2.
+  video) only adds files or appends columns, and raises `bundle.version` to 2 (accuracy test since
+  1.12.0). An accuracy-test folder of 1.9.0 (version 1) needs no v2 files to pass the check.
 - The **accuracy-test folder** is now created when the test starts and named after the start time. It
   used to be created with the report and named after the end time. `accuracy_report.json` →
   `meta.timestamp` is still the end time; the new `meta.started_at` is the start. An accuracy test

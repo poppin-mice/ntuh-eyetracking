@@ -187,6 +187,14 @@ VA_center_opt
            profile it saved, and whether the save worked. New result files va_result.json and
            vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
            scores a session again from its own files into a separate _derived folder.
+    1.12.0 Session bundle v2 for the accuracy test (doc/session_bundle.md): its folder now keeps
+           every Sol sample (sol_gaze_data.csv, VA columns first), every homography
+           (homography_log.csv), targets.csv, points.csv (accuracy_data.csv columns + collect
+           window, sample counts, medians over all / valid samples) and a trial_events.csv, so a
+           test can be mapped again from its files. events.csv gains gate_check, target_show,
+           space_pressed, collect_start/end and h_state_change. accuracy_report.json,
+           accuracy_data.csv and the PNGs are unchanged (headline = 30-frame mean); meta gains
+           session_id. bundle.version is 2 for the accuracy test.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -272,7 +280,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.9.0",
+    "VA_center_opt": "1.12.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
