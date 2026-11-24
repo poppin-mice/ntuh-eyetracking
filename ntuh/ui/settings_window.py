@@ -2732,6 +2732,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         from datetime import datetime
         from ntuh.sol.preview_client import SolPreviewClient
         from ntuh.sol import accuracy_test as acc
+        from ntuh.recording import replay_streams
 
         # ArUco assets (markers must be on screen for the homography)
         aruco_dict_map = {
@@ -2834,6 +2835,16 @@ Controls: SPACE = Record point, Q = Cancel"""
             bundle.profile("sol2d_offset",
                            get_sol_2d_offset_path(username, self.calib_dir_var.get(), create=False),
                            offset_model is not None, applied=True)
+        bundle.event("gate_check", **gate.to_dict())
+        # Bundle v2: every SDK sample and homography, the targets and per-point results, so the
+        # test can be mapped again from its folder (doc/session_bundle.md).
+        streams = replay_streams.SolStreams(bundle.folder, offset_model)
+        point_rows, trial_rows = [], []
+        if bundle.folder:
+            try:
+                acc.write_csv(bundle.folder / "targets.csv", acc.TARGET_COLUMNS, acc.target_rows(targets))
+            except Exception as e:
+                bundle.event("exception", where="targets_csv", error=f"{type(e).__name__}: {e}")
         abort_reason = [None]
 
         def note_abort(key, reason):
@@ -2853,6 +2864,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             sol_projector.set_gaze_2d_offset_model(offset_model)
         if self.sol_cached_homography is not None:
             sol_projector.set_homography(self.sol_cached_homography, valid=False)
+            streams.homography(sol_projector.get_homography(), False, source="cached_seed")
 
         self.in_sol_offset_calibration = True
         self.withdraw()
@@ -2922,6 +2934,9 @@ Controls: SPACE = Record point, Q = Cancel"""
         bundle.update(protocol_params={"samples_per_point_render_frames": SAMPLES})
         detected_marker_ids = []
         latest_gaze = None
+        # For the replay files: the collect window, its SDK samples, which sample and homography
+        # each render-frame sample used (sample_idx, h_id), and the last h_state / target shown.
+        collect_t0, window, picks, latest_pick, last_hom, shown_idx = None, [], [], None, None, None
         running = True
         aborted = False
 
@@ -3083,8 +3098,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                         note_abort("q", "operator_q")
                     _prev_space_async, _prev_q_async = _sd, _qd
 
-                for g in sol_client.drain_gaze():
-                    latest_gaze = g
+                _gl = sol_client.drain_gaze()
+                if _gl:
+                    latest_gaze = _gl[-1]
                 if dual_screen:
                     _sf = sol_client.drain_frames()
                     if _sf is not None:      # hold the last frame when none arrived, so it doesn't blink
@@ -3100,6 +3116,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                         detected_marker_ids = m.get('ids', [])
                         _fa = m.get('frame_age')
                         scene_age[0] = (float(_fa), time.time()) if _fa is not None else None
+                        streams.homography(sol_projector.get_homography(),
+                                           sol_projector.is_homography_valid(strict=True),
+                                           _fa, detected_marker_ids)
                     elif t == 'pose':
                         _rv, _tv = m.get('rvec'), m.get('tvec')
                         sol_projector.set_pose(np.array(_rv, dtype=float) if _rv is not None else None,
@@ -3121,6 +3140,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                     bundle.event("worker_crash", exit_code=sol_client.last_exitcode, target_idx=idx)
                     sol_projector.homography_valid = False; detected_marker_ids = []
                     scene_age[0] = None
+                    streams.homography(sol_projector.get_homography(), False, source="crash")
                 elif _ev == 'respawned':
                     print("[Accuracy] scene worker respawned; waiting for it to reconnect")
                     bundle.event("worker_respawn", target_idx=idx)
@@ -3137,7 +3157,15 @@ Controls: SPACE = Record point, Q = Cancel"""
                 scene_stale = (scene_age_s is None) or (scene_age_s > SCENE_STALE_S)
 
                 tgt = targets[idx]
+                if shown_idx != idx:
+                    shown_idx = idx
+                    bundle.event("target_show", target_idx=idx, target_name=tgt['name'], x=tgt['x'], y=tgt['y'])
 
+                if space_pressed and running:
+                    _rej = ("already_collecting" if collecting else "stale" if scene_stale
+                            else None if sol_projector.is_homography_valid() else "no_homography")
+                    bundle.event("space_pressed", target_idx=idx, target_name=tgt['name'],
+                                 accepted=_rej is None, reject_reason=_rej)
                 if space_pressed and not collecting and running:
                     if scene_stale:
                         _age_txt = "no data" if scene_age_s is None else f"{scene_age_s:.1f}s old"
@@ -3147,6 +3175,9 @@ Controls: SPACE = Record point, Q = Cancel"""
                                      scene_age_s=None if scene_age_s is None else round(scene_age_s, 2))
                     elif sol_projector.is_homography_valid():
                         collecting = True; raw_samples, corr_samples = [], []
+                        collect_t0, window, picks = int(time.time() * 1000), [], []
+                        bundle.event("collect_start", target_idx=idx, target_name=tgt['name'],
+                                     sdk_ts=streams.last_sdk_ts)
                     else:
                         print("[Accuracy] homography not ready; wait for LIVE/CACHED")
 
@@ -3158,7 +3189,22 @@ Controls: SPACE = Record point, Q = Cancel"""
                           f"{len(corr_samples)} sample(s) - repeat this point")
                     bundle.event("collect_discard", target_idx=idx, target_name=tgt['name'],
                                  n_discarded=len(corr_samples))
+                    trial_rows.append(acc.trial_event_row(idx, tgt, collect_t0, int(time.time() * 1000),
+                                                          "DISCARDED"))
                     collecting = False; raw_samples, corr_samples = [], []
+
+                # Every SDK sample drained this frame -> sol_gaze_data.csv, mapped through the
+                # homography the test holds now (the same one live_raw below uses).
+                hom = replay_streams.h_state(scene_stale, sol_projector.is_homography_valid(strict=True),
+                                             sol_projector.is_homography_valid())
+                if hom != last_hom:
+                    bundle.event("h_state_change", target_idx=idx, **{"from": last_hom, "to": hom})
+                    last_hom = hom
+                _logged = streams.samples(_gl, hom, scene_age_s, "collecting" if collecting else "idle", idx)
+                if _gl:
+                    latest_pick = streams.n_samples - 1      # the sample_idx of latest_gaze
+                if collecting:
+                    window += _logged
 
                 # Live gaze -> screen (raw + offset-corrected), computed every frame so the tester
                 # view can show where the subject is looking right now (not only while recording).
@@ -3175,24 +3221,25 @@ Controls: SPACE = Record point, Q = Cancel"""
                 if collecting:
                     if live_raw is not None and live_corr is not None:
                         raw_samples.append(live_raw); corr_samples.append(live_corr)
+                        picks.append([latest_pick, streams.h_id])
                     if len(corr_samples) >= SAMPLES:
                         rec = acc.compute_point_record(tgt, raw_samples, corr_samples,
                                                        view_dist_cm, screen_w, screen_width_cm)
                         records.append(rec)
+                        _t1 = int(time.time() * 1000)
+                        _ex = acc.point_extras(idx, tgt, window, len(corr_samples), collect_t0, _t1,
+                                               view_dist_cm, screen_w, screen_width_cm)
+                        point_rows.append({**rec, **_ex})
+                        trial_rows.append(acc.trial_event_row(idx, tgt, collect_t0, _t1, "REC"))
+                        bundle.event("collect_end", target_idx=idx, target_name=tgt['name'],
+                                     sdk_ts=streams.last_sdk_ts, n_render_samples=len(corr_samples),
+                                     n_sdk_samples=_ex["n_sdk_samples"], n_sdk_valid=_ex["n_sdk_valid"],
+                                     render_samples=picks)
                         print(f"[Accuracy] {idx + 1}/{len(targets)} {tgt['name']}: "
                               f"acc raw={rec['err_raw_deg']:.2f} -> corr={rec['err_corr_deg']:.2f} deg, "
                               f"precision={rec['prec_corr_deg']:.3f} deg")
                         collecting = False; idx += 1; latest_gaze = None
                         continue
-
-                if scene_stale:
-                    hom = "STALE"          # frames stopped; whatever H we hold is frozen
-                elif sol_projector.is_homography_valid(strict=True):
-                    hom = "LIVE"
-                elif sol_projector.is_homography_valid():
-                    hom = "CACHED"
-                else:
-                    hom = "WAITING"
 
                 # ---- render (user screen) ----
                 win.blit(static_bg, (0, 0))
@@ -3264,6 +3311,14 @@ Controls: SPACE = Record point, Q = Cancel"""
             time.sleep(0.1)
             self.deiconify()
 
+        bundle.update(streams=streams.close())
+        if bundle.folder:
+            try:
+                acc.write_csv(bundle.folder / "points.csv", acc.POINT_COLUMNS, point_rows)
+                acc.write_csv(bundle.folder / "trial_events.csv", acc.TRIAL_EVENT_COLUMNS, trial_rows)
+            except Exception as e:
+                bundle.event("exception", where="replay_files", error=f"{type(e).__name__}: {e}")
+
         # ---- report ----
         def end_session():   # after the report files exist, before any dialog waits for a click
             bundle.finish("aborted" if aborted else "completed", abort_reason[0])
@@ -3281,6 +3336,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                                   len(records), offset_model, aborted, gate, profile_path_txt,
                                   profile.get('calibration_timestamp') if gate.apply else None)
             meta["started_at"] = bundle.meta.get("started_at")
+            meta["session_id"] = bundle.session_id
             meta["result"] = acc.result_block(records)       # what the dialog below shows
             try:
                 acc.save_accuracy_report(out_dir, records, meta)
