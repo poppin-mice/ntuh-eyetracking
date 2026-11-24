@@ -134,6 +134,7 @@ The contract for what each session must record (session metadata, sample-level S
 events, calibration profiles) is **`doc/dev/LOGGING_SPEC.md`**. It is a draft (v0.1, 2026-09-27) and is
 added by its own PR. Until that PR is merged, ask Edan for the draft. New logging work follows it, and a
 format change updates it in the same PR.
+Any new data-collection feature writes through `SessionBundle` (`ntuh/recording/session_bundle.py`); list it in `doc/dev/COLLECTION_FLOWS.md`.
 
 ### Tests
 
