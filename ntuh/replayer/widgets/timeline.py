@@ -22,6 +22,19 @@ from PyQt6.QtGui import (
     QShortcut, QKeySequence,
 )
 
+
+def trial_tooltip_text(trial):
+    """Hover text for one timeline trial, as normalised by TimelineWidget.set_trials():
+    (start, end, result, tnum, cpd, review_label, trial_type).
+
+    Kept free of Qt so tests/test_replayer_timeline_tooltip.py can check it without PyQt6.
+    A catch trial is tagged CATCH, like its row in the trial list.
+    """
+    _start, _end, result, tnum, cpd, label, ttype = trial
+    tag = "  CATCH" if ttype == "catch" else ""
+    return f"Trial {tnum}  CPD:{cpd}{tag}  {result}" + (f" -> {label}" if label else "")
+
+
 class TimelineWidget(QWidget):
     seek_requested = pyqtSignal(float)
 
@@ -32,7 +45,7 @@ class TimelineWidget(QWidget):
 
         self._duration = 0.0
         self._current_time = 0.0
-        self._trials = []  # list of (start_norm, end_norm, result_str, trial_num, cpd)
+        self._trials = []  # 7-tuples, see set_trials()
         self._hover_trial = None
         self._scrubbing = False
         self._strip_N = 360
@@ -225,8 +238,7 @@ class TimelineWidget(QWidget):
 
         # Hover tooltip
         if self._hover_trial is not None:
-            ts, te, result, tnum, cpd, label = self._hover_trial
-            tip = f"Trial {tnum}  CPD:{cpd}  {result}" + (f" -> {label}" if label else "")
+            tip = trial_tooltip_text(self._hover_trial)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(0, 0, 0, 200))
             tw = p.fontMetrics().horizontalAdvance(tip) + 12
