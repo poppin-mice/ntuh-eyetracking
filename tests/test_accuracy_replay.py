@@ -1,0 +1,215 @@
+# -*- coding: utf-8 -*-
+"""Bundle v2 of the accuracy test (ntuh/recording/replay_streams.py): a synthetic session is run
+through the same pieces the test loop uses, then every logged number is recomputed from the
+session folder alone (LOGGING_SPEC 8, R1-R3). Synthetic data only."""
+import csv
+import json
+import math
+
+import numpy as np
+import pytest
+
+from helpers.synthetic import make_sol_stream
+from ntuh.recording import replay_streams as rs
+from ntuh.recording import session_bundle as sb
+from ntuh.sol import accuracy_test as acc
+from ntuh.sol import offset_calibration_2d as oc
+
+SCREEN_W, SCREEN_H, VIEW_CM, WIDTH_CM = 3840, 2160, 60.0, 59.5
+FRAME_S = 1 / 30.0
+# Calibration points in screen px: (name, mapped gaze, target).
+CAL = [("center", (1900.0, 1100.0), (1920.0, 1080.0)), ("upper-left", (600.0, 500.0), (576.0, 475.0)),
+       ("upper-right", (3300.0, 460.0), (3264.0, 475.0)), ("lower-right", (3250.0, 1700.0), (3264.0, 1685.0)),
+       ("lower-left", (590.0, 1650.0), (576.0, 1685.0))]
+
+
+def homography(k):
+    """An image->screen homography that drifts a little with k (the head moves)."""
+    return [[3.0 + 0.001 * k, 0.01, 10.0 + 0.7 * k], [0.002, 3.0, -20.0 + 0.3 * k], [1e-6, 2e-6, 1.0]]
+
+
+def read(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def run_session(app_dir):
+    """A 3-target accuracy session, frame by frame like run_sol_accuracy_test: 120 Hz gaze drained
+    at 30 Hz, a homography message every 5th frame, a stream gap (the render loop then reuses its
+    last sample) and an invalid span (a blink) inside the collect windows."""
+    model_in = oc.Sol2DOffsetModel(offset_mode=oc.OFFSET_MODE_SCREEN)
+    for name, gaze, target in CAL:
+        model_in.add_calibration_point(gaze, target, name)
+    assert model_in.train()
+    calib_dir = app_dir / "calibration_profiles"
+    assert oc.save_sol_2d_offset("s01_c3", calib_dir, model_in, SCREEN_W, SCREEN_H)
+    model = oc.load_sol_2d_offset("s01_c3", calib_dir)["model"]       # as the gate loads it
+
+    folder = app_dir / "accuracy_test" / "s01_c3_c3_20261124_100000"
+    bundle = sb.start(folder, "accuracy_test", user_name="s01_c3", operator_code="OT1", condition_code="C3")
+    bundle.profile("sol2d_offset", oc.get_sol_2d_offset_path("s01_c3", calib_dir, create=False), True,
+                   applied=True)
+    streams = rs.SolStreams(bundle.folder, model)
+    targets = acc.compute_accuracy_targets(SCREEN_W, SCREEN_H, VIEW_CM, WIDTH_CM)[:3]
+    acc.write_csv(folder / "targets.csv", acc.TARGET_COLUMNS, acc.target_rows(targets))
+
+    gaze = make_sol_stream(9.0, 120, gaps=[(1.0, 1.3)], invalid=[(4.0, 4.2)],
+                           xy=lambda t: (640 + 25 * math.sin(t), 360 + 15 * math.cos(1.3 * t)))
+    records, point_rows, trial_rows = [], [], []
+    idx, collecting, latest, latest_pick, k, strict = 0, False, None, None, 0, False
+    start_frames = {15, 100, 200}               # SPACE pressed at these frames
+    for frame in range(int(9.0 / FRAME_S)):
+        t0, t1 = frame * FRAME_S, (frame + 1) * FRAME_S
+        batch = [g for t, g in gaze if t0 <= t < t1]
+        if batch:
+            latest = batch[-1]
+        if frame % 5 == 0:                       # drain_msgs: a homography message
+            k += 1
+            strict = frame % 10 == 0
+            streams.homography(homography(k), strict, 0.02, [0, 1, 2], pc_ms=int(t0 * 1000))
+        if frame in start_frames and idx < len(targets):
+            collecting, raw_s, corr_s, picks, window = True, [], [], [], []
+            t_start = int(t0 * 1000)
+        hom = rs.h_state(False, strict, streams.H is not None)
+        logged = streams.samples(batch, hom, 0.02, "collecting" if collecting else "idle", idx,
+                                 pc_ms=int(t0 * 1000))
+        if batch:
+            latest_pick = streams.n_samples - 1
+        if collecting:
+            window += logged
+        live_raw = live_corr = None
+        if latest is not None:
+            live_raw, live_corr = acc.map_raw_and_corrected(
+                streams.H, (latest.combined.gaze_2d.x, latest.combined.gaze_2d.y), model)
+        if collecting:
+            if live_raw is not None:
+                raw_s.append(live_raw); corr_s.append(live_corr)
+                picks.append([latest_pick, streams.h_id])
+            if len(corr_s) >= 30:
+                tgt = targets[idx]
+                rec = acc.compute_point_record(tgt, raw_s, corr_s, VIEW_CM, SCREEN_W, WIDTH_CM)
+                records.append(rec)
+                extras = acc.point_extras(idx, tgt, window, len(corr_s), t_start, int(t1 * 1000),
+                                          VIEW_CM, SCREEN_W, WIDTH_CM)
+                point_rows.append({**rec, **extras})
+                trial_rows.append(acc.trial_event_row(idx, tgt, t_start, int(t1 * 1000), "REC"))
+                bundle.event("collect_end", target_idx=idx, render_samples=picks,
+                             n_sdk_samples=extras["n_sdk_samples"])
+                collecting, latest, idx = False, None, idx + 1
+    bundle.update(streams=streams.close())
+    acc.write_csv(folder / "points.csv", acc.POINT_COLUMNS, point_rows)
+    acc.write_csv(folder / "trial_events.csv", acc.TRIAL_EVENT_COLUMNS, trial_rows)
+    acc.save_accuracy_report(str(folder), records, {"screen_w": SCREEN_W, "screen_h": SCREEN_H})
+    bundle.finish("completed")
+    return folder
+
+
+@pytest.fixture(scope="module")
+def session(tmp_path_factory):
+    """One synthetic session for every test of this file (like the bundle_app fixture)."""
+    app_dir = tmp_path_factory.mktemp("app")
+    sb.reset(app_dir=app_dir)
+    yield run_session(app_dir)
+    sb.reset()
+
+
+def test_files_and_bundle_v2(session):
+    from tools import check_session_bundle as chk
+    meta = json.loads((session / sb.META_FILE).read_text(encoding="utf-8"))
+    assert meta["bundle"]["version"] == 2
+    assert set(sb.BUNDLE_V2_FILES["accuracy_test"]) <= set(meta["bundle"]["files"])
+    assert chk.check_session(session)["verdict"] == "PASS"
+    gaze_rows = read(session / rs.SOL_GAZE_FILE)
+    assert list(gaze_rows[0])[:14] == rs.LEGACY_SOL_COLUMNS                 # legacy columns first
+    streams = meta["streams"][rs.SOL_GAZE_FILE]
+    assert streams["rows"] == streams["sdk_samples_received"] == len(gaze_rows)
+    assert [int(r["sample_idx"]) for r in gaze_rows] == list(range(len(gaze_rows)))
+    assert len(read(session / "points.csv")) == len(read(session / "trial_events.csv")) == 3
+    assert list(read(session / "points.csv")[0])[:18] == acc.ACCURACY_DATA_COLUMNS
+
+
+def test_r1_raw_screen_is_raw_gaze_through_the_logged_homography(session):
+    hom = {r["h_id"]: [[float(r[f"h{i}{j}"]) for j in range(3)] for i in range(3)]
+           for r in read(session / rs.HOMOGRAPHY_FILE)}
+    rows = read(session / rs.SOL_GAZE_FILE)
+    assert len({r["h_id"] for r in rows}) > 5                               # H changes during the run
+    for r in rows:
+        x, y = acc._apply_homography(hom[r["h_id"]], (float(r["raw_gaze_x"]), float(r["raw_gaze_y"])))
+        assert abs(x - float(r["raw_screen_x"])) < 1e-6 and abs(y - float(r["raw_screen_y"])) < 1e-6
+
+
+def _snapshot_model(session):
+    data = json.loads((session / sb.SNAPSHOT_FILE).read_text(encoding="utf-8"))
+    return oc.Sol2DOffsetModel.from_dict(data["model"])
+
+
+def test_r2_the_profile_snapshot_reproduces_corr_screen(session):
+    model = _snapshot_model(session)
+    for r in read(session / rs.SOL_GAZE_FILE):
+        x, y = model.predict((float(r["raw_screen_x"]), float(r["raw_screen_y"])))
+        assert abs(x - float(r["corr_screen_x"])) < 1e-6 and abs(y - float(r["corr_screen_y"])) < 1e-6
+        assert (r["mapped_gaze_x"], r["mapped_gaze_y"]) == (r["corr_screen_x"], r["corr_screen_y"])
+
+
+def test_r3_legacy_centroids_recomputed_from_the_folder(session):
+    gaze = {int(r["sample_idx"]): (float(r["raw_gaze_x"]), float(r["raw_gaze_y"]))
+            for r in read(session / rs.SOL_GAZE_FILE)}
+    hom = {int(r["h_id"]): [[float(r[f"h{i}{j}"]) for j in range(3)] for i in range(3)]
+           for r in read(session / rs.HOMOGRAPHY_FILE)}
+    model = _snapshot_model(session)
+    ends = [json.loads(e["detail_json"]) for e in read(session / sb.EVENTS_FILE) if e["event"] == "collect_end"]
+    targets = read(session / "targets.csv")
+    points, legacy = read(session / "points.csv"), read(session / "accuracy_data.csv")
+    reused = 0
+    for end, point, old, tgt in zip(ends, points, legacy, targets):
+        picks = end["render_samples"]
+        reused += len(picks) - len({p[0] for p in picks})                 # a stale sample used again
+        mapped = [acc.map_raw_and_corrected(hom[h], gaze[s], model) for s, h in picks]
+        rec = acc.compute_point_record({k: tgt[k] for k in ("name", "group")} | {
+            "ecc_deg": float(tgt["ecc_deg"]), "x": float(tgt["x"]), "y": float(tgt["y"])},
+            [m[0] for m in mapped], [m[1] for m in mapped], VIEW_CM, SCREEN_W, WIDTH_CM)
+        for c in ("raw_x", "raw_y", "corr_x", "corr_y"):
+            assert abs(rec[c] - float(point[c])) < 1e-6 and point[c] == old[c]
+    assert len(ends) == 3 and reused > 0                                    # the gap was inside a window
+
+
+def test_points_add_sdk_sample_counts_and_valid_only_medians(session):
+    rows = read(session / rs.SOL_GAZE_FILE)
+    for p in read(session / "points.csv"):
+        mine = [r for r in rows if r["phase"] == "collecting" and r["target_idx"] == p["target_idx"]]
+        valid = [r for r in mine if r["gaze2d_valid"] == "1" and r["left_eye_status"] == "2"
+                 and r["right_eye_status"] == "2"]
+        assert int(p["n_sdk_samples"]) == len(mine) and int(p["n_sdk_valid"]) == len(valid)
+        assert int(p["n_render_samples"]) == int(p["n_samples"]) == 30
+        assert float(p["raw_valid_median_x"]) == pytest.approx(np.median([float(r["raw_screen_x"]) for r in valid]))
+        assert float(p["corr_median_y"]) == pytest.approx(np.median([float(r["corr_screen_y"]) for r in mine]))
+        assert p["h_state_mix"]
+    assert any(p["n_sdk_valid"] != p["n_sdk_samples"] for p in read(session / "points.csv"))  # the blink
+
+
+def test_trial_events_shim_lists_the_points(session):
+    rows = read(session / "trial_events.csv")
+    assert list(rows[0]) == acc.TRIAL_EVENT_COLUMNS
+    assert [r["result"] for r in rows] == ["REC"] * 3
+    assert all(float(r["start_timestamp"]) < float(r["end_timestamp"]) for r in rows)
+
+
+def test_three_minutes_at_120_hz_lose_no_row_and_stay_under_15_mb(tmp_path):
+    stream = make_sol_stream(180.0, 120, invalid=[(50.0, 50.5)],
+                             xy=lambda t: (640 + 300 * math.sin(t / 7), 360 + 200 * math.cos(t / 5)))
+    streams = rs.SolStreams(tmp_path, None)
+    for i in range(0, len(stream), 4):                                     # 30 Hz frames of 4 samples
+        if i % 40 == 0:
+            streams.homography(homography(i), True, 0.03, list(range(12)))
+        streams.samples([g for _, g in stream[i:i + 4]], "LIVE", 0.03, "collecting", 3,
+                        pc_ms=int(stream[i][0] * 1000))
+    counts = streams.close()
+    assert counts[rs.SOL_GAZE_FILE] == {"rows": 21600, "failed": 0, "sdk_samples_received": 21600}
+    path = tmp_path / rs.SOL_GAZE_FILE
+    assert len(read(path)) == 21600
+    assert path.stat().st_size < 15 * 1024 * 1024
+
+
+def test_h_state():
+    assert [rs.h_state(True, True, True), rs.h_state(False, True, True), rs.h_state(False, False, True),
+            rs.h_state(False, False, False)] == ["STALE", "LIVE", "CACHED", "WAITING"]

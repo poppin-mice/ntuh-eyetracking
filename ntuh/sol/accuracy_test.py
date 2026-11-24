@@ -222,6 +222,74 @@ def build_meta(user, timestamp, screen_w, screen_h, view_dist_cm, screen_width_c
     }
 
 
+ACCURACY_DATA_COLUMNS = ["name", "group", "ecc_deg", "target_x", "target_y", "raw_x", "raw_y",
+                         "corr_x", "corr_y", "err_raw_px", "err_corr_px", "err_raw_deg", "err_corr_deg",
+                         "prec_raw_px", "prec_corr_px", "prec_raw_deg", "prec_corr_deg", "n_samples"]
+
+# ---------- session bundle v2 (doc/dev/LOGGING_SPEC.md 4.4, 4.5, 7.2) ----------
+TARGET_COLUMNS = ["target_idx", "name", "group", "ecc_deg", "x", "y", "repeat_idx", "order_idx"]
+# points.csv = accuracy_data.csv columns + these. The headline (raw_x ... n_samples) stays the
+# mean of the 30 render-frame samples; the medians are over the SDK samples of the collect window,
+# all of them with a screen point / only the valid ones (replay_streams.sample_valid).
+POINT_EXTRA_COLUMNS = ["target_idx", "repeat_idx", "collect_start_ms", "collect_end_ms",
+                       "n_render_samples", "n_sdk_samples", "n_sdk_valid", "h_state_mix",
+                       "raw_median_x", "raw_median_y", "corr_median_x", "corr_median_y",
+                       "err_raw_median_deg", "err_corr_median_deg",
+                       "raw_valid_median_x", "raw_valid_median_y", "corr_valid_median_x",
+                       "corr_valid_median_y", "err_raw_valid_median_deg", "err_corr_valid_median_deg"]
+POINT_COLUMNS = ACCURACY_DATA_COLUMNS + POINT_EXTRA_COLUMNS
+# trial_events.csv as the VA recorder writes it, so the current replayer timeline shows the points.
+TRIAL_EVENT_COLUMNS = ["trial_number", "cpd", "side", "start_timestamp", "end_timestamp", "result",
+                       "stim_x", "stim_y", "eval_source", "trial_type"]
+
+
+def target_rows(targets):
+    """targets.csv: the planned targets in the order shown (no repeats yet: repeat_idx 0)."""
+    return [{"target_idx": i, "repeat_idx": 0, "order_idx": i,
+             **{k: t[k] for k in ("name", "group", "ecc_deg", "x", "y")}} for i, t in enumerate(targets)]
+
+
+def _median(points):
+    a = np.asarray([p for p in points if p is not None], dtype=float).reshape(-1, 2)
+    return (None, None) if not len(a) else tuple(float(v) for v in np.median(a, axis=0))
+
+
+def point_extras(target_idx, target, window, n_render, collect_start_ms, collect_end_ms,
+                 view_dist_cm, screen_w, screen_width_cm):
+    """The POINT_EXTRA_COLUMNS of one recorded point. window: what SolStreams.samples() returned
+    for the SDK samples received while collecting, (sample_idx, raw, corr, valid, h_state)."""
+    out = {"target_idx": target_idx, "repeat_idx": 0, "collect_start_ms": collect_start_ms,
+           "collect_end_ms": collect_end_ms, "n_render_samples": n_render, "n_sdk_samples": len(window),
+           "n_sdk_valid": sum(1 for s in window if s[3])}
+    mix = {}
+    for s in window:
+        mix[s[4]] = mix.get(s[4], 0) + 1
+    out["h_state_mix"] = ";".join(f"{k}:{n}" for k, n in mix.items())
+    for tag, samples in (("", window), ("_valid", [s for s in window if s[3]])):
+        for key, col in (("raw", 1), ("corr", 2)):
+            mx, my = _median([s[col] for s in samples])
+            out[f"{key}{tag}_median_x"], out[f"{key}{tag}_median_y"] = (
+                "" if mx is None else mx, "" if my is None else my)
+            out[f"err_{key}{tag}_median_deg"] = "" if mx is None else px_to_deg(
+                float(np.hypot(mx - target["x"], my - target["y"])), view_dist_cm, screen_w, screen_width_cm)
+    return out
+
+
+def trial_event_row(order_idx, target, start_ms, end_ms, result):
+    """One trial_events.csv row (LOGGING_SPEC 7.2): a point, its collect window in seconds,
+    REC or DISCARDED."""
+    return {"trial_number": order_idx, "cpd": "", "side": target["name"],
+            "start_timestamp": start_ms / 1000.0, "end_timestamp": end_ms / 1000.0, "result": result,
+            "stim_x": target["x"], "stim_y": target["y"], "eval_source": "Sol", "trial_type": "acc_target"}
+
+
+def write_csv(path, columns, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=columns)
+        w.writeheader()
+        w.writerows(rows)
+
+
 def save_accuracy_report(out_dir, records, meta):
     """Write accuracy_data.csv, accuracy_report.json, accuracy_heatmap.png, accuracy_by_angle.png.
 
@@ -231,9 +299,7 @@ def save_accuracy_report(out_dir, records, meta):
     os.makedirs(out_dir, exist_ok=True)
     summary = summarize(records) if records else {}
 
-    cols = ["name", "group", "ecc_deg", "target_x", "target_y", "raw_x", "raw_y", "corr_x", "corr_y",
-            "err_raw_px", "err_corr_px", "err_raw_deg", "err_corr_deg",
-            "prec_raw_px", "prec_corr_px", "prec_raw_deg", "prec_corr_deg", "n_samples"]
+    cols = ACCURACY_DATA_COLUMNS
     with open(os.path.join(out_dir, "accuracy_data.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(cols)

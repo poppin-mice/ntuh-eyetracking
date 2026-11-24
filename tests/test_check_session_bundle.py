@@ -24,6 +24,8 @@ def make(root, kind, name="s01_c3_20261122_100305", status="completed", reason=N
     bundle = sb.start(folder, kind, user_name="s01_c3", operator_code="OT1")
     for fname, text in (KIND_FILES[kind] if files is None else files).items():
         (folder / fname).write_text(text, encoding="utf-8")
+    for fname in sb.BUNDLE_V2_FILES.get(kind, []):     # bundle v2: written whatever the outcome
+        (folder / fname).write_text("x\n", encoding="utf-8")
     if status == "crashed":
         bundle.crash(RuntimeError, RuntimeError("boom"), None, where="test")
     if status != "running":
@@ -60,6 +62,7 @@ def test_a_crashed_session_with_its_crash_log_passes(bundle_app):
     (kind, name)
     for kind in sb.KINDS
     for name in sb.REQUIRED_FILES[kind] + sb.REQUIRED_WHEN_COMPLETED.get(kind, [])
+    + sb.BUNDLE_V2_FILES.get(kind, [])
 ])
 def test_each_missing_required_file_fails(bundle_app, kind, missing):
     folder = make(bundle_app, kind)
@@ -67,6 +70,15 @@ def test_each_missing_required_file_fails(bundle_app, kind, missing):
     result = chk.check_session(folder)
     assert result["verdict"] == "FAIL"
     assert f"missing file: {missing}" in result["reasons"]
+
+
+def test_a_bundle_v1_folder_needs_no_v2_files(bundle_app, monkeypatch):
+    """An accuracy test recorded before bundle v2 (version 1) has no sample streams: still PASS."""
+    monkeypatch.setattr(sb, "BUNDLE_V2_FILES", {})
+    folder = make(bundle_app, "accuracy_test")
+    monkeypatch.undo()
+    assert json.loads((folder / sb.META_FILE).read_text(encoding="utf-8"))["bundle"]["version"] == 1
+    assert chk.check_session(folder)["verdict"] == "PASS"
 
 
 def test_a_completed_accuracy_test_needs_its_report(bundle_app):
@@ -97,6 +109,8 @@ def test_a_profile_copy_must_be_the_bytes_that_were_loaded(bundle_app, copy_is_t
     bundle = sb.start(folder, "accuracy_test", user_name="s01_c3")
     for fname, text in KIND_FILES["accuracy_test"].items():
         (folder / fname).write_text(text, encoding="utf-8")
+    for fname in sb.BUNDLE_V2_FILES["accuracy_test"]:
+        (folder / fname).write_text("x\n", encoding="utf-8")
     (folder / "calib_profile_snapshot.json").write_bytes(copied)
     bundle.update(our_calibration={"profiles": [{
         "role": "sol2d_offset", "loaded": True, "snapshot": "calib_profile_snapshot.json",

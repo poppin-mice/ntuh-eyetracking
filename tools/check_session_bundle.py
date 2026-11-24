@@ -75,6 +75,8 @@ def check_session(folder):
         return result
 
     required = list(sb.REQUIRED_FILES[kind])
+    if ((meta.get("bundle") or {}).get("version") or 1) >= 2:
+        required += sb.BUNDLE_V2_FILES.get(kind, [])
     if status == "completed":
         required += sb.REQUIRED_WHEN_COMPLETED.get(kind, [])
     if status == "crashed":

@@ -31,7 +31,7 @@ from ntuh.common.app_env import APP_DIR
 
 SCHEMA = "ntuh.session_meta"
 SCHEMA_VERSION = 1
-BUNDLE_VERSION = 1          # v2 (B-D14, B-D15, B-D25) only adds files or appends columns
+BUNDLE_VERSION = 1          # v2 (B-D14, B-D15, B-D25) only adds files or appends columns: BUNDLE_V2_FILES
 KINDS = ("va", "vf", "accuracy_test", "sol2d_calibration", "sol3d_calibration")
 STATUSES = ("running", "completed", "aborted", "crashed")
 
@@ -52,6 +52,12 @@ REQUIRED_FILES = {
 REQUIRED_WHEN_COMPLETED = {"va": ["va_result.json"], "vf": ["vf_result.json"],
                            "accuracy_test": ["accuracy_report.json", "accuracy_data.csv"]}
 REQUIRED_WHEN_CRASHED = [CRASH_FILE]
+# Bundle v2 (replayable, LOGGING_SPEC 10): the files a kind adds. A kind listed here writes
+# bundle.version 2 and the check tool requires these files too.
+BUNDLE_V2_FILES = {
+    "accuracy_test": ["sol_gaze_data.csv", "homography_log.csv", "targets.csv", "points.csv",
+                      "trial_events.csv"],
+}
 # Calibration profile evidence (bundle.profile): where the byte copies go.
 SNAPSHOT_FILE = "calib_profile_snapshot.json"   # the Sol profile the session applied, or wrote
 PROFILE_COPY_DIR = "calib_profiles"             # any other profile it loaded: <role>__<file name>
@@ -135,6 +141,10 @@ def parse_identity(user_name):
     return {"subject_code": m["subject"],
             "condition_code": m["condition"].upper() if m["condition"] else None,
             "take": int(m["take"]) if m["take"] else None}
+
+
+def bundle_version(kind):
+    return 2 if kind in BUNDLE_V2_FILES else BUNDLE_VERSION
 
 
 def our_calibration_expected(condition_code):
@@ -673,7 +683,7 @@ class SessionBundle:
                 self.meta.update(_clean(blocks_from_cfg(self._cfg, self.kind)))
                 self.meta["config"] = _clean(self._cfg)
             self.meta.update(ended_at=now_iso(), status=status, abort_reason=abort_reason)
-            self.meta["bundle"] = {"version": BUNDLE_VERSION, "files": self._manifest()}
+            self.meta["bundle"] = {"version": bundle_version(self.kind), "files": self._manifest()}
             self._safe_write_meta()
             if _APP.current is self:
                 _APP.current = None
@@ -732,7 +742,7 @@ def _start(folder, kind, app, cfg, user_name, operator_code, condition_code, dis
             "protocol_params": _clean(protocol_params if protocol_params is not None
                                       else cfg_blocks.get("protocol_params", {})),
             "config": _clean(config if config is not None else (cfg or {})),
-            "bundle": {"version": BUNDLE_VERSION, "files": None},   # filled by finish()
+            "bundle": {"version": bundle_version(kind), "files": None},   # filled by finish()
         }
         if kind in ("va", "vf", "accuracy_test"):       # filled in by bundle.profile()
             meta["our_calibration"] = {
