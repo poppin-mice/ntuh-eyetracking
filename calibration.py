@@ -76,12 +76,10 @@ def _install_q_to_quit():
 _install_q_to_quit()
 
 
-# Base dir for writable/user data. When frozen by PyInstaller, __file__ is inside the
-# bundle, so anchor to the .exe's folder instead (dev behaviour unchanged).
-if getattr(sys, "frozen", False):
-    APP_DIR = Path(sys.executable).resolve().parent
-else:
-    APP_DIR = Path(__file__).resolve().parent
+# Base dir for writable/user data: the exe's folder, or for a run from source the script's folder
+# (or NTUH_APP_DIR). One resolver for all three apps.
+from ntuh.common.app_env import APP_DIR
+from ntuh.common.identity import safe_code
 
 # Remembered GUI settings (requirement: config persists between runs).
 CALIB_CONFIG_FILE = APP_DIR / "calibration_config.json"
@@ -98,7 +96,7 @@ def _profile_dir(out_base, user_name: str, pts: int) -> Path:
     base = Path(out_base) if str(out_base).strip() else (APP_DIR / "calibration_profiles")
     if not base.is_absolute():
         base = APP_DIR / base
-    name = (user_name or "default").strip().replace(" ", "_")
+    name = safe_code(user_name, default="default")
     return base / f"{name}_{int(pts)}pt"
 
 

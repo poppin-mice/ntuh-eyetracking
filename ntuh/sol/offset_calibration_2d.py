@@ -29,6 +29,8 @@ from datetime import datetime
 import pickle
 import base64
 
+from ntuh.common.identity import safe_code
+
 # Offset modes
 OFFSET_MODE_PIXEL = 'pixel'      # Legacy pixel-based offset in CAMERA space, BEFORE the homography
                                  # (NOT homography-change immune - drifts when the homography moves)
@@ -836,11 +838,7 @@ def get_sol_2d_offset_path(username, calib_dir, create=True):
     if create and not calib_path.exists():
         calib_path.mkdir(parents=True, exist_ok=True)
 
-    safe_username = "".join(c for c in username if c.isalnum() or c in "._-")
-    if not safe_username:
-        safe_username = "anonymous"
-
-    return calib_path / f"{safe_username}_sol_2d_offset.json"
+    return calib_path / f"{safe_code(username)}_sol_2d_offset.json"
 
 
 def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, target_image_path="",
