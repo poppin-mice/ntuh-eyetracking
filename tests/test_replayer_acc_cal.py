@@ -239,3 +239,29 @@ def test_timeline_lanes_of_the_accuracy_test(acc):
 def test_timeline_of_the_calibration_run(cal):
     tl = qc.timeline(qc.load(cal))
     assert len(tl["collect"]) == len(tl["targets"]) == 3 and not tl["space"] and not tl["crash"]
+
+
+def test_screen_size_and_marker_layout(acc, cal):
+    for folder in (acc, cal):
+        s = qc.load(folder)
+        assert qc.screen_size(s) == (3840, 2160)                      # from the report / the profile
+        markers, side = qc.marker_layout(s, 3840, 2160)
+        assert len(markers) == 2 * 8 + 2 * 3 and side == 230           # 8 x 5 defaults
+        assert all(0 <= x <= 3840 - side and 0 <= y <= 2160 - side for x, y in markers.values())
+    s = {"meta": {"display": {"screen_w_px": 1920, "screen_h_px": 1080},
+                  "aruco": {"markers_px": {"0": [60, 60]}, "container_px": 100}}}
+    assert qc.screen_size(s) == (1920, 1080) and qc.marker_layout(s, 1920, 1080) == ({0: (60, 60)}, 100)
+
+
+def test_screen_state_follows_the_session(acc):
+    s = qc.load(acc)
+    tl = qc.timeline(s)
+    (a0, b0, _), (a1, _, _) = tl["collect"][:2]
+    mid = (a0 + b0) / 2
+    st = qc.screen_state(s, mid)
+    assert st["target"][2] == "center" and st["done"] == []
+    assert 0 < len(st["raw"]) == len(st["corr"]) == len(st["valid"])
+    assert (s["t"][(s["t"] > mid - qc.TRAIL_S) & (s["t"] <= mid)]).size == len(st["raw"])
+    later = qc.screen_state(s, a1)
+    p = car_read(acc / "points.csv")[0]
+    assert later["done"] == [(float(p["target_x"]), float(p["target_y"]), float(p["corr_x"]), float(p["corr_y"]))]

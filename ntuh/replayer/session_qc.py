@@ -264,6 +264,72 @@ def timeline(s):
     return out
 
 
+TRAIL_S = 0.5
+
+
+def screen_size(s):
+    """Subject screen in px: session_meta display, else accuracy_report.json, else the profile."""
+    d = s["meta"].get("display") or {}
+    if d.get("screen_w_px") and d.get("screen_h_px"):
+        return int(d["screen_w_px"]), int(d["screen_h_px"])
+    for name, keys in (("accuracy_report.json", ("meta", "screen_w", "screen_h")),
+                       (ar.SNAPSHOT, (None, "screen_width_px", "screen_height_px"))):
+        try:
+            data = json.loads((s["folder"] / name).read_text(encoding="utf-8"))
+            data = data[keys[0]] if keys[0] else data
+            return int(data[keys[1]]), int(data[keys[2]])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return 1920, 1080
+
+
+def marker_layout(s, w, h):
+    """({id: (x, y) top-left px}, side px) of the ArUco markers on the subject screen:
+    session_meta aruco.markers_px when logged, else the layout create_calibration_assets makes
+    from the marker settings the session ran with (config sol_marker_k / _n / _size; the
+    settings window defaults 8 / 5 / 200 when the config does not say)."""
+    a = s["meta"].get("aruco") or {}
+    if a.get("markers_px"):
+        return {int(k): tuple(v) for k, v in a["markers_px"].items()}, int(a.get("container_px") or 230)
+    import cv2
+    from ntuh.sol.projector import BORDER_PIXEL_WIDTH, create_calibration_assets
+    cfg = s["meta"].get("config") or {}
+    try:
+        k, n, size = int(cfg.get("sol_marker_k", 8)), int(cfg.get("sol_marker_n", 5)), int(cfg.get("sol_marker_size", 200))
+    except (TypeError, ValueError):
+        k, n, size = 8, 5, 200
+    pos, _ = create_calibration_assets(w, h, cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_250),
+                                       {"marker_k": k, "marker_n": n, "marker_pattern_size": size})
+    return pos or {}, size + 2 * BORDER_PIXEL_WIDTH
+
+
+def target_positions(s):
+    """{target_idx: (x, y, name)}: targets.csv (accuracy test) or calib_points.csv (calibration)."""
+    if s["kind"] == "cal":
+        return {int(p["point_idx"]): (float(p["target_x"]), float(p["target_y"]), p["name"])
+                for p in s["calib_points"] if p.get("target_x", "") != ""}
+    return {int(t["target_idx"]): (float(t["x"]), float(t["y"]), t["name"]) for t in s["targets"]}
+
+
+def screen_state(s, t, targets=None):
+    """What the synthetic subject screen shows at time t: the current target (x, y, name) or None,
+    the last TRAIL_S s of raw_screen and corr_screen with the validity of each sample, and the
+    points recorded by then as (target_x, target_y, gaze_x, gaze_y) (accuracy test: the logged
+    corr centroid; calibration: used)."""
+    targets = target_positions(s) if targets is None else targets
+    a, b = np.searchsorted(s["t"], [t - TRAIL_S, t], side="right")
+    cur = s["target_idx"][b - 1] if b > 0 else np.nan
+    done = []
+    for p in s["points"] or s["calib_points"]:
+        end = p.get("collect_end_ms", "")
+        gx, gy = (p.get("corr_x", ""), p.get("corr_y", "")) if s["kind"] == "acc" else (p.get("used_x", ""), p.get("used_y", ""))
+        if end != "" and gx != "" and (float(end) - s["t0_ms"]) / 1000.0 <= t:
+            done.append((float(p["target_x"]), float(p["target_y"]), float(gx), float(gy)))
+    return {"target": targets.get(int(cur)) if np.isfinite(cur) else None,
+            "raw": s["raw_screen"][a:b], "corr": s["corr_screen"][a:b], "valid": s["valid"][a:b],
+            "done": done}
+
+
 def point_table(s):
     """The per-point table: {"columns", "rows" (cells), "flags" (True = check by hand), "t_s"
     (collect start on the session clock, for seeking)}.
