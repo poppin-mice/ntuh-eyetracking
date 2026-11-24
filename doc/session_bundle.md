@@ -169,11 +169,37 @@ file: the tests that follow will load it.
 scene-camera px in camera mode (`protocol_params.offset_mode`). A point skipped for lack of a
 homography has a row with empty model columns.
 
+*1.17.0* appends, at the end of each row (bundle v2):
+
+| Column | Meaning |
+|--------|---------|
+| `collect_start_ms`, `collect_end_ms` | The collect window, PC clock (ms since 1970; SPACE to the point's end) |
+| `n_render_samples`, `n_sdk_samples`, `n_sdk_valid` | Render-frame samples (= `n`), Sol SDK samples, and the SDK samples that are valid (`gaze_2d` valid and both eyes NORMAL) |
+| `estimator` | `steadiest_1s_median` or `legacy_30frame_mean` (setting *Point Estimate*) |
+| `est_x`, `est_y` | The point's raw `gaze_2d` by that estimator, scene-camera px. `used` is this value mapped to the screen (screen mode) or this value (camera mode) |
+| `window_start_sdk_ms`, `window_end_sdk_ms`, `window_n`, `window_spread_px` | `steadiest_1s_median` only: the chosen window (Sol device clock, = `sdk_timestamp_ms`), its valid samples, and their spread (median distance to their median, px) |
+
+Since 1.17.0 the point collects `calib_collect_s` seconds (default 3.0; at least 30 render frames) and,
+by default, is the median of the steadiest valid second (`ntuh/sol/stability.py`;
+`doc/dev/LOGGING_SPEC.md` 4.6). Before, it was the mean of the first 30 render-frame samples
+(`legacy_30frame_mean`, still selectable: the mean of the first 30 of them). A point with no steady
+valid second is not accepted: no row, a `collect_discard` event (`reason: no_steady_window`), and the
+operator presses SPACE again. `n`, `mean`, `median`, `sd` are over all render-frame samples of the
+window (about 90 instead of 30). The profile keeps the same per point: each entry of
+`model.calibration_points` gains `estimator`, `est_x`, `est_y` and the `window_*` fields.
+
 ## Bundle v2 (replayable)
 
 *1.12.0, accuracy test.* Every sample and homography the test used, so each number of the report can
 be computed again from the folder and other calibration methods can be tried on the same data
-(contract: `doc/dev/LOGGING_SPEC.md` 4.1-4.5, 7.2). The Sol 2D calibration run follows.
+(contract: `doc/dev/LOGGING_SPEC.md` 4.1-4.5, 7.2).
+
+*1.17.0, Sol 2D calibration run:* `sol_gaze_data.csv` and `homography_log.csv` as below (`phase`
+`collecting` while a point collects; `target_idx` = the `point_idx` of `calib_points.csv` the samples
+belong to; `homography_log.csv` `source` = `inprocess`: one row whenever the calibration's own
+homography or its strict validity changes), plus the appended `calib_points.csv` columns above. No
+`targets.csv`, `points.csv` or `trial_events.csv`. R1 of `tools/check_accuracy_replay.py` applies to
+these two files (`check_r1`); the tool itself reads accuracy folders only.
 
 | File | Content |
 |------|---------|
@@ -227,7 +253,8 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `exception` | An exception was caught | `where`, `error` |
 | `scene_stall` | Accuracy test: SPACE while the scene video was stalled | `scene_age_s` |
 | `collect_discard` | Accuracy test: a point was dropped because the scene stalled while collecting | `n_discarded` |
-| `collect_end`, `point_skipped` | *1.9.0*. Calibration run: a point was recorded, or skipped for lack of a homography | `n`, `n_valid` |
+| `collect_end`, `point_skipped` | *1.9.0*. Calibration run: a point was recorded, or skipped for lack of a homography | `n`, `n_valid`; *1.17.0*: `n_sdk_samples`, `n_sdk_valid`, `h_id` (the homography `used` was mapped through) |
+| `collect_start`, `collect_discard` | *1.17.0*. Calibration run: SPACE opened a point's collection / the point had no steady valid second and was not accepted | discard: `reason` (`no_steady_window`), `n_sdk_samples`, `n_sdk_valid` |
 | `gate_check` | *1.12.0*. Accuracy test start: the calibration gate's decision and the Sol built-in calibration confirmation | `status`, `message`, `condition`, `operator_code`, `time`; `sol_builtin_calibration` = the same block as in `session_meta.json` (`source`, `confirmed`, `performed_at`, `chronus_participant`) |
 | `target_show` | *1.12.0*. Accuracy test: a target appeared (columns `target_idx`, `target_name`, `x`, `y`) | |
 | `space_pressed` | *1.12.0*. Accuracy test: every SPACE | `accepted`, `reject_reason` (`already_collecting`, `stale`, `no_homography`) |
@@ -315,7 +342,7 @@ python tools/rescore_session.py <session folder> [--out <folder>]
 
 - Bundle v1 file names and columns never change. Bundle v2 (full-rate samples, homography log, scene
   video) only adds files or appends columns, and raises `bundle.version` to 2 (accuracy test since
-  1.12.0). An accuracy-test folder of 1.9.0 (version 1) needs no v2 files to pass the check.
+  1.12.0, Sol 2D calibration since 1.17.0). A folder of version 1 needs no v2 files to pass the check.
 - The **accuracy-test folder** is now created when the test starts and named after the start time. It
   used to be created with the report and named after the end time. `accuracy_report.json` →
   `meta.timestamp` is still the end time; the new `meta.started_at` is the start. An accuracy test

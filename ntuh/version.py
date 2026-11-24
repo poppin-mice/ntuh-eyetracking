@@ -195,6 +195,14 @@ VA_center_opt
            space_pressed, collect_start/end and h_state_change. accuracy_report.json,
            accuracy_data.csv and the PNGs are unchanged (headline = 30-frame mean); meta gains
            session_id. bundle.version is 2 for the accuracy test.
+    1.17.0 The Sol 2D calibration point estimate changed: each point now collects 3 s (setting
+           Collect per Point) and is the median of the steadiest valid second of gaze
+           (steadiest_1s_median) instead of the mean of 30 frames taken right after SPACE; a
+           point without a steady valid second is not accepted (SPACE again). The old mean stays
+           selectable (Point Estimate: legacy_30frame_mean). The calibration folder is bundle v2:
+           sol_gaze_data.csv, homography_log.csv, and calib_points.csv gains collect window,
+           sample counts, estimator and window at the end; the profile records the estimator
+           per point. Fix: sdk_timestamp_ms of sol_gaze_data.csv was 0 (wrong SDK field).
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -280,7 +288,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.12.0",
+    "VA_center_opt": "1.17.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }

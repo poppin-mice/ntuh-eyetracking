@@ -227,6 +227,10 @@ is `-1` without a homography (the VA recorder's "no value"). `visual_angle_deg` 
 are left empty (the VA definition is wrong, see row 9-10). `phase` is `idle` or `collecting`. The
 `session_meta.streams` counters are `rows`, `failed` (rows the writer could not write) and
 `sdk_samples_received`; the writer queue is unbounded, so a slow disk costs memory, never a row.
+*CAL (VA_center_opt 1.17.0):* the same file from the in-process connection; each drained sample is first
+put in the shape the Sol child sends (`sol_ipc.gaze_to_dict`), `phase` is `collecting` while a point
+collects and `target_idx` is the `point_idx` of the point being shown (§4.6). `sdk_timestamp_ms` is the SDK's
+`GazeData.timestamp_ms`; before 1.17.0 `sol_ipc` read a non-existent `timestamp` field and wrote 0 (ACC 1.12.0).
 
 **Rate rule: one row per SDK sample, every sample.** Today the calibration loop keeps only the last of up to
 20 drained samples per 30 Hz frame (`settings_window.py:1414-1419`), the accuracy test keeps only the last per
@@ -252,7 +256,9 @@ the child).
 (a message without `H` keeps the previous matrix), so a sample's `h_id` points at exactly the matrix it was
 mapped through. `valid` = a matrix exists (lenient), `strict_valid` = markers currently detected. `source` is
 `child`, `cached_seed` (the cached homography the test starts from) or `crash` (the Sol child died: same
-matrix, `strict_valid` 0). The optional columns are not written.
+matrix, `strict_valid` 0). The optional columns are not written. *CAL (1.17.0):* `source` = `inprocess`, one
+row whenever the calibration projector's `get_homography()` or its strict validity changes (checked once per
+render frame, before that frame's samples are logged); `frame_age_ms` is empty.
 
 ### 4.3 `events.csv`
 
@@ -302,6 +308,26 @@ n_sdk_valid, mean_x, mean_y, median_x, median_y, sd_x, sd_y, used_x, used_y (the
 H_now·mean(raw), settings_window.py:1431-1453), offset_x, offset_y, loo_idw_err_px, loo_const_err_px,
 loo_idw_err_deg, loo_const_err_deg`.
 The LOO residual is computed today but only printed (`offset_calibration_2d.py:545-564`).
+
+**As implemented (B-D15, VA_center_opt 1.17.0):** B-D02's columns keep their order (`point_idx, name, target_x,
+target_y, n, n_valid, mean/median/sd_x/y, used_x/y, offset_x/y, loo_*`); appended at the end: `collect_start_ms,
+collect_end_ms, n_render_samples, n_sdk_samples, n_sdk_valid, estimator, est_x, est_y, window_start_sdk_ms,
+window_end_sdk_ms, window_n, window_spread_px`. A point collects `calib_collect_s` seconds (default 3.0, and at
+least 30 render frames); `used` = `H·est` (the homography logged in that frame; `collect_end` names its `h_id`)
+in screen mode, `est` in camera mode. Estimators (`calib_point_estimator`, `ntuh/sol/stability.py`):
+- `steadiest_1s_median` (default). *Valid* = `gaze2d_valid` and both eyes NORMAL (the `valid_only` rule of §8)
+  and finite x, y, `sdk_timestamp_ms`. *Window* = the samples from a valid sample i to the first valid sample k
+  with `t[k] − t[i] ≥ 1000 ms` (device clock), counted only when its valid samples are at least half of all its
+  samples. *Spread* = the median Euclidean distance (scene-camera px) of the window's valid samples to their
+  per-axis median (2-D MAD). The window with the smallest spread wins (earliest on a tie); `est` = the per-axis
+  median of its valid samples. *No window* (less than 1 s of valid samples, or never half valid): the point is
+  not accepted: no `calib_points.csv` row, a `collect_discard` event (`reason: no_steady_window`), the operator
+  presses SPACE again.
+- `legacy_30frame_mean`: the mean of the first 30 render-frame samples (one per frame, the last SDK sample
+  reused when none arrived, no validity filter): the estimate before 1.17.0; window columns empty.
+
+The profile keeps the same per point: each `model.calibration_points` entry gains `estimator, est_x, est_y,
+window_start_sdk_ms, window_end_sdk_ms, window_n, window_spread_px` (loaders ignore unknown keys).
 
 ---
 
@@ -426,7 +452,8 @@ tools/calib_replay/
 
 **Centroid estimators (`points.py`)** — `legacy30` (mean of the 30 render-frame samples, today's definition),
 `all_mean`, `all_median`, `trimmed20`, `valid_only` (gaze2d_valid & both eyes NORMAL), `fixation` (longest
-I-VT fixation in the window, velocity computed with proper geometry, not the 0.05 deg/px column).
+I-VT fixation in the window, velocity computed with proper geometry, not the 0.05 deg/px column),
+`steadiest_1s_median` (§4.6, `ntuh/sol/stability.py`, the CAL default since 1.17.0).
 
 **Model zoo (`models.py`)** — each is `fit(list[(gaze_xy, target_xy)]) -> Model`, `Model.predict(xy)`:
 | key | description |
