@@ -126,6 +126,9 @@ def test_profiles_and_sessions_are_read_from_the_program_folder(tmp_path):
     meta.write_text(json.dumps({"started_at": "2099-01-01T00:00:00+08:00", "subject": {"subject_code": "s02"},
                                 "condition": {"condition_code": "C2"}}), encoding="utf-8")
     assert sp.list_sessions(tmp_path) == [_session("s02", "C2", "2099-01-01T00:00:00+08:00")]
+    # a lookup reads only what is named after its subject, not every profile and session on disk
+    assert sp.list_sessions(tmp_path, "s01") == []
+    assert [p["subject_code"] for p in sp.list_profiles(tmp_path, "s02")] == ["s02"]
     assert sp.find("s02", "C3", tmp_path) is None                              # made before that session
     assert sp.find("s01", "C3", tmp_path)["calib_session_id"] == "s01_c3_20261124_100000"
 

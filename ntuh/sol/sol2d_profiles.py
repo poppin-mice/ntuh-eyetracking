@@ -10,6 +10,7 @@
 
 Stdlib only; tests/test_sol2d_profiles.py runs it without Tk.
 """
+import glob
 import json
 from datetime import datetime
 from pathlib import Path
@@ -59,9 +60,13 @@ def summary(path):
     return out
 
 
-def list_profiles(app_dir=None):
-    """summary() and path of every readable profile: the new ones and the legacy ones."""
-    paths = list(profile_dir(app_dir).glob("*.json")) + list(legacy_dir(app_dir).glob("*" + LEGACY_SUFFIX))
+def list_profiles(app_dir=None, name_has=""):
+    """summary() and path of every readable profile: the new ones and the legacy ones. name_has:
+    only the files with this text in their name (they are named after the User Name, which holds
+    the subject code), so a lookup does not read every profile ever made."""
+    has = "*" + glob.escape(name_has) if name_has else ""
+    paths = (list(profile_dir(app_dir).glob(has + "*.json"))
+             + list(legacy_dir(app_dir).glob(has + "*" + LEGACY_SUFFIX)))
     out = []
     for p in paths:
         try:
@@ -80,11 +85,13 @@ def _local(timestamp):
     return t.astimezone().replace(tzinfo=None) if t.tzinfo else t
 
 
-def list_sessions(app_dir=None):
-    """subject_code, condition_code and started_at of every test session with a session_meta.json."""
+def list_sessions(app_dir=None, name_has=""):
+    """subject_code, condition_code and started_at of every test session with a session_meta.json
+    (name_has: only the folders with this text in their name, as list_profiles)."""
     out = []
     for kind in TEST_KINDS:
-        for meta_file in identity.output_root(kind, app_dir).glob("*/" + META_FILE):
+        for meta_file in identity.output_root(kind, app_dir).glob(
+                ("*" + glob.escape(name_has) if name_has else "") + "*/" + META_FILE):
             try:
                 meta = json.loads(meta_file.read_text(encoding="utf-8"))
                 out.append({"subject_code": meta["subject"]["subject_code"],
@@ -111,8 +118,12 @@ def select(profiles, sessions, subject_code, condition_code):
 
 
 def find(subject_code, condition_code, app_dir=None):
-    """select() over the profiles and sessions on disk."""
-    return select(list_profiles(app_dir), list_sessions(app_dir), subject_code, condition_code)
+    """select() over the profiles and sessions on disk. Only the files and folders named after
+    this subject are read: the lookup runs whenever the subject or condition field changes."""
+    if not subject_code:
+        return None
+    return select(list_profiles(app_dir, subject_code), list_sessions(app_dir, subject_code),
+                  subject_code, condition_code)
 
 
 def has_webcam_model(folder):
