@@ -40,6 +40,7 @@ from ntuh.ui.calib_status import draw_calib_status
 from ntuh.sol import calib_gate
 from ntuh.common import identity
 from ntuh.sol import offset_choice
+from ntuh.sol import profile_delete
 from ntuh.sol import sol2d_profiles
 from ntuh.tracking.sol_session import run_sol_worker
 
@@ -1055,9 +1056,6 @@ class SettingsWindow(tk.Tk):
         # Keep reference for 2D button (same button, auto-detects method)
         self.btn_start_sol_2d_offset_cal = self.btn_start_sol_offset_cal
 
-        self.btn_clear_sol_offset = ttk.Button(btn_frame, text="Clear Offset", command=self.clear_sol_2d_offset)
-        self.btn_clear_sol_offset.pack(side="left", padx=5)
-
         self.lbl_sol_offset_connect_note = ttk.Label(btn_frame, text="(Connect Sol glasses first)", foreground="gray")
         self.lbl_sol_offset_connect_note.pack(side="left", padx=10)
 
@@ -1082,6 +1080,16 @@ class SettingsWindow(tk.Tk):
 Controls: SPACE = Record point, Q = Cancel"""
 
         ttk.Label(grp_instr, text=instr_text, font=self.f_body, justify="left").pack(anchor="w", **pad)
+
+        # Not a routine step (B-D10): C1/C2/C4 never apply our calibration, nothing to clear first.
+        grp_adv = ttk.LabelFrame(parent, text="Advanced / 進階")
+        grp_adv.pack(fill="x", padx=10, pady=5)
+        self.btn_clear_sol_offset = ttk.Button(grp_adv, text="Delete profile... / 刪除校正檔…",
+                                               command=self.clear_sol_2d_offset)
+        self.btn_clear_sol_offset.pack(side="left", **pad)
+        ttk.Label(grp_adv, text="Not a routine step: C1/C2/C4 never apply our calibration. "
+                  "Moves the profile to calibration_profiles/sol2d/_deleted/.",
+                  font=self.f_hint, foreground="gray", wraplength=500).pack(side="left", **pad)
 
         # Load current offset on tab creation
         self.after(100, self.update_sol_2d_offset_display)
@@ -1187,31 +1195,45 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.lbl_sol_offset_connect_note.config(text="(Connect Sol glasses first)")
 
     def clear_sol_2d_offset(self):
-        """Clear the 2D Sol offset calibration: delete the profile the selection rule picks for
-        this subject and condition, so the next one back (if any) is picked. A legacy profile is
-        never deleted. (#17 replaces the delete with a confirm and a move to deleted/.)"""
-        if not SOL_2D_OFFSET_AVAILABLE:
-            return
-
-        username = self.user_var.get().strip() or "anonymous"
+        """Delete profile... (B-D10): after a confirm naming subject, condition and file, MOVE the
+        profile the selection rule finds to sol2d/_deleted/ and say which one is found now. Never
+        a legacy profile, never right after a calibration of this condition. A VA/VF pick of the
+        moved file is set back to OFF. Logic: ntuh/sol/profile_delete.py."""
         self._note_identity_changes()
-        _, path, found = self._load_sol_2d_profile()
-        existed = path.exists()
-        cleared = False
-        if found and not found["legacy_profile"]:
-            try:
-                path.unlink()
-                cleared = True
-            except OSError as e:
-                print(f"[Sol2DOffset] Failed to clear: {e}")
-        session_bundle.app_event("clear_offset", method="2D", user_name=username, file=str(path),
-                                 existed=existed, cleared=cleared,
-                                 legacy_profile=bool(found and found["legacy_profile"]))
+        subject, condition = self.subject_code_var.get(), self._condition_code()
+        found = sol2d_profiles.find(subject, condition)
+        state = profile_delete.refusal(found, subject, condition, self._identity_lock.held)
+        moved_to = now = error = None
+        pick_reset = False
+        if state is None:
+            if not messagebox.askyesno("刪除校正檔 / Delete profile",
+                                       profile_delete.confirm_text(found, subject, condition),
+                                       icon="warning", parent=self):
+                state = profile_delete.CANCELLED
+            else:
+                try:
+                    moved_to = profile_delete.move(found["path"])
+                    state = profile_delete.MOVED
+                except OSError as e:
+                    state, error = profile_delete.FAILED, e
+        if state == profile_delete.MOVED:
+            now = sol2d_profiles.find(subject, condition)
+            picked = getattr(self, 'sol_offset_profile', "")
+            if picked and Path(picked).resolve() == Path(found["path"]).resolve():
+                self._set_va_offset_profile("")
+                pick_reset = True
+        session_bundle.app_event("clear_offset", method="2D", user_name=self.user_var.get(),
+                                 file=found and found["path"], existed=bool(found),
+                                 cleared=state == profile_delete.MOVED,
+                                 legacy_profile=bool(found and found["legacy_profile"]), outcome=state,
+                                 moved_to=moved_to and str(moved_to), now_in_use=now and now["path"],
+                                 va_vf_pick_reset=pick_reset)
         self.update_sol_2d_offset_display()
-        messagebox.showinfo("2D Offset Cleared",
-                            f"2D gaze offset calibration has been cleared:\n{path.name}" if cleared else
-                            f"Nothing cleared (a legacy profile is never deleted):\n{path.name}" if found else
-                            "Nothing to clear: no profile for this subject and condition.")
+        text = profile_delete.message(state, subject, condition, found, moved_to, now, error)
+        if text:
+            if pick_reset:
+                text += "\n\nSol offset for VA/VF 已改回 OFF / was set back to OFF."
+            messagebox.showinfo("刪除校正檔 / Delete profile", text, parent=self)
 
     def start_sol_2d_offset_calibration(self):
         """Start the 2D Sol offset calibration process."""
@@ -3674,6 +3696,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         self.entry_user.config(state="disabled" if held else "normal")
         self.cmb_condition.config(state="disabled" if held else "readonly")
         self.btn_unlock_identity.config(state="normal" if held else "disabled")
+        self.btn_clear_sol_offset.config(state="disabled" if held else "normal")  # B-D10
         self.lbl_identity_lock.config(text=(f"鎖定至 {held[1]} 準確度測驗完成 / locked until the {held[1]} "
                                             f"accuracy test is completed") if held else "")
 
