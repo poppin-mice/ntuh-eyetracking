@@ -40,9 +40,12 @@ def subject_code_error(code, pattern=DEFAULT_SUBJECT_CODE_REGEX):
         return "請輸入受試者代碼 / enter the subject code"
     if not code.isascii() or any(c.isspace() for c in code):
         return "只能是代碼：不可有空白或中文 / a code only: no spaces, no non-ASCII letters"
-    if not re.fullmatch(pattern, code, re.ASCII):
-        return f"格式不符 / not the code format {pattern}"
-    return None
+    try:
+        ok = re.fullmatch(pattern, code, re.ASCII)
+    except re.error:                    # a broken pattern in the settings file
+        pattern = DEFAULT_SUBJECT_CODE_REGEX
+        ok = re.fullmatch(pattern, code, re.ASCII)
+    return None if ok else f"格式不符 / not the code format {pattern}"
 
 
 def user_name(subject_code, condition_code=""):

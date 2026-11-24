@@ -191,13 +191,6 @@ def result_block(records):
     return {key: overall[key] for key in RESULT_KEYS}
 
 
-def report_dir_name(user, condition, timestamp):
-    """Report folder under accuracy_test/: <User Name>_<condition>_<YYYYMMDD_HHMMSS>, e.g.
-    s01_c3_20261122_100305. The condition is the one picked in the start dialog, in lower case
-    like the field naming (sNN_cK); the User Name is kept as typed."""
-    return f"{user}_{condition.lower()}_{timestamp}"
-
-
 def build_meta(user, timestamp, screen_w, screen_h, view_dist_cm, screen_width_cm, n_points,
                offset_model, aborted, gate, profile_path, profile_calibration_timestamp):
     """The "meta" block of accuracy_report.json.

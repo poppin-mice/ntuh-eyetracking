@@ -681,28 +681,31 @@ class SessionBundle:
 
 
 def start(folder, kind, *, app="VA_center_opt", cfg=None, user_name=None, operator_code=None,
-          condition_code=None, display=None, mapping=None, protocol_params=None, config=None):
+          condition_code=None, identity=None, display=None, mapping=None, protocol_params=None,
+          config=None):
     """Open the bundle of a session folder: session_meta.json with status "running", events.csv
     (starting with what happened since the previous session) and the console.log slice.
 
     cfg is the dict a VA/VF test runs with; the accuracy test and the calibrations pass
     display / mapping / protocol_params / config themselves. condition_code overrides the one
-    parsed from the User Name (B-D01's Condition selector). folder None (practice mode) gives a
-    bundle that writes nothing."""
+    parsed from the User Name (B-D01's Condition selector). identity (or the same keys in cfg):
+    subject_code, condition_code, repeat_index, repeat_index_computed and collection_label from the
+    start screen; without a subject_code the codes are parsed from the User Name as before.
+    folder None (practice mode) gives a bundle that writes nothing."""
     if not folder:
         return NULL
     if kind not in KINDS:
         raise ValueError(f"unknown session kind {kind!r}")
     try:
-        return _start(folder, kind, app, cfg, user_name, operator_code, condition_code,
+        return _start(folder, kind, app, cfg, user_name, operator_code, condition_code, identity,
                       display, mapping, protocol_params, config)
     except Exception as e:              # the record must never stop a test from running
         print(f"[SessionBundle] could not start the record for {folder}: {e}")
         return NULL
 
 
-def _start(folder, kind, app, cfg, user_name, operator_code, condition_code, display, mapping,
-           protocol_params, config):
+def _start(folder, kind, app, cfg, user_name, operator_code, condition_code, identity, display,
+           mapping, protocol_params, config):
     with _APP.lock:
         if _APP.current is not None:    # never two open sessions
             _APP.current.finish("aborted", "superseded_by_new_session")
@@ -713,19 +716,25 @@ def _start(folder, kind, app, cfg, user_name, operator_code, condition_code, dis
             user_name = (cfg or {}).get("user_name", "")
         if operator_code is None:
             operator_code = (cfg or {}).get("operator_code", "")
-        identity = parse_identity(user_name)
+        fields = {**(cfg or {}), **(identity or {})}
+        parsed = parse_identity(user_name)
+        if fields.get("subject_code"):          # the validated start-screen fields
+            parsed.update(subject_code=fields["subject_code"],
+                          condition_code=fields.get("condition_code") or None)
         meta = {
             "schema": SCHEMA, "schema_version": SCHEMA_VERSION,
             "session_id": folder.name, "session_kind": kind,
             "started_at": now_iso(), "ended_at": None, "status": "running", "abort_reason": None,
             "software": software_block(app),
-            "site": {"laptop_id": laptop_id()},
+            "site": {"laptop_id": laptop_id(),
+                     "collection_label": str(fields.get("collection_label") or "").strip() or None},
             "operator": {"operator_code": str(operator_code or "").strip() or None},
-            "subject": {"subject_code": identity["subject_code"]},
-            "condition": {"condition_code": condition_code or identity["condition_code"],
-                          "take": identity["take"]},
+            "subject": {"subject_code": parsed["subject_code"]},
+            "condition": {"condition_code": condition_code or parsed["condition_code"],
+                          "take": parsed["take"], "repeat_index": fields.get("repeat_index"),
+                          "repeat_index_computed": fields.get("repeat_index_computed")},
             "user_name_legacy": user_name,
-            "identity_source": "parsed_from_user_name",
+            "identity_source": "start_screen" if fields.get("subject_code") else "parsed_from_user_name",
             "sol_builtin_calibration": {"source": "operator_confirmed", **_APP.sol_builtin},
             "display": _clean(display if display is not None else cfg_blocks.get("display", {})),
             "mapping": _clean(mapping if mapping is not None else cfg_blocks.get("mapping", {})),

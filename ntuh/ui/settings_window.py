@@ -38,6 +38,7 @@ from ntuh.ui.face_overlay import (
 from ntuh.ui.widgets import Camera, ScrollableFrame
 from ntuh.ui.calib_status import draw_calib_status
 from ntuh.sol import calib_gate
+from ntuh.common import identity
 from ntuh.tracking.sol_session import run_sol_worker
 
 try:
@@ -142,8 +143,16 @@ class SettingsWindow(tk.Tk):
         self.calib_dir_var = tk.StringVar(value=str(self.default_calib_dir))
 
         # --- General Vars ---
-        self.user_var = tk.StringVar(value="anonymous")
+        self.user_var = tk.StringVar(value="")   # derived from subject + condition, shown read-only
         self.operator_code_var = tk.StringVar(value="")   # who runs the test; a code, never a name
+        # Start-screen identity (B-D09). Subject and condition are not remembered between runs.
+        self.subject_code_var = tk.StringVar(value="")
+        self.condition_var = tk.StringVar(value="")       # "C3  <description>" or "" (none)
+        self.repeat_var = tk.StringVar(value="1")         # run number, pre-selected (computed)
+        self._repeat_suggested = 1
+        self.collection_label_var = tk.StringVar(value="")   # remembered for the day
+        self.subject_code_regex = identity.DEFAULT_SUBJECT_CODE_REGEX   # settings key subject_code_regex
+        self._identity_lock = identity.IdentityLock()
         # Sol built-in (Chronus) calibration: the SDK cannot report it, so the operator confirms it.
         self.sol_builtin_done_var = tk.BooleanVar(value=False)     # not remembered between runs
         self.sol_builtin_done_at = None                            # when it was ticked (ISO time)
@@ -364,6 +373,13 @@ class SettingsWindow(tk.Tk):
 
         # Watch for username changes to update user-dependent displays (offset calibration status)
         self.user_var.trace_add("write", self._on_username_changed)
+        # The User Name and the run number follow the start-screen fields; the run number is
+        # computed again whenever the window comes back (after a test).
+        for var in (self.subject_code_var, self.condition_var):
+            var.trace_add("write", self._on_identity_fields_changed)
+        self.experiment_type_var.trace_add("write", lambda *a: self._suggest_repeat_index())
+        self.bind("<Map>", lambda e: self._suggest_repeat_index() if e.widget is self else None)
+        self._on_identity_fields_changed()
 
         # Update offset displays after loading settings (delayed to ensure UI is ready)
         self.after(200, self.update_sol_offset_display)
@@ -636,9 +652,38 @@ class SettingsWindow(tk.Tk):
         # ── Section 1: User & Tracker ──
         grp_user = ttk.LabelFrame(parent, text="User & Tracker"); grp_user.pack(fill="x", padx=10, pady=5)
         r = 0
+        # Who and what this session is (B-D09): chosen here, never typed as one free-text name.
+        ttk.Label(grp_user, text="Subject Code:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        self.entry_user = ttk.Entry(grp_user, textvariable=self.subject_code_var, font=e_font, width=20)
+        self.entry_user.grid(row=r, column=1, sticky="w", **pad)
+        self.lbl_subject_hint = ttk.Label(grp_user, text="", font=self.f_hint)
+        self.lbl_subject_hint.grid(row=r, column=2, sticky="w", **pad); r += 1
+        ttk.Label(grp_user, text="Condition:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        self.cmb_condition = ttk.Combobox(grp_user, textvariable=self.condition_var, state="readonly",
+                                          font=e_font, width=42,
+                                          values=[""] + [f"{c}  {d}" for c, d in calib_gate.CONDITIONS.items()])
+        self.cmb_condition.grid(row=r, column=1, columnspan=2, sticky="w", **pad); r += 1
+        ttk.Label(grp_user, text="Run (第幾次):", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        self.cmb_repeat = ttk.Combobox(grp_user, textvariable=self.repeat_var, state="readonly",
+                                       font=e_font, width=5, values=[str(i) for i in range(1, 11)])
+        self.cmb_repeat.grid(row=r, column=1, sticky="w", **pad)
+        ttk.Label(grp_user, text="computed: same subject + condition + test today, + 1",
+                  font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", **pad); r += 1
+        ttk.Label(grp_user, text="Collection:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
+        ttk.Entry(grp_user, textvariable=self.collection_label_var, font=e_font, width=20).grid(
+            row=r, column=1, sticky="w", **pad)
+        ttk.Label(grp_user, text="收測場次, e.g. 20261124_NH (kept for the day)",
+                  font=self.f_hint, foreground="gray").grid(row=r, column=2, sticky="w", **pad); r += 1
         ttk.Label(grp_user, text="User Name:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
-        self.entry_user = ttk.Entry(grp_user, textvariable=self.user_var, font=e_font, width=20)
-        self.entry_user.grid(row=r, column=1, sticky="w", **pad); r += 1
+        ttk.Entry(grp_user, textvariable=self.user_var, font=e_font, width=20, state="readonly").grid(
+            row=r, column=1, sticky="w", **pad)
+        lock_frame = ttk.Frame(grp_user)
+        lock_frame.grid(row=r, column=2, sticky="w", **pad); r += 1
+        self.btn_unlock_identity = ttk.Button(lock_frame, text="Unlock", state="disabled",
+                                              command=self._unlock_identity)
+        self.btn_unlock_identity.pack(side="left")
+        self.lbl_identity_lock = ttk.Label(lock_frame, text="", font=self.f_hint, foreground="#c00000")
+        self.lbl_identity_lock.pack(side="left", padx=6)
 
         ttk.Label(grp_user, text="Operator Code:", font=l_font).grid(row=r, column=0, sticky="w", **pad)
         ttk.Entry(grp_user, textvariable=self.operator_code_var, font=e_font, width=20).grid(
@@ -1074,6 +1119,11 @@ Controls: SPACE = Record point, Q = Cancel"""
         """Start offset calibration based on current gaze method (2D or 3D)."""
         method = self.sol_gaze_method_var.get()
         print(f"[Offset Cal] Starting calibration for {method} method")
+        # A calibration belongs to one subject and condition: both stay fixed from here until
+        # that condition's accuracy test is completed.
+        if not self._identity_ready(need_condition=True):
+            return
+        self._lock_identity_for_calibration()
 
         if method == "2D":
             if SOL_2D_OFFSET_AVAILABLE:
@@ -1427,8 +1477,10 @@ Controls: SPACE = Record point, Q = Cancel"""
         view_dist_cm = self.safe_get_float(self.view_dist_cm_var, 60.0)
         screen_width_cm = self.safe_get_float(self.scr_width_cm_var, 53.0)
         bundle = session_bundle.start(
-            APP_DIR / "calibration_sessions" / f"{username}_{time.strftime('%Y%m%d_%H%M%S')}",
+            identity.output_root("sol2d_calibration") / identity.session_folder_name(
+                "sol2d_calibration", username, None, time.strftime('%Y%m%d_%H%M%S')),
             "sol2d_calibration", user_name=username, operator_code=self.operator_code_var.get(),
+            identity=self._identity_fields("sol2d_calibration"),
             display={"screen_w_px": screen_w, "screen_h_px": screen_h, "screen_width_cm": screen_width_cm,
                      "view_dist_cm": view_dist_cm, "dpi_scale": monitor_dpi_scale(screen_x + 1, screen_y + 1),
                      "subject_monitor_index": self.test_screen_monitor().get('index'),
@@ -2652,7 +2704,16 @@ Controls: SPACE = Record point, Q = Cancel"""
         chosen = [None]
 
         def start():
-            chosen[0] = var.get().split()[0]
+            # Picked again on purpose: it must be the Condition of the General tab, which names
+            # the folder and the profile (a test is never saved under another condition's name).
+            picked, general = var.get().split()[0], self._condition_code()
+            if picked != general:
+                status.config(fg="#c00000", text=f"這裡選的是 {picked}，但 General 頁的條件是 {general}。"
+                              f"請在 General 頁改條件，或在這裡選 {general}。\n"
+                              f"{picked} is not the Condition on the General tab ({general}): "
+                              f"change it there, or pick {general} here.")
+                return
+            chosen[0] = picked
             dlg.destroy()
 
         btns = ttk.Frame(dlg)
@@ -2727,6 +2788,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             return
         if self.sol_cam_params is None:
             messagebox.showerror("Error", "Sol camera parameters not available.")
+            return
+        if not self._identity_ready(need_condition=True):
             return
 
         from datetime import datetime
@@ -2815,11 +2878,11 @@ Controls: SPACE = Record point, Q = Cancel"""
         # The session folder and its bundle exist from the START of the test (the folder used to
         # appear only with the report), so an aborted or crashed test leaves its evidence too.
         self._note_identity_changes()
-        out_dir = str(APP_DIR / "accuracy_test" / acc.report_dir_name(
-            username, gate.condition, f"{datetime.now():%Y%m%d_%H%M%S}"))
+        out_dir = str(identity.output_root("accuracy_test") / identity.session_folder_name(
+            "accuracy_test", username, None, f"{datetime.now():%Y%m%d_%H%M%S}"))
         bundle = session_bundle.start(
             out_dir, "accuracy_test", user_name=username, operator_code=self.operator_code_var.get(),
-            condition_code=gate.condition,
+            condition_code=gate.condition, identity=self._identity_fields("accuracy_test"),
             display={"screen_w_px": screen_w, "screen_h_px": screen_h, "screen_width_cm": screen_width_cm,
                      "view_dist_cm": view_dist_cm, "dpi_scale": monitor_dpi_scale(screen_x + 1, screen_y + 1),
                      "subject_monitor_index": screen.get('index'),
@@ -3304,6 +3367,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         else:
             end_session()
             messagebox.showinfo("Accuracy Test", "Aborted - no points recorded.")
+        self._accuracy_test_ended(gate.condition, bundle.meta.get("status") == "completed")
 
     def _connect_inprocess_sol(self):
         """(Re)establish the in-process Sol connection used by VA/VF tests + calibration.
@@ -3463,6 +3527,18 @@ Controls: SPACE = Record point, Q = Cancel"""
         # Stop webcam preview to release camera before test
         self.stop_preview()
         self._note_identity_changes()
+        if not practice_mode and not self._identity_ready(need_condition=False):
+            return
+        # The run number: the computed one, unless the operator picked another (that is logged).
+        computed = identity.next_run(self._run_kind(), self.user_var.get()) if self.user_var.get() else 1
+        try:
+            run = int(self.repeat_var.get())
+        except ValueError:
+            run = self._repeat_suggested
+        if run == self._repeat_suggested:
+            run = computed
+        elif not practice_mode:
+            session_bundle.app_event("repeat_index_manual", computed=computed, chosen=run)
 
         # Validation — fallback to anonymous_9pt if no valid calibration profile
         if self.enable_webcam_var.get():
@@ -3496,6 +3572,11 @@ Controls: SPACE = Record point, Q = Cancel"""
         self.cfg = {
             # General
             'user_name': self.user_var.get(),
+            'subject_code': self.subject_code_var.get(),
+            'condition_code': self._condition_code(),
+            'repeat_index': run,
+            'repeat_index_computed': computed,
+            'collection_label': self.collection_label_var.get().strip(),
             'operator_code': self.operator_code_var.get().strip(),
             'calib_dir': self.calib_dir_var.get().strip(),
             'stim_dur': self.safe_get_float(self.stim_var, 5.0),
@@ -3606,6 +3687,11 @@ Controls: SPACE = Record point, Q = Cancel"""
         return {
             # General settings
             'user_name': self.user_var.get(),
+            'subject_code': self.subject_code_var.get(),        # recorded, not restored
+            'condition_code': self._condition_code(),           # recorded, not restored
+            'collection_label': self.collection_label_var.get(),
+            'collection_label_date': time.strftime('%Y%m%d'),
+            'subject_code_regex': self.subject_code_regex,
             'operator_code': self.operator_code_var.get(),
             'chronus_participant': self.chronus_participant_var.get(),
             'calib_dir': self.calib_dir_var.get(),
@@ -3704,6 +3790,80 @@ Controls: SPACE = Record point, Q = Cancel"""
         self._logged_identity = now
         self._note_sol_builtin()         # picks up an edited Chronus participant code as well
 
+    # ---------- start-screen identity (B-D09; logic in ntuh/common/identity.py) ----------
+    def _condition_code(self):
+        return (self.condition_var.get().split() or [""])[0]
+
+    def _run_kind(self):
+        return "vf" if self.experiment_type_var.get() == "VF" else "va"
+
+    def _on_identity_fields_changed(self, *_):
+        """Subject code or condition changed: check the code, derive the User Name, suggest the run."""
+        subject = self.subject_code_var.get()
+        error = identity.subject_code_error(subject, self.subject_code_regex)
+        self.user_var.set("" if error else identity.user_name(subject, self._condition_code()))
+        self.lbl_subject_hint.config(text=error or "OK", foreground="#c00000" if error else "#0a7d0a")
+        self._suggest_repeat_index()
+
+    def _suggest_repeat_index(self):
+        """Pre-select the computed run number of the selected test (VA / VF)."""
+        n = identity.next_run(self._run_kind(), self.user_var.get()) if self.user_var.get() else 1
+        self._repeat_suggested = n
+        self.cmb_repeat.config(values=[str(i) for i in range(1, max(10, n) + 1)])
+        self.repeat_var.set(str(n))
+
+    def _identity_ready(self, need_condition):
+        """A valid subject code, and a condition when need_condition; else say why and refuse."""
+        error = identity.subject_code_error(self.subject_code_var.get(), self.subject_code_regex)
+        if not error and need_condition and not self._condition_code():
+            error = "請先在 General 頁選擇測試條件 / choose the Condition on the General tab first"
+        if error:
+            messagebox.showerror("受試者 / Subject", error, parent=self)
+        return not error
+
+    def _identity_fields(self, kind):
+        """The start-screen fields for session_meta.json, with the run number computed for `kind`
+        (call it before the session folder exists)."""
+        n = identity.next_run(kind, self.user_var.get())
+        return {"subject_code": self.subject_code_var.get(), "condition_code": self._condition_code(),
+                "repeat_index": n, "repeat_index_computed": n,
+                "collection_label": self.collection_label_var.get().strip()}
+
+    def _show_identity_lock(self):
+        held = self._identity_lock.held
+        self.entry_user.config(state="disabled" if held else "normal")
+        self.cmb_condition.config(state="disabled" if held else "readonly")
+        self.btn_unlock_identity.config(state="normal" if held else "disabled")
+        self.lbl_identity_lock.config(text=(f"鎖定至 {held[1]} 準確度測驗完成 / locked until the {held[1]} "
+                                            f"accuracy test is completed") if held else "")
+
+    def _lock_identity_for_calibration(self):
+        subject, condition = self.subject_code_var.get(), self._condition_code()
+        self._identity_lock.calibration_started(subject, condition)
+        session_bundle.app_event("identity_locked", subject_code=subject, condition_code=condition)
+        self._show_identity_lock()
+
+    def _accuracy_test_ended(self, condition, completed):
+        if self._identity_lock.accuracy_test_ended(condition, completed):
+            session_bundle.app_event("identity_unlocked", reason="accuracy_test_completed",
+                                     condition_code=condition)
+            self._show_identity_lock()
+
+    def _unlock_identity(self):
+        """The operator's explicit way out of the lock (wrong subject, test not run); logged."""
+        held = self._identity_lock.held
+        if not held or not messagebox.askyesno(
+                "解除鎖定 / Unlock",
+                f"受試者 {held[0]}、條件 {held[1]} 的準確度測驗還沒完成。確定要解除鎖定？\n"
+                f"The {held[1]} accuracy test of {held[0]} is not completed. Unlock anyway?",
+                parent=self):
+            return
+        self._identity_lock.unlock()
+        session_bundle.app_event("identity_unlocked", reason="operator", subject_code=held[0],
+                                 condition_code=held[1],
+                                 operator_code=self.operator_code_var.get().strip() or None)
+        self._show_identity_lock()
+
     def _note_sol_builtin(self):
         """Hand the operator's Sol built-in calibration confirmation to the session record."""
         session_bundle.note_sol_builtin(self.sol_builtin_done_var.get(), self.sol_builtin_done_at,
@@ -3747,6 +3907,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         """Attach trace callbacks to all settings variables for auto-save."""
         tracked_vars = [
             self.user_var, self.operator_code_var, self.chronus_participant_var, self.calib_dir_var,
+            self.collection_label_var,
             self.gaze_color_var, self.gaze_radius_var, self.gaze_width_var,
             self.stim_var, self.pass_dur_var, self.blank_var, self.rad_var,
             self.rotate_var, self.rot_speed_var, self.rot_dir_var,
@@ -3818,7 +3979,11 @@ Controls: SPACE = Record point, Q = Cancel"""
                 data = json.load(f)
 
             # Apply all settings
-            if 'user_name' in data: self.user_var.set(data['user_name'])
+            # The User Name is derived and subject / condition are chosen anew each run; the
+            # collection label is kept for the day it was entered.
+            if data.get('collection_label_date') == time.strftime('%Y%m%d'):
+                self.collection_label_var.set(data.get('collection_label', ''))
+            self.subject_code_regex = data.get('subject_code_regex') or self.subject_code_regex
             if 'calib_dir' in data: self.calib_dir_var.set(data['calib_dir'])
             if 'operator_code' in data: self.operator_code_var.set(data['operator_code'])
             if 'chronus_participant' in data: self.chronus_participant_var.set(data['chronus_participant'])

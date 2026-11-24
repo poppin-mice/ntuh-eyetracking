@@ -92,7 +92,8 @@ def test_identity_is_stored_as_separate_fields(folder, user_name, subject, condi
     sb.start(folder, "accuracy_test", user_name=user_name, operator_code=" OT1 ").finish()
     meta = _meta(folder)
     assert meta["subject"] == {"subject_code": subject}
-    assert meta["condition"] == {"condition_code": condition, "take": take}
+    assert meta["condition"] == {"condition_code": condition, "take": take, "repeat_index": None,
+                                 "repeat_index_computed": None}
     assert meta["operator"] == {"operator_code": "OT1"}
     assert meta["user_name_legacy"] == user_name          # exactly as typed
     assert meta["identity_source"] == "parsed_from_user_name"
@@ -103,13 +104,34 @@ def test_a_selected_condition_wins_over_the_one_in_the_user_name(folder):
     assert _meta(folder)["condition"]["condition_code"] == "C3"
 
 
+def test_start_screen_fields_are_stored_as_chosen(folder):
+    cfg = dict(CFG, subject_code="s01", condition_code="C3", repeat_index=2, repeat_index_computed=2,
+               collection_label="20261124_NH")
+    sb.start(folder, "va", cfg=cfg).finish()
+    meta = _meta(folder)
+    assert meta["identity_source"] == "start_screen"
+    assert meta["subject"] == {"subject_code": "s01"}
+    assert meta["condition"] == {"condition_code": "C3", "take": None, "repeat_index": 2,
+                                 "repeat_index_computed": 2}
+    assert meta["site"]["collection_label"] == "20261124_NH"
+    assert meta["user_name_legacy"] == "s01_c3"
+
+
+def test_start_screen_fields_can_be_passed_without_cfg(folder):
+    sb.start(folder, "accuracy_test", user_name="K03", condition_code="C4",
+             identity={"subject_code": "K03", "condition_code": "C4", "repeat_index": 1}).finish()
+    meta = _meta(folder)
+    assert (meta["subject"]["subject_code"], meta["condition"]["condition_code"]) == ("K03", "C4")
+    assert meta["condition"]["repeat_index"] == 1
+
+
 def test_the_hostname_is_stored_only_as_a_short_hash(folder, monkeypatch):
     monkeypatch.setattr(socket, "gethostname", lambda: "LAPTOP-TESTHOST1")
     sb.start(folder, "va", cfg=CFG).finish()
     text = (folder / sb.META_FILE).read_text(encoding="utf-8")
     assert "TESTHOST1" not in text
     assert _meta(folder)["site"] == {
-        "laptop_id": hashlib.sha256(b"LAPTOP-TESTHOST1").hexdigest()[:8]}
+        "laptop_id": hashlib.sha256(b"LAPTOP-TESTHOST1").hexdigest()[:8], "collection_label": None}
 
 
 def test_paths_do_not_carry_this_pcs_folder_names(folder, bundle_app):

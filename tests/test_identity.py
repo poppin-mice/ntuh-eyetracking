@@ -32,6 +32,11 @@ def test_spaces_and_non_ascii_are_refused_even_by_a_looser_pattern():
     assert idn.subject_code_error("x_7", r".+") is None
 
 
+def test_a_broken_pattern_from_the_settings_falls_back_to_the_default():
+    assert idn.subject_code_error("s01", r"([") is None
+    assert idn.subject_code_error("s01_c3", r"([")
+
+
 # ---------- code cleaning ----------
 @pytest.mark.parametrize("raw, clean", [
     ("s01_c3", "s01_c3"), ("s05_c5-1", "s05_c5-1"), ("A02_05", "A02_05"),   # field shapes stay
