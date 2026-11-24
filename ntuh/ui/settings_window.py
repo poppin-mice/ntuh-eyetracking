@@ -1985,8 +1985,11 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
                         'username': username, 'model': model, 'num_calibration_points': n_pts,
                         'calibration_timestamp': time.strftime("%Y-%m-%dT%H:%M:%S"), 'unsaved': True}
                     kind, title, text = calib_gate.calibration_done_dialog(
-                        saved, n_pts, self._sol_2d_profile_path(username))
-                    show = messagebox.showinfo if kind == "info" else messagebox.showerror
+                        saved, n_pts, self._sol_2d_profile_path(username),
+                        n_insufficient=sum(1 for p in shown_points
+                                           if p.get("insufficient") == 1 and p.get("est_x") not in (None, "")))
+                    show = {"info": messagebox.showinfo, "warning": messagebox.showwarning}.get(
+                        kind, messagebox.showerror)
                     self.after(0, lambda: show(title, text))
                 else:
                     save_errors.append("the offset model could not be trained")

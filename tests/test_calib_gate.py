@@ -181,6 +181,14 @@ def test_successful_save_keeps_the_complete_dialog(tmp_path):
     assert "5 points" in text
 
 
+def test_insufficient_points_turn_the_complete_dialog_into_a_warning(tmp_path):
+    """Auto-advance trains on a point that never had a stable second: the dialog must say so."""
+    path = tmp_path / "s01_c3_sol_2d_offset.json"
+    kind, title, text = cg.calibration_done_dialog(True, 5, path, n_insufficient=2)
+    assert kind == "warning" and "2 point(s)" in text and "2 個點" in text and path.name in text
+    assert cg.calibration_done_dialog(False, 5, path, n_insufficient=2)[0] == "error"   # not saved wins
+
+
 def test_a_calibration_kept_in_memory_still_opens_the_gate():
     kept = {"model": _trained_model(), "num_calibration_points": 5,
             "calibration_timestamp": "2026-11-22T10:03:05", "unsaved": True}

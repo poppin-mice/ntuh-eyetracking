@@ -132,9 +132,17 @@ def blocked_message(gate, user_name, profile_path):
             f"Yes = continue WITHOUT our calibration (asks for your operator code; it is recorded).")
 
 
-def calibration_done_dialog(saved, n_points, profile_path):
+def calibration_done_dialog(saved, n_points, profile_path, n_insufficient=0):
     """(kind, title, text) of the dialog shown when a 2D offset calibration finishes.
-    kind is 'info' or 'error': a profile that did not reach the disk never reads as success."""
+    kind is 'info', 'warning' or 'error': a profile that did not reach the disk never reads as
+    success, and points that auto-advance marked insufficient (no stable second, yet in the
+    model) are named, so the operator can calibrate again."""
+    if saved and n_insufficient:
+        return ("warning", "Calibration Complete - check / 校正完成，請確認",
+                f"2D offset calibration complete: {n_points} points recorded.\n\n"
+                f"注意：其中 {n_insufficient} 個點的穩定資料不足，仍已納入校正。建議重做校正。\n"
+                f"WARNING: {n_insufficient} point(s) had no stable second (insufficient) and are "
+                f"still in the calibration. Consider calibrating again.\n\nSaved to:\n{profile_path}")
     if saved:
         return ("info", "Calibration Complete",
                 f"2D offset calibration complete!\n{n_points} points recorded.\n\nSaved to:\n{profile_path}")
