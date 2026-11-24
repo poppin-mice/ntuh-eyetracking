@@ -38,6 +38,7 @@ from ntuh.ui.face_overlay import (
 from ntuh.ui.widgets import Camera, ScrollableFrame
 from ntuh.ui.calib_status import draw_calib_status
 from ntuh.sol import calib_gate
+from ntuh.sol import offset_choice
 from ntuh.tracking.sol_session import run_sol_worker
 
 try:
@@ -1016,6 +1017,16 @@ class SettingsWindow(tk.Tk):
         self.lbl_sol_offset_timestamp = ttk.Label(grp_status, text="Last Calibrated: Never", font=self.f_body)
         self.lbl_sol_offset_timestamp.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
 
+        # Our offset in VA/VF (REQ-0031): OFF unless a profile is picked here. Not saved between runs.
+        grp_va_offset = ttk.LabelFrame(parent, text="Sol offset for VA/VF")
+        grp_va_offset.pack(fill="x", padx=10, pady=5)
+        self.sol_offset_profile = ""
+        self.lbl_va_offset = ttk.Label(grp_va_offset, text=offset_choice.describe(offset_choice.choose({}))[1],
+                                       font=l_font, wraplength=700)
+        self.lbl_va_offset.pack(side="left", **pad)
+        ttk.Button(grp_va_offset, text="OFF", command=lambda: self._set_va_offset_profile("")).pack(side="right", padx=5)
+        ttk.Button(grp_va_offset, text="Select profile...", command=self._pick_va_offset_profile).pack(side="right", padx=5)
+
         # Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill="x", padx=10, pady=10)
@@ -1062,6 +1073,38 @@ Controls: SPACE = Record point, Q = Cancel"""
         self.after(100, self.update_sol_offset_display)
         self.after(100, self.update_sol_2d_offset_display)
         self.after(100, self._update_gaze_method_display)
+
+    def _pick_va_offset_profile(self):
+        """Pick the Sol 2D offset profile VA/VF apply: from the Sol profile folder only, shown
+        with its user name, time and points; one not made today needs a confirm."""
+        folder = self.calib_dir_var.get().strip() or "calibration_profiles"
+        path = filedialog.askopenfilename(parent=self, initialdir=folder, title="Sol offset for VA/VF",
+                                          filetypes=[("Sol 2D offset profile", "*" + offset_choice.SUFFIX)])
+        if not path:
+            return
+        choice = offset_choice.choose({"enable_sol": True, "sol_gaze_method": "2D",
+                                       offset_choice.SETTING: path})
+        error = offset_choice.pick_error(path, folder) or choice["load_error"]
+        if error:
+            messagebox.showerror("Sol offset for VA/VF", f"{path}\n\n{error}")
+            return
+        s = choice["summary"]
+        old = not offset_choice.made_today(s["calibration_timestamp"])
+        if old and not messagebox.askyesno(
+                "Sol offset for VA/VF",
+                f"這個校正檔不是今天做的 / This profile was NOT made today:\n\n{Path(path).name}\n"
+                f"user {s['username']}, {s['n_points']} pts, {s['calibration_timestamp']}\n\n"
+                f"仍要在 VA/VF 套用？ Apply it to VA/VF anyway?"):
+            return
+        self._set_va_offset_profile(path, not_today_confirmed=old)
+
+    def _set_va_offset_profile(self, path, **detail):
+        self.sol_offset_profile = path
+        choice = offset_choice.choose({"enable_sol": True, "sol_gaze_method": self.sol_gaze_method_var.get(),
+                                       offset_choice.SETTING: path})
+        self.lbl_va_offset.config(text=offset_choice.describe(choice)[1])
+        session_bundle.app_event("profile_selected", where="settings", path=path or None,
+                                 **(choice["summary"] or {}), **detail)
 
     def _update_gaze_method_display(self):
         """Update the gaze method display label."""
@@ -3534,6 +3577,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_pose_smooth': self.safe_get_float(self.sol_pose_smooth_var, 0.1),
             'sol_gaze_smooth': self.safe_get_float(self.sol_gaze_smooth_var, 0.15),
             'sol_gaze_method': self.sol_gaze_method_var.get(),  # "3D" or "2D"
+            'sol_offset_profile': getattr(self, 'sol_offset_profile', ""),  # "" = OFF (REQ-0031)
             'sol_quality_window': self.safe_get_float(self.sol_quality_window_var, 3.0),
             # Both screens: resolve_tester_rect compares them to decide whether any
             # examiner view may open at all.

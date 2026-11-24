@@ -14,6 +14,7 @@ import pygame
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
 from ntuh.recording import session_bundle
+from ntuh.sol import offset_choice
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -45,6 +46,15 @@ def run_vf_test(cfg, sol_context=None):
     win = pygame.display.set_mode((W, H), pygame.NOFRAME)
     print(f"[VF Test] Window: {W}x{H} at ({screen_x},{screen_y}), NOFRAME mode")
     ensure_pygame_focus()
+
+    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF".
+    sol_choice = offset_choice.choose(cfg)
+    if sol_choice['load_error']:
+        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
+                                      f"{sol_choice['load_error']}")
+        pygame.quit()
+        return
+    print(f"[VF Sol] {offset_choice.describe(sol_choice)[1]}")
 
     cx, cy = W // 2, H // 2
     vf_bg = to_rgb_tuple(cfg.get('vf_bg_color', (0, 0, 0)))
@@ -85,7 +95,6 @@ def run_vf_test(cfg, sol_context=None):
     }
 
     sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-    sol_profile = None      # the Sol offset profile this test looks for (for the session record)
     aruco_markers_px = {}
     aruco_imgs = {}
 
@@ -136,50 +145,12 @@ def run_vf_test(cfg, sol_context=None):
 
         phy_w_m = cfg.get('sol_screen_phy_width_mm', 530.0) / 1000.0
 
-        # Load 2D offset model if using 2D gaze method
-        sol_2d_offset_model = None
-        if sol_gaze_method == '2D':
-            try:
-                from ntuh.sol.offset_calibration_2d import (
-                    get_sol_2d_offset_path, load_sol_2d_offset, Sol2DOffsetModel)
-                sol_profile = {"role": "sol2d_offset", "loaded": False, "looked_for": get_sol_2d_offset_path(
-                    cfg.get('user_name', 'anonymous'), cfg.get('calib_dir', 'calibration_profiles'), create=False)}
-                offset_data = load_sol_2d_offset(cfg.get('user_name', 'anonymous'),
-                                                  Path(cfg.get('calib_dir', 'calibration_profiles')))
-                if offset_data:
-                    sol_2d_offset_model = Sol2DOffsetModel.from_dict(offset_data)
-                    print(f"[VF Sol] Loaded 2D offset model ({sol_2d_offset_model.num_points} pts)")
-                    # Also set on projector for integrated smoothing
-                    if sol_2d_offset_model.is_trained:
-                        sol_projector.set_gaze_2d_offset_model(sol_2d_offset_model)
-                        print(f"[VF Sol] Applied 2D offset model to projector")
-                        sol_profile["loaded"] = True
-                    else:       # recorded as it is: the profile was read but is not applied
-                        sol_profile["load_error"] = "profile read, but the model is not trained"
-            except Exception as e:
-                print(f"[VF Sol] Failed to load 2D offset: {e}")
-                if sol_profile:
-                    sol_profile["load_error"] = e
-
-        # Load 3D offset if using 3D method
+        # Our Sol offset: only the picked profile, applied in 2D (REQ-0031). No 3D angular offset.
+        if sol_choice['model'] is not None:
+            sol_projector.set_gaze_2d_offset_model(sol_choice['model'])
+            print(f"[VF Sol] Applied 2D offset model to projector")
         sol_offset_pitch = 0.0
         sol_offset_yaw = 0.0
-        if sol_gaze_method == '3D':
-            sol_profile = {"role": "sol3d_offset", "loaded": False,
-                           "looked_for": Path(cfg.get('calib_dir', 'calibration_profiles'))
-                           / f"{cfg.get('user_name', 'anonymous')}_sol_offset.json"}
-            try:
-                from ntuh.sol.offset_calibration import load_sol_offset
-                sol_offset = load_sol_offset(cfg.get('user_name', 'anonymous'),
-                                              Path(cfg.get('calib_dir', 'calibration_profiles')))
-                if sol_offset:
-                    sol_offset_pitch = sol_offset.get('pitch_offset_rad', 0.0)
-                    sol_offset_yaw = sol_offset.get('yaw_offset_rad', 0.0)
-                    print(f"[VF Sol] Loaded 3D offset: pitch={math.degrees(sol_offset_pitch):.2f} yaw={math.degrees(sol_offset_yaw):.2f}")
-                    sol_profile["loaded"] = True
-            except Exception as e:
-                print(f"[VF Sol] Failed to load 3D offset: {e}")
-                sol_profile["load_error"] = e
 
         # Start background detection AFTER scene stream is resumed and offset models loaded
         sol_projector.start_background_detection(
@@ -198,9 +169,7 @@ def run_vf_test(cfg, sol_context=None):
     # Which calibration profiles this test looked for, and what it found (with a copy of each).
     if cfg['enable_webcam']:
         bundle.profile("webcam", cfg['calib_dir'], loaded=True)    # without one the test did not start
-    if sol_profile:
-        bundle.profile(sol_profile["role"], sol_profile["looked_for"], sol_profile["loaded"],
-                       applied=True, load_error=sol_profile.get("load_error"))
+    offset_choice.record(bundle, sol_choice)
 
     # [NEW] Sol gaze-quality tracker + tester dashboard (mirrors the VA test)
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -213,7 +182,8 @@ def run_vf_test(cfg, sol_context=None):
         tester_rect = resolve_tester_rect(cfg)
         if cfg.get('enable_webcam') or cfg.get('enable_sol'):
             dashboard = TesterDashboard(gf, sol_quality, dash_state, cfg, tester_rect=tester_rect,
-                                        session_dir=getattr(recorder, 'session_dir', None))
+                                        session_dir=getattr(recorder, 'session_dir', None),
+                                        calib_status=offset_choice.describe(sol_choice))
             dashboard.start()
             print(f"[VF Dashboard] Examiner dashboard started (rect: {tester_rect})" if tester_rect
                   else "[VF Dashboard] No separate Examiner Screen - collecting quality, no window.")
