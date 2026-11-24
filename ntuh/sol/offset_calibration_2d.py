@@ -842,7 +842,7 @@ def get_sol_2d_offset_path(username, calib_dir, create=True):
 
 
 def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, target_image_path="",
-                       error_out=None):
+                       error_out=None, filepath=None, extra=None):
     """
     Save the 2D offset calibration model to a JSON file.
 
@@ -855,6 +855,11 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         target_image_path: Path to the target image used for calibration
         error_out: a list that receives the reason when writing the file fails (for the
             calibration session record)
+        filepath: the file to write (calibration_profiles/sol2d/<calib_session_id>.json), else
+            the legacy <username>_sol_2d_offset.json in calib_dir
+        extra: more fields for the file (ntuh/sol/sol2d_profiles.py profile_fields)
+
+    An existing file is never overwritten: that save fails.
     """
     if model is None or not model.is_trained:
         print("[Sol2DOffset] Cannot save: model not trained")
@@ -869,14 +874,17 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         'screen_height_px': screen_height,
         'target_image_path': target_image_path,
         'num_calibration_points': len(model.calibration_points),
+        **(extra or {}),
         'model': model.to_dict()
     }
 
     # The caller shows "not saved" on False, so every way the write can fail must end up there -
     # including a calibration folder that does not exist and cannot be created.
     try:
-        filepath = get_sol_2d_offset_path(username, calib_dir)
-        with open(filepath, 'w', encoding='utf-8') as f:
+        if filepath:
+            Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        filepath = filepath or get_sol_2d_offset_path(username, calib_dir)
+        with open(filepath, 'x', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         print(f"[Sol2DOffset] Saved calibration to {filepath}")
         return True

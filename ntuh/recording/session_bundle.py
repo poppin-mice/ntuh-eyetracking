@@ -56,8 +56,9 @@ REQUIRED_WHEN_CRASHED = [CRASH_FILE]
 SNAPSHOT_FILE = "calib_profile_snapshot.json"   # the Sol profile the session applied, or wrote
 PROFILE_COPY_DIR = "calib_profiles"             # any other profile it loaded: <role>__<file name>
 PROFILE_COPY_MAX_BYTES = 5 * 1024 * 1024        # a larger webcam profile folder is hashed, not copied
-# File name pattern of each Sol profile, to list which profiles the folder held.
-PROFILE_PATTERNS = {"sol2d_offset": "*_sol_2d_offset.json", "sol3d_offset": "*_sol_offset.json"}
+# File name pattern of each Sol profile, to list which profiles the folder held: 2D profiles are
+# calibration_profiles/sol2d/<calib_session_id>.json since 1.16.0, <User Name>_sol_2d_offset.json before.
+PROFILE_PATTERNS = {"sol2d_offset": "*.json", "sol3d_offset": "*_sol_offset.json"}
 # LOGGING_SPEC 4.3. Never rename or reorder: bundle v2 appends columns at the end.
 EVENT_COLUMNS = ["pc_timestamp_ms", "sdk_timestamp_ms_nearest", "event", "target_idx",
                  "target_name", "repeat_idx", "x", "y", "detail_json"]
@@ -143,14 +144,17 @@ def our_calibration_expected(condition_code):
 
 
 def _profile_facts(path, started_at):
-    """calibration_timestamp, its age at the session start, n_points and offset_mode read from a
-    Sol offset profile (2D or 3D JSON). Whatever the file does not say stays out."""
+    """calibration_timestamp, its age at the session start, n_points, offset_mode, calib_session_id
+    and legacy_profile (a file from before 1.16.0, without calib_session_id) read from a Sol offset
+    profile (2D or 3D JSON). Whatever the file does not say stays out."""
     facts = {}
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         facts["calibration_timestamp"] = made = data.get("calibration_timestamp")
         facts["n_points"] = data.get("num_calibration_points")
         facts["offset_mode"] = (data.get("model") or {}).get("offset_mode")
+        facts["calib_session_id"] = data.get("calib_session_id")
+        facts["legacy_profile"] = "calib_session_id" not in data
         if made and started_at:
             made, start = datetime.fromisoformat(made), datetime.fromisoformat(started_at)
             if made.tzinfo is None:             # the profiles store local time without a zone
