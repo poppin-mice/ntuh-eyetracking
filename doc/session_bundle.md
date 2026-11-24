@@ -106,14 +106,15 @@ could not be saved; `calibration_result.saved` says so.
 
 | Field | Meaning |
 |-------|---------|
-| `expected` | Whether this condition is run with our offset calibration: `true` for C3 and C5, `false` for C1, C2 and C4, `null` when the condition is unknown |
+| `expected` | Accuracy test: whether this condition is run with our offset calibration: `true` for C3 and C5, `false` for C1, C2 and C4, `null` when the condition is unknown. VA / VF (*1.11.0*): whether the operator picked a profile under *Sol offset for VA/VF* (`false` = OFF, or Sol off) |
+| `gaze_method` | *1.11.0*, VA / VF: `2D` or `3D`. A picked profile is applied only with `2D` |
 | `loaded` | Whether the Sol offset profile the test applies was loaded. `false` also when Sol was off |
 | `profiles` | One entry per profile looked for, below |
 
 | Entry field | Meaning |
 |-------------|---------|
 | `role` | `sol2d_offset` (`<User Name>_sol_2d_offset.json`), `sol3d_offset` (`<User Name>_sol_offset.json`) or `webcam` (the Calibration Folder with the webcam model) |
-| `applied` | `true` for the Sol profile the test's gaze method uses. VA looks for both Sol profiles and applies one |
+| `applied` | `true` for the Sol profile the test's gaze method uses. Since 1.11.0 VA / VF have a Sol entry only when a profile was picked (the file picked, not one named after the User Name); before, VA looked for both Sol profiles by User Name and applied one |
 | `looked_for_path` | The file (or folder) the program looked for |
 | `loaded`, `load_error` | Whether it was loaded; why not, when the file was there but unusable |
 | `source_path`, `sha256`, `bytes` | The file that was found (`null` when there was none) |
@@ -128,7 +129,7 @@ A loaded profile is copied: the applied Sol profile to `calib_profile_snapshot.j
 Every lookup is also an event, `profile_loaded` or `profile_missing`.
 
 VF records what it does: a 2D profile that was read but not applied has `loaded: false` and a
-`load_error`.
+`load_error` (VF before 1.11.0 never applied a 2D profile it read by User Name).
 
 ## Sol built-in calibration
 
@@ -202,6 +203,7 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `calib_dir_changed` | The Calibration Folder changed | `old`, `new`, `reason`: `operator`, or `fallback_anonymous_9pt` when Start Test replaced it |
 | `clear_offset` | Clear Offset was pressed | `method` (2D / 3D), `user_name`, `file`, `existed`, `cleared` |
 | `profile_loaded`, `profile_missing` | *1.9.0*. A calibration profile was looked for, by a test or by the gaze preview | `role`, `applied`, `looked_for_path`, `exists`, `present`. From the preview only `role`, `where`, `looked_for_path` |
+| `profile_selected` | *1.11.0*. The *Sol offset for VA/VF* setting: picked or set OFF in the settings (`where: settings`), the answer at Start when the picked profile was made under another User Name (`where: start_confirm`), and what a VA / VF test started with (`where: test_start`) | `where`, `path` (`null` = OFF); settings: `username`, `calibration_timestamp`, `n_points`, `not_today_confirmed`; start confirm: `username` (the profile's), `other_user_confirmed`; test start: `applied`, `gaze_method` |
 | `sol_builtin_calib_confirmed` | *1.9.0*. The Sol built-in calibration checkbox was ticked or unticked | `confirmed`, `performed_at`, `chronus_participant` |
 | `gate_override` | SPACE started a VA trial before the signal was stable | `trial`, `waited_s`, `threshold_pct`, `sol_valid_pct`, `webcam_valid_pct` |
 | `abort` | Q, ESC or the window was closed | `key`, `where`, `trial` or `target_idx` |

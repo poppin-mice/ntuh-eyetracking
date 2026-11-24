@@ -37,19 +37,12 @@ from ntuh.tracking.sol_quality import (
 from ntuh.tracking.sol_session import run_sol_worker
 from ntuh.ui.tester_dashboard import TesterDashboard
 
-try:
-    from ntuh.sol.offset_calibration import load_sol_offset, apply_angular_offset
-    SOL_OFFSET_AVAILABLE = True
-except Exception:
-    SOL_OFFSET_AVAILABLE = False
-    load_sol_offset = apply_angular_offset = None
+from ntuh.sol import offset_choice
 
 try:
-    from ntuh.sol.offset_calibration_2d import get_sol_2d_offset_path, load_sol_2d_offset
-    SOL_2D_OFFSET_AVAILABLE = True
+    from ntuh.sol.offset_calibration import apply_angular_offset
 except Exception:
-    SOL_2D_OFFSET_AVAILABLE = False
-    get_sol_2d_offset_path = load_sol_2d_offset = None
+    apply_angular_offset = None
 
 
 def run_test(cfg, sol_context=None):
@@ -64,6 +57,17 @@ def run_test(cfg, sol_context=None):
     win = pygame.display.set_mode((W, H), pygame.NOFRAME)
     print(f"[Test] Window: {W}x{H} at ({screen_x},{screen_y}), NOFRAME mode")
     ensure_pygame_focus()
+
+    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF", never one
+    # found by the User Name. No 3D angular offset is loaded.
+    sol_offset = None
+    sol_choice = offset_choice.choose(cfg)
+    if sol_choice['load_error']:
+        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
+                                      f"{sol_choice['load_error']}")
+        return
+    sol_2d_offset_model = sol_choice['model']
+    print(f"[Sol Offset] {offset_choice.describe(sol_choice)[1]}")
 
     # 1. Initialize Webcam Tracker
     gf = None
@@ -108,32 +112,6 @@ def run_test(cfg, sol_context=None):
     }
 
     # [NOTE] Gaze caching is now handled by persistent sol_gaze_pt variable (matches preview behavior)
-
-    # Load Sol offset calibration if available
-    sol_offset = None
-    sol_2d_offset_model = None
-    if cfg['enable_sol'] and SOL_OFFSET_AVAILABLE:
-        username = cfg.get('user_name', 'anonymous')
-        calib_dir = Path(cfg.get('calib_dir', 'calibration_profiles'))
-
-        # Load 3D angular offset (for 3D gaze method)
-        sol_offset = load_sol_offset(username, calib_dir)
-        if sol_offset:
-            print(f"[Sol Offset] Loaded 3D offset for user '{username}':")
-            print(f"             Pitch: {sol_offset['pitch_offset_deg']:.2f} deg ({sol_offset['pitch_offset_rad']:.4f} rad)")
-            print(f"             Yaw: {sol_offset['yaw_offset_deg']:.2f} deg ({sol_offset['yaw_offset_rad']:.4f} rad)")
-        else:
-            print(f"[Sol Offset] No 3D offset calibration found for user '{username}'.")
-
-        # Load 2D offset model (for 2D gaze method)
-        if SOL_2D_OFFSET_AVAILABLE:
-            sol_2d_offset_data = load_sol_2d_offset(username, calib_dir)
-            if sol_2d_offset_data and sol_2d_offset_data.get('model') and sol_2d_offset_data['model'].is_trained:
-                sol_2d_offset_model = sol_2d_offset_data['model']
-                print(f"[Sol 2D Offset] Loaded 2D offset model for user '{username}':")
-                print(f"             Points: {sol_2d_offset_data.get('num_calibration_points', '?')}, Trained: {sol_2d_offset_data.get('calibration_timestamp', '?')}")
-            else:
-                print(f"[Sol 2D Offset] No 2D offset calibration found for user '{username}'. Using raw gaze_2d.")
 
     # Aruco Assets
     aruco_markers_px = {}
@@ -353,13 +331,7 @@ def run_test(cfg, sol_context=None):
     # Which calibration profiles this test looked for, and what it found (with a copy of each).
     if cfg['enable_webcam']:
         bundle.profile("webcam", cfg['calib_dir'], loaded=True)    # without one the test did not start
-    if cfg['enable_sol'] and SOL_OFFSET_AVAILABLE:
-        method_2d = cfg.get('sol_gaze_method', '3D') == '2D'       # the Sol offset this test applies
-        bundle.profile("sol3d_offset", calib_dir / f"{username}_sol_offset.json", bool(sol_offset),
-                       applied=not method_2d)
-        if SOL_2D_OFFSET_AVAILABLE:
-            bundle.profile("sol2d_offset", get_sol_2d_offset_path(username, calib_dir, create=False),
-                           sol_2d_offset_model is not None, applied=method_2d)
+    offset_choice.record(bundle, sol_choice)
 
     # [NEW] Sol gaze-quality tracker (missing-data rate over RECEIVED samples) + tester dashboard
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -373,7 +345,8 @@ def run_test(cfg, sol_context=None):
         tester_rect = resolve_tester_rect(cfg)
         if cfg.get('enable_webcam') or cfg.get('enable_sol'):
             dashboard = TesterDashboard(gf, sol_quality, dash_state, cfg, tester_rect=tester_rect,
-                                        session_dir=getattr(recorder, 'session_dir', None))
+                                        session_dir=getattr(recorder, 'session_dir', None),
+                                        calib_status=offset_choice.describe(sol_choice))
             dashboard.start()
             print(f"[Dashboard] Examiner dashboard started (rect: {tester_rect})" if tester_rect
                   else "[Dashboard] No separate Examiner Screen - collecting quality, no window.")
