@@ -188,6 +188,17 @@ operator presses SPACE again. `n`, `mean`, `median`, `sd` are over all render-fr
 window (about 90 instead of 30). The profile keeps the same per point: each entry of
 `model.calibration_points` gains `estimator`, `est_x`, `est_y` and the `window_*` fields.
 
+*1.18.0* appends `dwell_s, n_stable, insufficient, threshold_deg` (auto-advance, *Point Advance* `auto`,
+the default; empty under `space`). The point then starts by itself and ends by `stability.Dwell`
+(`doc/dev/LOGGING_SPEC.md` 4.6): `estimator` = `stable_dwell_median`, `est` = the median `gaze_2d` of
+the valid samples of the stable second, `window_*` = that second (`window_spread_px`: their 2-D MAD,
+scene-camera px). `dwell_s` = usable time spent on the point (Sol device clock), `n_stable` = valid
+samples of the stable second (0 when insufficient), `insufficient` = 1 when *Max per Point* passed
+first (the point then uses the steadiest valid second, or, without one, is not trained: empty model
+and `est` columns), `threshold_deg` = *Stable Spread*. A point skipped with S has a row with empty
+model and `est` columns. `protocol_params` gains `point_advance`, `stable_s`, `max_dwell_s`,
+`threshold_deg` (both kinds of session).
+
 ## Bundle v2 (replayable)
 
 *1.12.0, accuracy test.* Every sample and homography the test used, so each number of the report can
@@ -207,12 +218,14 @@ these two files (`check_r1`); the tool itself reads accuracy folders only.
 | `homography_log.csv` | One row per homography the test held (each message of the Sol child, the cached one it started from, a child crash): `pc_timestamp_ms, h_id, source, valid, strict_valid, frame_age_ms, n_markers, marker_ids, h00 ... h22` (image -> screen) |
 | `targets.csv` | `target_idx, name, group, ecc_deg, x, y, repeat_idx, order_idx` |
 | `points.csv` | One row per recorded point: the `accuracy_data.csv` columns (unchanged headline: mean of 30 render-frame samples), then `target_idx, repeat_idx, collect_start_ms, collect_end_ms, n_render_samples, n_sdk_samples, n_sdk_valid, h_state_mix`, the medians of the SDK samples of the collect window (`raw/corr_median_x/y`, `err_raw/corr_median_deg`) and the same over the valid ones only (`raw/corr_valid_median_x/y`, `err_raw/corr_valid_median_deg`; valid = `gaze_2d` valid and both eyes NORMAL) |
+| `points.csv`, *1.18.0* | Auto-advance (*Accuracy Test Advance* `auto`, the default): the headline is the mean of the **last** 30 render-frame samples before the point ended; the medians, `n_sdk_samples`, `n_sdk_valid` and `h_state_mix` are over the point's stable second (insufficient: its steadiest valid second; none: counts 0, medians empty), so `corr_valid_median_*` / `err_corr_valid_median_deg` are the result from stable data only. Appended: `dwell_s`, `n_stable`, `insufficient`, `threshold_deg` (empty under `space`). `collect_start_ms` = the target appeared (or R), `collect_end_ms` = the point ended |
 | `trial_events.csv` | The VA columns, one row per recorded (`REC`) or discarded (`DISCARDED`) point: `trial_number` = target index, `side` = target name, start / end = collect window (seconds), `stim_x/y` = target, `trial_type` = `acc_target` |
 
 `python tools/check_accuracy_replay.py <accuracy session folder>` recomputes the folder from its own
 files (LOGGING_SPEC 8): R1 `raw_screen` from the raw gaze and the logged homography, R2 `corr_screen`
 from `calib_profile_snapshot.json` (or `corr` = `raw` without a profile), R3 the `points.csv` /
-`accuracy_data.csv` headline from the samples `collect_end` lists. It prints, per check, how many rows
+`accuracy_data.csv` headline from the samples `collect_end` lists (*1.18.0*, auto-advance: the last 30
+render-frame samples before the point ended). It prints, per check, how many rows
 or points it compared and the largest difference in px; PASS at 1e-6 px. Exit code 0 when all pass.
 
 `accuracy_report.json` → `meta` gains `session_id`. The files are written by background threads; the
@@ -259,6 +272,9 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `target_show` | *1.12.0*. Accuracy test: a target appeared (columns `target_idx`, `target_name`, `x`, `y`) | |
 | `space_pressed` | *1.12.0*. Accuracy test: every SPACE | `accepted`, `reject_reason` (`already_collecting`, `stale`, `no_homography`) |
 | `collect_start`, `collect_end` | *1.12.0*. Accuracy test: a point's collect window opened / the point was recorded | end: `n_render_samples`, `n_sdk_samples`, `n_sdk_valid`, `render_samples` (`[[sample_idx, h_id], ...]`: the SDK sample and homography each of the 30 averaged samples used) |
+| `point_auto_advance`, `point_insufficient` | *1.18.0*. Auto-advance (calibration and accuracy test): the point ended with a stable second / after *Max per Point* without one. Followed by the point's usual `collect_end` (or, calibration, `point_skipped` / no event when it is not trained) | `dwell_s`, `n_stable`, `insufficient`, `threshold_deg`, `spread_deg` (of the last second seen) |
+| `point_retry`, `point_skip` | *1.18.0*. Auto-advance: the operator pressed R (the point starts again: a new `collect_start`) or S (the next point follows). Accuracy test: a `DISCARDED` row in `trial_events.csv` | as above |
+| `collect_start` | *1.18.0*. Auto-advance: the point started by itself | `mode`: `auto` |
 | `h_state_change` | *1.12.0*. Accuracy test: Homography LIVE / CACHED / STALE / WAITING changed | `from`, `to` |
 | `calib_trained`, `calib_saved` | *1.9.0*. Calibration run: the model was trained; the profile was saved or not | `trained`, `n_points`, mean leave-one-out errors / `saved`, `path`, `error` |
 | `worker_crash`, `worker_respawn`, `worker_failed`, `worker_connected` | Accuracy test: the Sol child process crashed, was restarted, could not recover, (re)connected | `exit_code` |

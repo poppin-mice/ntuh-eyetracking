@@ -278,6 +278,7 @@ render frame, before that frame's samples are logged); `frame_age_ms` is empty.
 | `calib_trained` / `calib_saved` | CAL end | profile path, sha256, LOO summary |
 | `sol_builtin_calib_confirmed` | operator presses the button (§3) | participant, result |
 | `drift_check` | §9 | offset of center fixation, pupil2d means |
+| `point_auto_advance` / `point_insufficient` / `point_retry` / `point_skip` | auto-advance (§4.5, 1.18.0) | dwell_s, n_stable, insufficient, threshold_deg |
 
 ### 4.4 `targets.csv`
 `target_idx, name, group, ecc_deg, x, y, repeat_idx, order_idx` — the planned list incl. repeats and the
@@ -301,6 +302,31 @@ collect window that have a screen point; appended after them, the same over the 
 not separate rows (a render frame reuses the last SDK sample when none arrived, and maps it through the
 homography of that frame): the `collect_end` event lists them as `render_samples` = `[[sample_idx, h_id], …]`,
 which is what R3 recomputes the headline from.
+
+**As implemented (B-D24, VA_center_opt 1.18.0): auto-advance.** `protocol_params.point_advance` = `auto`
+(default) or `space` (the above, unchanged). Under `auto` the point starts when its target shows and ends by
+`ntuh/sol/stability.py` `Dwell`, the same rule as CAL (§4.6):
+- Space: `raw_screen` of each SDK sample (its `gaze_2d` through the homography logged for it, before the
+  offset). *Fresh*: a sample counts once, by `sdk_timestamp_ms`; one not newer than the last is ignored (the
+  render loop's reused sample is never fed). *Usable*: `h_state` LIVE or CACHED; an unusable sample adds no
+  dwell time and restarts the stable second (STALE / WAITING time is not counted as an unsteady subject).
+  *Valid*: `valid_only` and a screen point.
+- *Stable*: the trailing window (from the latest valid usable sample ≥ `stable_s` before the newest valid one,
+  device clock) is ≥ half valid, and the 90th percentile of the Euclidean distances of its valid samples to
+  their per-axis median (`spread_of`, q = 90), converted by `px_to_deg` (`view_dist_cm`, `screen_w_px`,
+  `screen_width_cm`), is ≤ `threshold_deg`. The point ends at the first stable trailing window, or as
+  *insufficient* when the usable time (sum of device-time steps between consecutive usable samples) reaches
+  `max_dwell_s`; the result window is then the `steadiest_window` (2-D MAD, §4.6) of all its usable samples.
+- `points.csv`: the headline (`raw_x` … `n_samples`, also `accuracy_data.csv`, the report) = the legacy mean of
+  the **last** 30 render-frame samples before the point ended (`collect_end.render_samples`, R3 unchanged); the
+  medians, `n_sdk_samples`, `n_sdk_valid`, `h_state_mix` are over the result window (so `*_valid_median_*` is
+  the result from stable data only). Appended: `dwell_s`, `n_stable` (valid samples of the stable window; 0
+  when insufficient), `insufficient` (0/1), `threshold_deg`; empty under `space`. Events (§4.3):
+  `point_auto_advance`, `point_insufficient`, `point_retry` (R: a new `collect_start`), `point_skip` (S: no row,
+  a `DISCARDED` `trial_events.csv` row).
+- Defaults `stable_s` 1.0, `max_dwell_s` 5.0, `threshold_deg` 1.5 (protocol_params). The threshold is a first
+  estimate from per-point precision of the lab pilot and 2026-09-18 (30 render-frame RMS, B-D24 PR); check it on
+  the first sessions with this file at sample level.
 
 ### 4.6 `calib_points.csv` (CAL)
 `point_idx, name, target_x, target_y, collect_start_ms, collect_end_ms, n_render_samples, n_sdk_samples,
@@ -328,6 +354,15 @@ in screen mode, `est` in camera mode. Estimators (`calib_point_estimator`, `ntuh
 
 The profile keeps the same per point: each `model.calibration_points` entry gains `estimator, est_x, est_y,
 window_start_sdk_ms, window_end_sdk_ms, window_n, window_spread_px` (loaders ignore unknown keys).
+
+**As implemented (B-D24, 1.18.0): auto-advance**, the rule of §4.5 (`Dwell`), `protocol_params.point_advance`
+`auto` (default; `space` = the above). The point starts once the homography passes the calibration's quality
+check; *usable* = that check passed and the scene video is not stalled. Estimator `stable_dwell_median`: `est` =
+per-axis median `gaze_2d` of the valid samples of the result window (the stable window, or when insufficient the
+`steadiest_window` by `raw_screen`), `window_*` = that window, `window_spread_px` = 2-D MAD of their `gaze_2d`
+(scene px). Insufficient without any window, or skipped (S): not trained, a row with empty `est` and model
+columns. Appended to `calib_points.csv`: `dwell_s, n_stable, insufficient, threshold_deg` (the profile
+entry gets the estimator fields only, as above).
 
 ---
 
@@ -453,7 +488,9 @@ tools/calib_replay/
 **Centroid estimators (`points.py`)** — `legacy30` (mean of the 30 render-frame samples, today's definition),
 `all_mean`, `all_median`, `trimmed20`, `valid_only` (gaze2d_valid & both eyes NORMAL), `fixation` (longest
 I-VT fixation in the window, velocity computed with proper geometry, not the 0.05 deg/px column),
-`steadiest_1s_median` (§4.6, `ntuh/sol/stability.py`, the CAL default since 1.17.0).
+`steadiest_1s_median` (§4.6, `ntuh/sol/stability.py`, the CAL default since 1.17.0), `stable_dwell_median`
+(§4.6, CAL under auto-advance, the default since 1.18.0; ACC's equivalent is `*_valid_median_*` over the
+stable window, §4.5).
 
 **Model zoo (`models.py`)** — each is `fit(list[(gaze_xy, target_xy)]) -> Model`, `Model.predict(xy)`:
 | key | description |

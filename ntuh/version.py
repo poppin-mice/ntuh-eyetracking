@@ -203,6 +203,12 @@ VA_center_opt
            sol_gaze_data.csv, homography_log.csv, and calib_points.csv gains collect window,
            sample counts, estimator and window at the end; the profile records the estimator
            per point. Fix: sdk_timestamp_ms of sol_gaze_data.csv was 0 (wrong SDK field).
+    1.18.0 Auto-advance (default) for the Sol 2D calibration and the accuracy test: a point
+           ends once 1 s of stable gaze has arrived (90 % of the valid samples within Stable
+           Spread, 1.5 deg), or after 5 s of usable time as "insufficient"; R redoes, S skips a
+           point. SPACE stays selectable (Point Advance / Accuracy Test Advance). points.csv and
+           calib_points.csv gain dwell_s, n_stable, insufficient, threshold_deg at the end;
+           events point_auto_advance / point_insufficient / point_retry / point_skip.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -288,7 +294,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.17.0",
+    "VA_center_opt": "1.18.0",
     "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
