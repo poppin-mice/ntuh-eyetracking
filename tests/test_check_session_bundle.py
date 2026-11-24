@@ -16,6 +16,9 @@ KIND_FILES = {
                       "accuracy_data.csv": "name,err_raw_deg\ncenter,1.2\n"},
     "sol2d_calibration": {"calib_points.csv": "point_idx,name,n\n0,center,30\n"},
     "sol3d_calibration": {},
+    "webcam_calibration": {"webcam_calib_samples.csv": "attempt,point_idx\n1,0\n",
+                           "webcam_calib_points.csv": "attempt,point_idx\n1,0\n"},
+    "verify_gaze": {},
 }
 
 

@@ -2458,6 +2458,16 @@ Controls: SPACE = Record point, Q = Cancel"""
         screen_x, screen_y = scr.get('x', 0), scr.get('y', 0)
 
         gf = None
+        # A short record of every verification (doc/session_bundle.md): when, which webcam
+        # profile (copied), and on how many frames the gaze landed on the screen.
+        username = self.user_var.get().strip() or "anonymous"
+        self._note_identity_changes()
+        bundle = session_bundle.start(
+            APP_DIR / "verify_gaze" / f"{username}_{time.strftime('%Y%m%d_%H%M%S')}", "verify_gaze",
+            user_name=username, operator_code=self.operator_code_var.get(),
+            display={"screen_w_px": W, "screen_h_px": H, "subject_monitor_index": scr_idx},
+            mapping={"gaze_method": "webcam"}, config=self._collect_gui_values())
+        frames = [0, 0]             # frames drawn, frames with the gaze dot on the screen
         self.withdraw()
         try:
             dcfg = DefaultConfig()
@@ -2466,7 +2476,9 @@ Controls: SPACE = Record point, Q = Cancel"""
             webcam = WebCamCamera(webcam_id=cid)
             calib = SVRCalibration(model_save_path=str(calib_path))
             gf = GazeFollower(config=dcfg, calibration=calib, camera=webcam)
+            bundle.profile("webcam", calib_path, gf.calibration.has_calibrated, applied=True)
             if not gf.calibration.has_calibrated:
+                bundle.finish("aborted", "profile_not_calibrated")
                 messagebox.showerror("Calibration required", "The selected profile is not calibrated.")
                 return
             gf.start_sampling()
@@ -2525,6 +2537,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                                 gaze_ok = True
                 except Exception:
                     pass
+                frames[0] += 1
+                frames[1] += gaze_ok
 
                 s_surf = label_font.render("Gaze: OK" if gaze_ok else "Gaze: --", True,
                                            (0, 180, 0) if gaze_ok else (200, 60, 60))
@@ -2539,6 +2553,7 @@ Controls: SPACE = Record point, Q = Cancel"""
         except Exception as e:
             print(f"[Webcam Preview] Error: {e}")
             traceback.print_exc()
+            bundle.crash(type(e), e, e.__traceback__, where="verify_gaze")
             messagebox.showerror("Webcam Preview Error", str(e))
         finally:
             try:
@@ -2547,6 +2562,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                     gf.release()
             except Exception as e:
                 print(f"[Webcam Preview] Error releasing GazeFollower: {e}")
+            bundle.update(verify_result={"frames": frames[0], "frames_gaze_on_screen": frames[1]})
+            bundle.finish("completed")      # a second finish (not calibrated) does nothing
             try:
                 pygame.quit()
             except Exception:

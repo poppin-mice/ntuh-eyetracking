@@ -187,6 +187,9 @@ VA_center_opt
            profile it saved, and whether the save worked. New result files va_result.json and
            vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
            scores a session again from its own files into a separate _derived folder.
+    1.14.0 (provisional) Every Verify Gaze (Webcam) leaves a short record in
+           verify_gaze/<User Name>_<time>/: start, end, the webcam profile it used (copied, with
+           sha256) and on how many frames the gaze was on the screen (doc/session_bundle.md).
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -227,6 +230,13 @@ calibration
            follows at once.
     1.3.0  Everything the program prints is kept in logs/console_<time>.log next to the exe
            (session bundle v1, doc/session_bundle.md).
+    1.4.0  Every calibration run writes its own folder calibration_sessions/<user>_<pts>pt_<time>/
+           (doc/session_bundle.md): version and settings, every calibration frame with its
+           timestamp and whether it was used, statistics per point, the training set, a copy and
+           sha256 of the saved model, and gazefollower's log. <user>_<pts>pt is still updated in
+           place. Fix: logs/gazefollower_<time>.log was always empty (GazeFollower() moved the log
+           elsewhere); it is now written to the run folder. A model that could not be saved now
+           says "Not saved" instead of "Done".
 replayer
     1.0.0  Baseline: versioning introduced.
     1.1.0  A "Font" spinner in the menu-bar corner, applied live and remembered between runs
@@ -272,8 +282,8 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.9.0",
-    "calibration": "1.3.0",
+    "VA_center_opt": "1.14.0",
+    "calibration": "1.4.0",
     "replayer": "1.2.0",
 }
 

@@ -32,7 +32,8 @@ from ntuh.common.app_env import APP_DIR
 SCHEMA = "ntuh.session_meta"
 SCHEMA_VERSION = 1
 BUNDLE_VERSION = 1          # v2 (B-D14, B-D15, B-D25) only adds files or appends columns
-KINDS = ("va", "vf", "accuracy_test", "sol2d_calibration", "sol3d_calibration")
+KINDS = ("va", "vf", "accuracy_test", "sol2d_calibration", "sol3d_calibration",
+         "webcam_calibration", "verify_gaze")
 STATUSES = ("running", "completed", "aborted", "crashed")
 
 META_FILE = "session_meta.json"
@@ -47,6 +48,9 @@ REQUIRED_FILES = {
     "accuracy_test": [EVENTS_FILE, CONSOLE_FILE],
     "sol2d_calibration": [EVENTS_FILE, CONSOLE_FILE, "calib_points.csv"],
     "sol3d_calibration": [EVENTS_FILE, CONSOLE_FILE],
+    "webcam_calibration": [EVENTS_FILE, CONSOLE_FILE, "webcam_calib_samples.csv",
+                           "webcam_calib_points.csv"],
+    "verify_gaze": [EVENTS_FILE, CONSOLE_FILE],
 }
 # ... and, in addition, only when it ran to the end / only when it crashed.
 REQUIRED_WHEN_COMPLETED = {"va": ["va_result.json"], "vf": ["vf_result.json"],

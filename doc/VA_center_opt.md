@@ -17,7 +17,7 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 - **Data-quality summary** on the tester screen at the end of a test: per-source **valid %** (100% = all data valid) for Sol (combined / left / right eye) and webcam (face / left / right eye), whole-test and trials-only. Also written to `sol_quality_metrics.json`.
 - **Real-time gaze quality** readout during the test (rolling missing-rate).
 - **Quality gate** (User & Tracker tab): optionally wait until the enabled trackers have stable valid data (≥ threshold, default 80%, over 3 s) before each trial; otherwise "WAITING FOR STABLE VALID DATA" is shown.
-- **Webcam preview guide**: green/red boxes on the face + each eye and a face-oval centering guide with OK / TOO CLOSE / TOO FAR hints; plus a **Verify Gaze** preview (5 targets + live gaze dot).
+- **Webcam preview guide**: green/red boxes on the face + each eye and a face-oval centering guide with OK / TOO CLOSE / TOO FAR hints; plus a **Verify Gaze** preview (5 targets + live gaze dot). Each Verify Gaze leaves a short record in `verify_gaze/<User Name>_<date>_<time>/` (since 1.14.0): when, which webcam profile (copied), and on how many frames the gaze was on the screen; see [session_bundle.md](session_bundle.md#verify-gaze).
 - **Steadier Sol gaze**: the scene→screen homography freezes while the head is still (no per-frame jitter) and self-recovers after a large head tilt. An intermittent native crash during Sol streaming was fixed.
 - **Screen recording downscaled to 1080p** on 2K/4K screens (avoids dropped frames); the replayer scales gaze overlays to match.
 - Eye labels are the **participant's actual left/right eye**.

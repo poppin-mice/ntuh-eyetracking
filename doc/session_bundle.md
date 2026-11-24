@@ -17,9 +17,11 @@ Participants are referred to by **code only** everywhere.
 | VF | `VF_output/VF_<User Name>_sess1_<date>_<time>/` | 1.7.0 |
 | Accuracy test | `accuracy_test/<User Name>_<date>_<time>/` | 1.7.0 |
 | Sol 2D offset calibration | `calibration_sessions/<User Name>_<date>_<time>/` | 1.9.0 |
+| Webcam calibration (calibration app) | `calibration_sessions/<user>_<pts>pt_<date>_<time>/` next to `calibration.exe` | calibration 1.4.0 |
+| Verify Gaze (Webcam) | `verify_gaze/<User Name>_<date>_<time>/` | 1.14.0 |
 
 Practice mode writes no folder and therefore no bundle. The Sol 3D offset calibration does not write
-a folder yet.
+a folder yet. Which flow writes which files: [dev/COLLECTION_FLOWS.md](dev/COLLECTION_FLOWS.md).
 
 ## Files the bundle adds
 
@@ -34,6 +36,7 @@ a folder yet.
 | `calib_profile_snapshot.json` | *1.9.0* | Byte copy of the Sol offset profile the test applied (only if one was loaded), or of the profile a calibration run saved |
 | `calib_profiles/<role>__<file>` | *1.9.0* | Byte copies of the other calibration profiles the test loaded |
 | `calib_points.csv` | calibration run, *1.9.0* | One row per calibration point: sample statistics and leave-one-out errors |
+| `webcam_calib_samples.csv`, `webcam_calib_points.csv`, `webcam_calib_features.npz`, `gazefollower.log` | webcam calibration run | See [Webcam calibration runs](#webcam-calibration-runs) |
 
 The files a session already had (`trial_events.csv`, the gaze CSVs, the videos, `accuracy_report.json`
 ...) keep their names and columns.
@@ -48,6 +51,8 @@ Required files per kind, as the check tool enforces them
 | `accuracy_test` | `session_meta.json`, `events.csv`, `console.log` | `accuracy_report.json`, `accuracy_data.csv` |
 | `sol2d_calibration` | `session_meta.json`, `events.csv`, `console.log`, `calib_points.csv` | |
 | `sol3d_calibration` (not written yet) | `session_meta.json`, `events.csv`, `console.log` | |
+| `webcam_calibration` | `session_meta.json`, `events.csv`, `console.log`, `webcam_calib_samples.csv`, `webcam_calib_points.csv` | |
+| `verify_gaze` | `session_meta.json`, `events.csv`, `console.log` | |
 
 A `crashed` session also needs `crash_log.txt`.
 
@@ -58,10 +63,10 @@ A `crashed` session also needs `crash_log.txt`.
 | Field | Meaning |
 |-------|---------|
 | `session_id` | The folder name |
-| `session_kind` | `va`, `vf`, `accuracy_test`, `sol2d_calibration`, `sol3d_calibration` |
+| `session_kind` | `va`, `vf`, `accuracy_test`, `sol2d_calibration`, `sol3d_calibration`, `webcam_calibration`, `verify_gaze` |
 | `started_at`, `ended_at` | ISO-8601 local time with timezone and milliseconds. `ended_at` is `null` while running |
 | `status` | `running`, `completed`, `aborted` or `crashed` (see below) |
-| `abort_reason` | `operator_q`, `operator_esc`, `window_close`, `worker_failed`, `stimulus_image_missing`, `stimulus_image_unreadable`, `superseded_by_new_session`, `not_finished_by_flow` (the test returned without closing its record), or `exception:<type>: <message>` |
+| `abort_reason` | `operator_q`, `operator_esc`, `window_close`, `worker_failed`, `stimulus_image_missing`, `stimulus_image_unreadable`, `superseded_by_new_session`, `profile_not_calibrated` (Verify Gaze), `not_finished_by_flow` (the test returned without closing its record), or `exception:<type>: <message>` |
 | `software` | `app`, `app_version`, `app_versions` (all three apps), `build_id` (git short SHA), `commit_date`, `build_date`, `dirty` (built with uncommitted changes), `frozen` (exe or source), `python_version`, `sol_sdk_version`, `chronus_remote_api_version` (once Sol was connected) |
 | `site.laptop_id` | First 8 hex characters of sha256(computer name). The name itself is never stored |
 | `operator.operator_code` | The **Operator Code** field on the General tab |
@@ -167,6 +172,46 @@ file: the tests that follow will load it.
 scene-camera px in camera mode (`protocol_params.offset_mode`). A point skipped for lack of a
 homography has a row with empty model columns.
 
+## Webcam calibration runs
+
+*calibration 1.4.0.* Every run of the calibration program writes a folder of its own, also when it
+is cancelled with Q. `<user>_<pts>pt` (the profile VA and VF use) is still overwritten in place and
+copied to `VA_center_opt/calibration_profiles/`; the run folder is what keeps the history.
+
+- `session_meta.json`: `software.app` is `calibration`; `display` has the screen size, width in cm and
+  monitor index (the program has no viewing distance: `view_dist_cm` is `null`); `protocol_params` has
+  `n_points_planned`, `camera_id`, `target_size_px`, `target_image`, `frames_per_point`,
+  `prepare_time_s`, `eye_blink_threshold`; `config` is every setting of the window.
+- `calibration_result`: `saved`, `save_error`, `trained`, `attempts` (R = redo starts a new one),
+  `frames`, `points_recorded`, `mean_fit_err_px`, and `files`: every file of the profile folder with
+  its `sha256`, `bytes` and, when the model was saved, `snapshot` (the copy in
+  `calib_profiles/webcam__<file>`; a folder above 5 MB is hashed, not copied). The folder also holds
+  the Sol offset profiles of that User Name, so they are listed and copied too.
+- `webcam_calib_samples.csv`: one row per camera frame gazefollower looked at during the
+  calibration: `attempt, point_idx, target_x, target_y, pc_timestamp_ms, camera_timestamp_ns,
+  gaze_status, left_openness, right_openness, raw_gaze_x, raw_gaze_y, used`. `point_idx` -1 is the
+  centre target shown first, whose frames are not used. `target_*` and `raw_gaze_*` (the uncalibrated
+  estimate) are fractions of the screen width and height. `used` = 1 for the frames the model was
+  trained on (45 per point, after the 1.5 s settling time, both eyes open).
+- `webcam_calib_points.csv`: per attempt and point: `target_x, target_y, n_frames, n_used`, mean and SD
+  of the used `raw_gaze` (`raw_mean_x/y`, `raw_sd_x/y`), and `fit_err_px`: the mean distance between
+  the trained model's prediction and the target, in screen px, on its own training frames (so an
+  optimistic error). Only the last attempt was trained, so earlier attempts have none.
+- `webcam_calib_features.npz`: the training set as gazefollower used it (`features`, `labels`,
+  `point_idx`), to train the model again offline.
+- `gazefollower.log`: gazefollower's own log (INFO and above). Its lines are in `console.log` too.
+
+The old `logs/gazefollower_<time>.log` was always empty: `GazeFollower()` points gazefollower's
+shared logger at `%USERPROFILE%/GazeFollower/log/` and drops the file set before. The program now sets
+the log again after that, into the run folder.
+
+## Verify Gaze
+
+*1.14.0.* Every Verify Gaze (Webcam) writes a short record: start and end, `our_calibration` with the
+webcam profile it used (role `webcam`, copied to `calib_profiles/`), and `verify_result`: `frames`
+(drawn) and `frames_gaze_on_screen` (frames with the gaze dot on the screen). Verify Gaze computes no
+offset per target. `mapping.gaze_method` is `webcam`.
+
 ## Result files
 
 *1.9.0.*
@@ -202,6 +247,7 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `scene_stall` | Accuracy test: SPACE while the scene video was stalled | `scene_age_s` |
 | `collect_discard` | Accuracy test: a point was dropped because the scene stalled while collecting | `n_discarded` |
 | `collect_end`, `point_skipped` | *1.9.0*. Calibration run: a point was recorded, or skipped for lack of a homography | `n`, `n_valid` |
+| `profile_mirrored` | Webcam calibration run: the saved profile was copied to `VA_center_opt/calibration_profiles/` | `path`, `error` |
 | `calib_trained`, `calib_saved` | *1.9.0*. Calibration run: the model was trained; the profile was saved or not | `trained`, `n_points`, mean leave-one-out errors / `saved`, `path`, `error` |
 | `worker_crash`, `worker_respawn`, `worker_failed`, `worker_connected` | Accuracy test: the Sol child process crashed, was restarted, could not recover, (re)connected | `exit_code` |
 | `worker_message` | Accuracy test: a note from the Sol child process. Most are status notes (stream subscribed, first frame), not errors | `type`, `where`, `message` |

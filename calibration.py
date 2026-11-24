@@ -750,11 +750,6 @@ def main():
 
     logging.basicConfig(level=logging.INFO)
 
-    # 初始化 gazefollower 的 logger（一定要先呼叫）
-    logs = APP_DIR / "logs"
-    logs.mkdir(parents=True, exist_ok=True)
-    GFLog.init(str(logs / f"gazefollower_{time.strftime('%Y%m%d_%H%M%S')}.log"))
-
     gui = CalibGUI()
     gui.mainloop()
     if not gui.cfg:
@@ -788,13 +783,37 @@ def main():
     profile_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Calibration folder] {profile_dir}")
 
+    # Every run is a session of its own (doc/session_bundle.md): <user>_<pts>pt above is still
+    # overwritten in place for VA/VF; the run folder keeps the samples and a copy of the model.
+    from ntuh.recording import webcam_calibration
+    cid = gui.cfg.get("camera_id", 0)
+    bundle = session_bundle.start(
+        APP_DIR / "calibration_sessions" / f"{profile_dir.name}_{time.strftime('%Y%m%d_%H%M%S')}",
+        "webcam_calibration", app="calibration", user_name=gui.cfg["user"],
+        display={"screen_w_px": W, "screen_h_px": H, "screen_width_cm": gui.cfg["scr_width_cm"],
+                 "view_dist_cm": None, "subject_monitor_index": mon.get('index')},
+        protocol_params={"n_points_planned": gui.cfg["pts"], "camera_id": cid,
+                         "target_size_px": gui.cfg["cali_img_size"][0],
+                         "target_image": gui.cfg.get("cali_img_path") or None},
+        config=gui.cfg)
+    # gazefollower's log goes into the run folder. GazeFollower() points the shared logger at
+    # ~/GazeFollower/log/ (and drops our file, which is why logs/gazefollower_*.log stayed
+    # empty), so it is set again after that; the first init covers SVRCalibration's loading.
+    gf_log = str(Path(bundle.folder or APP_DIR / "logs") / webcam_calibration.GF_LOG_FILE)
+    GFLog.init(gf_log)
+
     calib = SVRCalibration(model_save_path=str(profile_dir))
 
     # [FIX] Use selected camera
-    cid = gui.cfg.get("camera_id", 0)
     webcam = WebCamCamera(webcam_id=cid)
 
     gf = GazeFollower(config=dcfg, calibration=calib, camera=webcam)
+    GFLog.init(gf_log)
+    ctrl = gf._calibration_controller
+    recorder = webcam_calibration.SampleRecorder(ctrl)
+    bundle.update(protocol_params={"frames_per_point": ctrl._n_frame_need_collect,
+                                   "prepare_time_s": ctrl._prepare_time,
+                                   "eye_blink_threshold": ctrl.eye_blink_threshold})
 
     # ===== 校正前的防呆處理 =====
     prep_input_for_calibration()
@@ -803,15 +822,25 @@ def main():
     # 預覽 → 執行校正 → 存檔（不做備份、直接覆蓋）
     # Pressing 'q' on any calibration screen raises SystemExit (see _install_q_to_quit);
     # we catch it to shut down cleanly without saving, matching VA_center_opt's 'q'-to-exit.
-    completed = False
+    completed = ok = False
+    save_error, status, abort_reason = None, "aborted", None
     try:
         gf.preview(win=win)
         gf.calibrate(win=win)
-        ok = gf.calibration.save_model()
+        try:
+            ok = bool(gf.calibration.save_model())
+        except Exception as e:
+            save_error = e
         print(f"[Saved] {ok} → {profile_dir}")
-        completed = True
+        completed, status = True, "completed"
     except SystemExit:
         print("[Calibration] Aborted by user (Q).")
+        abort_reason = "operator_q"
+        bundle.event("abort", key="q")
+    except Exception:
+        bundle.crash(*sys.exc_info(), where="calibration")
+        import traceback
+        traceback.print_exc()
     finally:
         # 無論成功/失敗都恢復事件過濾器，避免鍵盤卡住
         restore_event_filter()
@@ -825,7 +854,7 @@ def main():
         pygame.quit()
     except Exception:
         pass
-    if completed:
+    if completed and ok:
         msg = f"Calibration saved to:\n{profile_dir}"
         # Also drop a copy next to VA_center_opt.exe (release layout: <root>/calibration/
         # and <root>/VA_center_opt/) so the VA/VF app sees the profile without a manual copy.
@@ -834,9 +863,17 @@ def main():
             try:
                 shutil.copytree(profile_dir, mirror, dirs_exist_ok=True)
                 msg += f"\n\nAlso copied to:\n{mirror}"
+                bundle.event("profile_mirrored", path=str(mirror))
             except Exception as e:
                 print(f"[Mirror to VA_center_opt failed] {e}")
+                bundle.event("profile_mirrored", path=str(mirror), error=str(e))
+    webcam_calibration.finish_run(bundle, recorder, profile_dir, (W, H), ok, save_error,
+                                  status, abort_reason)
+    if completed and ok:
         messagebox.showinfo("Done", msg)
+    elif completed:
+        messagebox.showerror("Not saved", f"The calibration could not be saved to:\n{profile_dir}"
+                                          f"\n\n{save_error or 'The model was not trained (too few valid samples).'}")
 
     # [FIX] Restore original keyboard layout on exit (atexit is the backstop).
     kb_manager.restore()
