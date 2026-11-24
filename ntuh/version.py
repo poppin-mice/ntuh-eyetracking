@@ -210,6 +210,8 @@ VA_center_opt
            started from (NTUH_APP_DIR overrides it for a run from source). Fix: the VF crash
            dialog named va_crash_log.txt instead of vf_crash_log.txt. session_meta.json gains
            site.collection_label, condition.repeat_index and condition.repeat_index_computed.
+    1.15.0 The 3D Sol gaze method and its 3D offset calibration are removed (REQ-0034): 2D
+           is the only method; a saved "3D" setting is read as 2D with a console notice.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -300,7 +302,7 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.13.0",
+    "VA_center_opt": "1.15.0",
     "calibration": "1.5.0",
     "replayer": "1.2.0",
 }

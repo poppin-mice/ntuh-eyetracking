@@ -54,11 +54,17 @@ def pick_error(path, folder):
     return None
 
 
+def migrate_gaze_method(saved):
+    """(method, notice) for a saved sol_gaze_method. The 3D method was retired (REQ-0034): every
+    value, missing included, is read as "2D"; notice is the line to print for a saved "3D"."""
+    return "2D", ("[Settings] Sol gaze method 3D was retired (REQ-0034): using 2D." if saved == "3D" else None)
+
+
 def choose(cfg):
-    """What a VA/VF test applies. `model` is set only when the picked profile loads and the
-    gaze method is 2D (the profile is a 2D one); `load_error` means the test must not start."""
+    """What a VA/VF test applies. `model` is set only when the picked profile loads (the gaze
+    method is always 2D); `load_error` means the test must not start."""
     path = str(cfg.get(SETTING) or "").strip() if cfg.get("enable_sol") else ""
-    out = {"selected": bool(path), "path": path or None, "gaze_method": cfg.get("sol_gaze_method", "3D"),
+    out = {"selected": bool(path), "path": path or None, "gaze_method": "2D",
            "profile": None, "summary": None, "model": None, "applied": False, "load_error": None}
     if not path:
         return out
@@ -71,8 +77,8 @@ def choose(cfg):
     if not profile_usable(out["profile"]):
         out["load_error"] = out["load_error"] or "file missing or not a trained Sol 2D offset profile"
         return out
-    out["applied"] = out["gaze_method"] == "2D"
-    out["model"] = out["profile"]["model"] if out["applied"] else None
+    out["applied"] = True
+    out["model"] = out["profile"]["model"]
     return out
 
 
@@ -84,7 +90,7 @@ def describe(choice):
     facts = f"{name}  user {s.get('username')}  {s.get('n_points')} pts  {str(s.get('calibration_timestamp'))[:16]}"
     if choice["applied"]:
         return OK, f"OUR CALIB: APPLIED {facts}"
-    return NOT_SELECTED, f"OUR CALIB: NOT APPLIED (gaze method {choice['gaze_method']}) {facts}"
+    return NOT_SELECTED, f"OUR CALIB: NOT APPLIED ({choice['load_error']}) {facts}"
 
 
 def record(bundle, choice):

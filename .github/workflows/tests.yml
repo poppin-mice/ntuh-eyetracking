@@ -44,11 +44,7 @@ jobs:
       - name: Run tests
         run: python -m pytest -p no:cacheprovider
 
-      # Does not fail the job yet: the 3 known hits (in_transition in
-      # ntuh/sol/offset_calibration.py) go away when the 3D Sol calibration is retired
-      # (REQ-0034). Remove continue-on-error then, so a new undefined name blocks the PR.
-      - name: Undefined names in ntuh/ (pyflakes, non-blocking)
-        continue-on-error: true
+      - name: Undefined names in ntuh/ (pyflakes)
         shell: bash
         run: |
           python -m pyflakes ntuh > pyflakes.txt || true

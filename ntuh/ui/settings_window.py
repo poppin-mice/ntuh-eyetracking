@@ -49,15 +49,6 @@ except ImportError:
     SDK_AVAILABLE = False
 
 try:
-    from ntuh.sol.offset_calibration import (
-        apply_angular_offset, load_sol_offset, save_sol_offset, clear_sol_offset,
-        SolOffsetCalibrator,
-    )
-    SOL_OFFSET_AVAILABLE = True
-except ImportError:
-    SOL_OFFSET_AVAILABLE = False
-
-try:
     from ntuh.sol.offset_calibration_2d import (
         Sol2DOffsetCalibrator, Sol2DOffsetModel,
         load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset, get_sol_2d_offset_path,
@@ -192,7 +183,7 @@ class SettingsWindow(tk.Tk):
         # sol_screen_phy_width_var removed, using scr_width_cm_var * 10
         self.sol_pose_smooth_var = tk.StringVar(value="1.0")
         self.sol_gaze_smooth_var = tk.StringVar(value="1.0")
-        self.sol_gaze_method_var = tk.StringVar(value="2D")  # "3D" or "2D"
+        self.sol_gaze_method_var = tk.StringVar(value="2D")  # always "2D": 3D retired (REQ-0034)
         self.sol_quality_window_var = tk.StringVar(value="3.0")  # Rolling window (s) for live gaze-quality gauge
         # Webcam face-guide (oval) geometry, settable on the Webcam tab
         self.webcam_oval_size_var = tk.StringVar(value="0.30")
@@ -383,7 +374,6 @@ class SettingsWindow(tk.Tk):
         self._on_identity_fields_changed()
 
         # Update offset displays after loading settings (delayed to ensure UI is ready)
-        self.after(200, self.update_sol_offset_display)
         self.after(200, self.update_sol_2d_offset_display)
 
         # Live px->cm readout for VA circle radius (req: cm field)
@@ -960,10 +950,7 @@ class SettingsWindow(tk.Tk):
         # Gaze Method
         grp_gaze = ttk.LabelFrame(parent, text="Gaze Mapping Method"); grp_gaze.pack(fill="x", padx=10, pady=5)
         ttk.Label(grp_gaze, text="Method:", font=l_font).grid(row=0, column=0, **pad)
-        gaze_methods = ["3D", "2D"]
-        self.cmb_gaze_method = ttk.Combobox(grp_gaze, textvariable=self.sol_gaze_method_var, values=gaze_methods, state="readonly", width=20)
-        self.cmb_gaze_method.grid(row=0, column=1, **pad)
-        ttk.Label(grp_gaze, text="3D: Ray-plane intersection (uses gaze_3d)", font=self.f_hint, foreground="gray").grid(row=1, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_gaze, text="2D", font=l_font).grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(grp_gaze, text="2D: Homography mapping (uses gaze_2d)", font=self.f_hint, foreground="gray").grid(row=2, column=0, columnspan=2, sticky="w", **pad)
         self.btn_clear_homography = ttk.Button(grp_gaze, text="Clear Homography Cache", command=self._clear_homography_cache)
         self.btn_clear_homography.grid(row=0, column=2, **pad)
@@ -1000,16 +987,8 @@ class SettingsWindow(tk.Tk):
         ttk.Label(grp_preview, text="Press Q or ESC to exit preview", font=self.f_hint, foreground="gray").grid(row=3, column=0, columnspan=4, sticky="w", **pad)
 
     def build_sol_offset_tab(self, parent, l_font, e_font):
-        """Build the Sol Offset Calibration tab (simplified, auto-detects 2D/3D method)."""
+        """Build the Sol Offset Calibration tab (2D offset calibration)."""
         pad = self.ui_pad  # Use dynamic padding
-
-        # Info label showing current gaze method
-        method_frame = ttk.Frame(parent)
-        method_frame.pack(fill="x", padx=10, pady=5)
-        ttk.Label(method_frame, text="Current Gaze Method:", font=l_font).pack(side="left")
-        self.lbl_current_gaze_method = ttk.Label(method_frame, text="3D", font=self.f_big, foreground="blue")
-        self.lbl_current_gaze_method.pack(side="left", padx=10)
-        ttk.Label(method_frame, text="(Set in Sol Settings tab)", font=self.f_hint, foreground="gray").pack(side="left")
 
         # Target Settings
         grp_target = ttk.LabelFrame(parent, text="Calibration Settings")
@@ -1041,16 +1020,9 @@ class SettingsWindow(tk.Tk):
         # Display Settings moved to the General tab (Screen & Viewing): the same two monitors are
         # used by the VA/VF test and the accuracy test, not only by Sol calib.
 
-        # Current Offset Status (shows both 3D and 2D)
+        # Current Offset Status
         grp_status = ttk.LabelFrame(parent, text="Current Offset Status")
         grp_status.pack(fill="x", padx=10, pady=5)
-
-        # 3D offset status
-        ttk.Label(grp_status, text="3D Offset:", font=self.f_head).grid(row=0, column=0, sticky="w", **pad)
-        self.lbl_sol_offset_pitch = ttk.Label(grp_status, text="Pitch: --", font=l_font)
-        self.lbl_sol_offset_pitch.grid(row=0, column=1, sticky="w", **pad)
-        self.lbl_sol_offset_yaw = ttk.Label(grp_status, text="Yaw: --", font=l_font)
-        self.lbl_sol_offset_yaw.grid(row=0, column=2, sticky="w", **pad)
 
         # 2D offset status
         ttk.Label(grp_status, text="2D Offset:", font=self.f_head).grid(row=1, column=0, sticky="w", **pad)
@@ -1082,7 +1054,7 @@ class SettingsWindow(tk.Tk):
         # Keep reference for 2D button (same button, auto-detects method)
         self.btn_start_sol_2d_offset_cal = self.btn_start_sol_offset_cal
 
-        self.btn_clear_sol_offset = ttk.Button(btn_frame, text="Clear Offset", command=self.clear_sol_offset_auto)
+        self.btn_clear_sol_offset = ttk.Button(btn_frame, text="Clear Offset", command=self.clear_sol_2d_offset)
         self.btn_clear_sol_offset.pack(side="left", padx=5)
 
         self.lbl_sol_offset_connect_note = ttk.Label(btn_frame, text="(Connect Sol glasses first)", foreground="gray")
@@ -1098,26 +1070,20 @@ class SettingsWindow(tk.Tk):
         grp_instr = ttk.LabelFrame(parent, text="Instructions")
         grp_instr.pack(fill="x", padx=10, pady=5)
 
-        instr_text = """1. Connect Sol glasses in 'Sol Settings' tab and select Gaze Method (2D/3D).
+        instr_text = """1. Connect Sol glasses in 'Sol Settings' tab.
 2. Select a target image above.
 3. Click 'Start Calibration' - target appears on user screen.
 4. Have user look at each target. Press SPACE when gaze is stable.
 5. Repeat for all calibration points.
 
-• 3D Method: Corrects angular offset (pitch/yaw) in camera frame.
 • 2D Method: Uses IDW/constant offset for position-dependent correction.
 
 Controls: SPACE = Record point, Q = Cancel"""
 
         ttk.Label(grp_instr, text=instr_text, font=self.f_body, justify="left").pack(anchor="w", **pad)
 
-        # Bind gaze method variable to update display
-        self.sol_gaze_method_var.trace_add("write", lambda *args: self._update_gaze_method_display())
-
         # Load current offset on tab creation
-        self.after(100, self.update_sol_offset_display)
         self.after(100, self.update_sol_2d_offset_display)
-        self.after(100, self._update_gaze_method_display)
 
     def _pick_va_offset_profile(self):
         """Pick the Sol 2D offset profile VA/VF apply: from the Sol profile folder only, shown
@@ -1151,61 +1117,18 @@ Controls: SPACE = Record point, Q = Cancel"""
         session_bundle.app_event("profile_selected", where="settings", path=path or None,
                                  **(choice["summary"] or {}), **detail)
 
-    def _update_gaze_method_display(self):
-        """Update the gaze method display label."""
-        method = self.sol_gaze_method_var.get()
-        if hasattr(self, 'lbl_current_gaze_method'):
-            self.lbl_current_gaze_method.config(text=method, foreground="blue" if method == "3D" else "green")
-        self._set_last_calibrated()
-
     def start_sol_offset_calibration_auto(self):
-        """Start offset calibration based on current gaze method (2D or 3D)."""
-        method = self.sol_gaze_method_var.get()
-        print(f"[Offset Cal] Starting calibration for {method} method")
+        """Start the Sol 2D offset calibration (the 3D one was retired, REQ-0034)."""
+        print("[Offset Cal] Starting calibration for 2D method")
         # A calibration belongs to one subject and condition: both stay fixed from here until
         # that condition's accuracy test is completed.
         if not self._identity_ready(need_condition=True):
             return
         self._lock_identity_for_calibration()
-
-        if method == "2D":
-            if SOL_2D_OFFSET_AVAILABLE:
-                self.start_sol_2d_offset_calibration()
-            else:
-                messagebox.showerror("Error", "2D offset calibration module not available.\nPlease install scikit-learn: pip install scikit-learn")
+        if SOL_2D_OFFSET_AVAILABLE:
+            self.start_sol_2d_offset_calibration()
         else:
-            self.start_sol_offset_calibration()
-
-    def clear_sol_offset_auto(self):
-        """Clear offset based on current gaze method."""
-        method = self.sol_gaze_method_var.get()
-        if method == "2D":
-            self.clear_sol_2d_offset()
-        else:
-            self.clear_sol_offset()
-
-    def update_sol_offset_display(self):
-        """Update the Sol offset status display (3D offset)."""
-        if not SOL_OFFSET_AVAILABLE:
-            self.lbl_sol_offset_pitch.config(text="Pitch: N/A")
-            self.lbl_sol_offset_yaw.config(text="Yaw: N/A")
-            return
-
-        username = self.user_var.get().strip() or "anonymous"
-        offset_data = load_sol_offset(username, Path(self.calib_dir_var.get()))
-
-        if offset_data:
-            pitch_deg = offset_data.get('pitch_offset_deg', 0)
-            yaw_deg = offset_data.get('yaw_offset_deg', 0)
-            timestamp = offset_data.get('calibration_timestamp', 'Unknown')
-
-            self.lbl_sol_offset_pitch.config(text=f"Pitch: {pitch_deg:.2f}°")
-            self.lbl_sol_offset_yaw.config(text=f"Yaw: {yaw_deg:.2f}°")
-        else:
-            timestamp = None
-            self.lbl_sol_offset_pitch.config(text="Pitch: --")
-            self.lbl_sol_offset_yaw.config(text="Yaw: --")
-        self._set_last_calibrated("3D", timestamp)
+            messagebox.showerror("Error", "2D offset calibration module not available.\nPlease install scikit-learn: pip install scikit-learn")
 
     def _set_last_calibrated(self, method=None, timestamp=None):
         """Remember when the CURRENT user's 3D / 2D profile was made (None = no profile) and show
@@ -1692,7 +1615,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                 # Check homography status and quality (strict mode for calibration)
                 homography_ready = sol_projector.is_homography_valid(strict=True)
 
-                # Periodic diagnostic, same as the 3D calibrator has. "Waiting for ArUco
+                # Periodic diagnostic. "Waiting for ArUco
                 # markers" has three very different causes - no scene frames reaching us, frames
                 # but no markers detected, or markers but too few for a strict homography - and
                 # the status bar cannot tell them apart.
@@ -1976,160 +1899,6 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.deiconify()
             self.after(100, self.update_sol_2d_offset_display)
 
-    def start_sol_offset_calibration(self):
-        """Start the Sol offset calibration process."""
-        if not SOL_OFFSET_AVAILABLE:
-            messagebox.showerror("Error", "Sol offset calibration module not available.")
-            return
-
-        if not self.is_sol_connected:
-            messagebox.showerror("Error", "Sol glasses not connected. Please connect in 'Sol Settings' tab first.")
-            return
-
-        if self.sol_cam_params is None:
-            messagebox.showerror("Error", "Sol camera parameters not available.")
-            return
-
-        # Get current screen dimensions (will be overridden by pygame)
-        info = pygame.display.Info() if pygame.get_init() else None
-
-        # Prepare ArUco assets
-        aruco_dict_key = self.sol_aruco_dict_var.get()
-        aruco_dict_map = {
-            "DICT_4X4_50": cv2.aruco.DICT_4X4_50,
-            "DICT_4X4_100": cv2.aruco.DICT_4X4_100,
-            "DICT_4X4_250": cv2.aruco.DICT_4X4_250,
-            "DICT_5X5_250": cv2.aruco.DICT_5X5_250,
-            "DICT_6X6_250": cv2.aruco.DICT_6X6_250,
-        }
-        selected_dict_id = aruco_dict_map.get(aruco_dict_key, cv2.aruco.DICT_4X4_250)
-        adict = cv2.aruco.getPredefinedDictionary(selected_dict_id)
-
-        # Get screen dimensions (use temp pygame init)
-        pygame.init()
-        screen_info = pygame.display.Info()
-        screen_w, screen_h = screen_info.current_w, screen_info.current_h
-        pygame.quit()
-
-        # Create ArUco markers
-        sol_cfg_for_assets = {
-            'marker_k': self.safe_get_int(self.sol_marker_k_var, 6),
-            'marker_n': self.safe_get_int(self.sol_marker_n_var, 4),
-            'marker_pattern_size': self.safe_get_int(self.sol_marker_size_var, 80)
-        }
-        aruco_markers_px, aruco_imgs = create_calibration_assets(screen_w, screen_h, adict, sol_cfg_for_assets)
-        marker_container_size = sol_cfg_for_assets['marker_pattern_size'] + 30
-
-        # Physical screen width in meters
-        screen_width_m = self.safe_get_float(self.scr_width_cm_var, 53.0) / 100.0
-
-        # Create projector
-        cam_matrix = self.sol_cam_params.get('cam_matrix')
-        dist_coeffs = self.sol_cam_params.get('dist_coeffs')
-        if cam_matrix is None:
-            cam_matrix = np.array([[screen_w, 0, screen_w / 2], [0, screen_w, screen_h / 2], [0, 0, 1]], dtype=float)
-            dist_coeffs = np.zeros(5)
-
-        sol_projector = ScreenProjector3D(cam_matrix, dist_coeffs, adict,
-                                         smoothing_factor=self.safe_get_float(self.sol_pose_smooth_var, 0.1))
-
-        # Restore cached homography from previous preview session
-        if self.sol_cached_homography is not None:
-            sol_projector.set_homography(self.sol_cached_homography)
-            print(f"[Offset Cal] Restored cached homography from preview")
-
-        # Start background detection
-        sol_projector.start_background_detection(
-            sol_cfg_for_assets['marker_pattern_size'] / screen_w * screen_width_m,
-            aruco_markers_px,
-            marker_container_size,
-            screen_w, screen_h, screen_width_m
-        )
-
-        # Create calibrator
-        calibrator = SolOffsetCalibrator(
-            sol_projector=sol_projector,
-            sol_gaze_queue=self.sol_gaze_queue,
-            sol_scene_queue=self.sol_scene_queue,
-            screen_width_m=screen_width_m,
-            aruco_markers_px=aruco_markers_px,
-            aruco_imgs=aruco_imgs,
-            marker_container_size=marker_container_size
-        )
-
-        # Set flag to prevent flush_sol_queues from stealing frames
-        self.in_sol_offset_calibration = True
-
-        # Resume scene stream for calibration (may have been paused when returning to settings)
-        if self.active_sol_connector:
-            self.active_sol_connector.resume_scene_stream()
-
-        # Hide settings window during calibration
-        self.withdraw()
-
-        # Parse screen indices from dropdown selections (format: "0: Model Name (1920x1080)")
-        def parse_screen_idx(combo_value):
-            try:
-                return int(combo_value.split(':')[0].strip())
-            except:
-                return 0
-
-        user_screen_idx = parse_screen_idx(self.sol_offset_user_screen_var.get())
-        tester_screen_idx = parse_screen_idx(self.sol_offset_tester_screen_var.get())
-
-        try:
-            # Run calibration
-            result = calibrator.run_calibration(
-                num_points=self.safe_get_int(self.sol_offset_num_points_var, 5),
-                target_image_path=self.sol_offset_target_img_var.get().strip() or None,
-                target_size_px=self.safe_get_int(self.sol_offset_target_size_var, 100),
-                user_screen_idx=user_screen_idx,
-                tester_screen_idx=tester_screen_idx,
-                monitor_info=self.monitor_info_list if hasattr(self, 'monitor_info_list') else None
-            )
-
-            if result:
-                # Save result
-                username = self.user_var.get().strip() or "anonymous"
-                save_sol_offset(username, Path(self.calib_dir_var.get()), result)
-                messagebox.showinfo("Success",
-                                   f"Calibration complete!\n\n"
-                                   f"Pitch offset: {result['pitch_offset_deg']:.2f} deg\n"
-                                   f"Yaw offset: {result['yaw_offset_deg']:.2f} deg\n"
-                                   f"Points used: {result['num_calibration_points']}")
-            else:
-                messagebox.showwarning("Cancelled", "Calibration was cancelled.")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Calibration failed: {e}")
-        finally:
-            # Reset calibration flag
-            self.in_sol_offset_calibration = False
-            # Stop background detection
-            sol_projector.stop_background_detection()
-            # Pause scene stream when returning to settings to avoid native crash
-            if self.active_sol_connector:
-                self.active_sol_connector.pause_scene_stream()
-            # Show settings window again
-            self.deiconify()
-            self.update_sol_offset_display()
-
-    def clear_sol_offset(self):
-        """Clear the Sol offset calibration file."""
-        if not SOL_OFFSET_AVAILABLE:
-            return
-
-        username = self.user_var.get().strip() or "anonymous"
-        if messagebox.askyesno("Confirm", f"Clear Sol offset calibration for user '{username}'?"):
-            self._note_identity_changes()
-            path = Path(self.calib_dir_var.get()) / f"{username}_sol_offset.json"
-            existed = path.exists()
-            cleared = clear_sol_offset(username, Path(self.calib_dir_var.get()))
-            session_bundle.app_event("clear_offset", method="3D", user_name=username, file=str(path),
-                                     existed=existed, cleared=bool(cleared))
-            self.update_sol_offset_display()
-            messagebox.showinfo("Cleared", "Sol offset calibration cleared.")
-
     def preview_sol_gaze(self):
         """Preview Sol gaze mapping with ArUco markers on screen."""
         if not self.is_sol_connected:
@@ -2367,64 +2136,28 @@ Controls: SPACE = Record point, Q = Cancel"""
                         print("[Sol Preview] scene worker could not recover; exiting preview")
                         running = False
 
-                    # Process gaze based on selected method
-                    gaze_method = self.sol_gaze_method_var.get()
+                    # Process gaze (2D homography mapping, the only gaze method)
                     debug_this_frame = (frame_count % 100 == 0)
 
                     if latest_gaze is not None:
                         try:
-                            if gaze_method == "2D":
-                                h_valid = sol_projector.is_homography_valid()
-                                if not h_valid:
-                                    if debug_this_frame:
-                                        print(f"[Sol Preview] Frame {frame_count}: method=2D, homography NOT valid")
-                                else:
-                                    has_g2d = hasattr(latest_gaze.combined, 'gaze_2d')
-                                    if not has_g2d:
-                                        if debug_this_frame:
-                                            print(f"[Sol Preview] Frame {frame_count}: method=2D, homography OK, but gaze_2d attribute MISSING (attrs: {[a for a in dir(latest_gaze.combined) if not a.startswith('_')]})")
-                                    else:
-                                        g2d = latest_gaze.combined.gaze_2d
-                                        gaze_2d_pt = (g2d.x, g2d.y)
-                                        screen_pt = sol_projector.project_gaze_2d_to_screen(gaze_2d_pt)
-                                        if screen_pt:
-                                            current_gaze_pt = screen_pt
-                                        elif debug_this_frame:
-                                            print(f"[Sol Preview] Frame {frame_count}: method=2D, gaze_2d=({g2d.x:.1f}, {g2d.y:.1f}), project returned None")
-                            elif gaze_method == "3D":
-                                cal_ok = sol_projector.is_calibrated()
-                                if not cal_ok:
-                                    if debug_this_frame:
-                                        print(f"[Sol Preview] Frame {frame_count}: method=3D, pose NOT calibrated")
-                                else:
-                                    left_o = latest_gaze.left_eye.gaze.origin
-                                    right_o = latest_gaze.right_eye.gaze.origin
-                                    gaze_origin_mm = np.array([
-                                        (left_o.x + right_o.x) / 2.0,
-                                        (left_o.y + right_o.y) / 2.0,
-                                        (left_o.z + right_o.z) / 2.0
-                                    ])
-                                    g3d = latest_gaze.combined.gaze_3d
-                                    gaze_point_mm = np.array([g3d.x, g3d.y, g3d.z])
-                                    gaze_direction_vec = gaze_point_mm - gaze_origin_mm
-                                    norm = np.linalg.norm(gaze_direction_vec)
-                                    if norm > 0:
-                                        gaze_direction_unit = gaze_direction_vec / norm
-                                        gaze_origin_m = gaze_origin_mm / 1000.0
-                                        screen_pt_m = sol_projector.project_gaze_to_screen(gaze_origin_m, gaze_direction_unit)
-                                        if screen_pt_m is not None:
-                                            pix = sol_projector.physical_to_pixels(screen_pt_m, screen_w, screen_width_m)
-                                            if pix:
-                                                current_gaze_pt = (int(pix[0]), int(pix[1]))
-                                            elif debug_this_frame:
-                                                print(f"[Sol Preview] Frame {frame_count}: method=3D, physical_to_pixels returned None")
-                                        elif debug_this_frame:
-                                            print(f"[Sol Preview] Frame {frame_count}: method=3D, project_gaze_to_screen returned None")
-                                    elif debug_this_frame:
-                                        print(f"[Sol Preview] Frame {frame_count}: method=3D, gaze direction norm=0")
-                            else:
+                            h_valid = sol_projector.is_homography_valid()
+                            if not h_valid:
                                 if debug_this_frame:
-                                    print(f"[Sol Preview] Frame {frame_count}: unknown method '{gaze_method}'")
+                                    print(f"[Sol Preview] Frame {frame_count}: method=2D, homography NOT valid")
+                            else:
+                                has_g2d = hasattr(latest_gaze.combined, 'gaze_2d')
+                                if not has_g2d:
+                                    if debug_this_frame:
+                                        print(f"[Sol Preview] Frame {frame_count}: method=2D, homography OK, but gaze_2d attribute MISSING (attrs: {[a for a in dir(latest_gaze.combined) if not a.startswith('_')]})")
+                                else:
+                                    g2d = latest_gaze.combined.gaze_2d
+                                    gaze_2d_pt = (g2d.x, g2d.y)
+                                    screen_pt = sol_projector.project_gaze_2d_to_screen(gaze_2d_pt)
+                                    if screen_pt:
+                                        current_gaze_pt = screen_pt
+                                    elif debug_this_frame:
+                                        print(f"[Sol Preview] Frame {frame_count}: method=2D, gaze_2d=({g2d.x:.1f}, {g2d.y:.1f}), project returned None")
                         except Exception as e:
                             print(f"[Sol Preview] Gaze processing error: {e}")
                             traceback.print_exc()
@@ -2459,8 +2192,8 @@ Controls: SPACE = Record point, Q = Cancel"""
                             pygame.draw.circle(win, (0, 200, 0), current_gaze_pt, 8)
 
                     # Status bar - show whether using live or cached homography
-                    markers_active = sol_projector.is_homography_valid(strict=True) if gaze_method == "2D" else sol_projector.is_calibrated()
-                    has_homography = sol_projector.is_homography_valid() if gaze_method == "2D" else sol_projector.is_calibrated()
+                    markers_active = sol_projector.is_homography_valid(strict=True)
+                    has_homography = sol_projector.is_homography_valid()
                     if markers_active:
                         aruco_status = "LIVE"
                         aruco_color = (100, 255, 100)
@@ -2470,7 +2203,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                     else:
                         aruco_status = "WAITING"
                         aruco_color = (255, 100, 100)
-                    status_text = f"Method: {gaze_method} | Homography: {aruco_status} | Gaze: {'OK' if current_gaze_pt else 'N/A'} | Press Q/ESC to exit"
+                    status_text = f"Method: 2D | Homography: {aruco_status} | Gaze: {'OK' if current_gaze_pt else 'N/A'} | Press Q/ESC to exit"
 
                     pygame.draw.rect(win, (0, 0, 0), (0, screen_h - 50, screen_w, 50))
                     text_surf = font.render(status_text, True, (255, 255, 255))
@@ -3672,7 +3405,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             'sol_screen_phy_width_mm': self.safe_get_float(self.scr_width_cm_var, 53.0) * 10.0, # Convert cm to mm
             'sol_pose_smooth': self.safe_get_float(self.sol_pose_smooth_var, 0.1),
             'sol_gaze_smooth': self.safe_get_float(self.sol_gaze_smooth_var, 0.15),
-            'sol_gaze_method': self.sol_gaze_method_var.get(),  # "3D" or "2D"
+            'sol_gaze_method': self.sol_gaze_method_var.get(),  # always "2D" (REQ-0034)
             'sol_offset_profile': getattr(self, 'sol_offset_profile', ""),  # "" = OFF (REQ-0031)
             'sol_quality_window': self.safe_get_float(self.sol_quality_window_var, 3.0),
             # Both screens: resolve_tester_rect compares them to decide whether any
@@ -4059,7 +3792,11 @@ Controls: SPACE = Record point, Q = Cancel"""
             if 'sol_aruco_dict' in data: self.sol_aruco_dict_var.set(data['sol_aruco_dict'])
             if 'sol_pose_smooth' in data: self.sol_pose_smooth_var.set(str(data['sol_pose_smooth']))
             if 'sol_gaze_smooth' in data: self.sol_gaze_smooth_var.set(str(data['sol_gaze_smooth']))
-            if 'sol_gaze_method' in data: self.sol_gaze_method_var.set(data['sol_gaze_method'])
+            if 'sol_gaze_method' in data:
+                method, notice = offset_choice.migrate_gaze_method(data['sol_gaze_method'])
+                self.sol_gaze_method_var.set(method)
+                if notice:
+                    print(notice)
 
             if 'sol_offset_target_img' in data: self.sol_offset_target_img_var.set(data['sol_offset_target_img'])
             if 'sol_offset_target_size' in data: self.sol_offset_target_size_var.set(str(data['sol_offset_target_size']))
@@ -4137,8 +3874,6 @@ Controls: SPACE = Record point, Q = Cancel"""
     def _on_username_changed(self, *args):
         """Called when username changes - update user-dependent displays."""
         # Update offset calibration status displays
-        if hasattr(self, 'lbl_sol_offset_pitch'):
-            self.update_sol_offset_display()
         if hasattr(self, 'lbl_sol_2d_offset_status'):
             self.update_sol_2d_offset_display()
 

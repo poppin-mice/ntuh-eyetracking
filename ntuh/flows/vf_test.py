@@ -95,7 +95,6 @@ def run_vf_test(cfg, sol_context=None):
         'smoothed_gaze': 0, 'frames_with_gaze_data': 0, 'used_cached_gaze': 0,
     }
 
-    sol_gaze_method = cfg.get('sol_gaze_method', '3D')
     aruco_markers_px = {}
     aruco_imgs = {}
 
@@ -146,12 +145,10 @@ def run_vf_test(cfg, sol_context=None):
 
         phy_w_m = cfg.get('sol_screen_phy_width_mm', 530.0) / 1000.0
 
-        # Our Sol offset: only the picked profile, applied in 2D (REQ-0031). No 3D angular offset.
+        # Our Sol offset: only the picked profile, applied in 2D (REQ-0031).
         if sol_choice['model'] is not None:
             sol_projector.set_gaze_2d_offset_model(sol_choice['model'])
             print(f"[VF Sol] Applied 2D offset model to projector")
-        sol_offset_pitch = 0.0
-        sol_offset_yaw = 0.0
 
         # Start background detection AFTER scene stream is resumed and offset models loaded
         sol_projector.start_background_detection(
@@ -374,33 +371,11 @@ def run_vf_test(cfg, sol_context=None):
                         g2d = latest_gaze.combined.gaze_2d
                         sol_raw = (g2d.x, g2d.y)
 
-                    if sol_gaze_method == '2D' and sol_projector.is_homography_valid():
+                    if sol_projector.is_homography_valid():
                         if sol_raw:
                             screen_pt = sol_projector.project_gaze_2d_to_screen(sol_raw, apply_smoothing=True)
                             if screen_pt:
                                 sol_mapped = (int(screen_pt[0]), int(screen_pt[1]))
-                    elif sol_gaze_method == '3D' and sol_projector.is_calibrated():
-                        left_o = latest_gaze.left_eye.gaze.origin
-                        right_o = latest_gaze.right_eye.gaze.origin
-                        origin_mm = np.array([(left_o.x + right_o.x) / 2, (left_o.y + right_o.y) / 2, (left_o.z + right_o.z) / 2])
-                        g3d = latest_gaze.combined.gaze_3d
-                        point_mm = np.array([g3d.x, g3d.y, g3d.z])
-                        direction = point_mm - origin_mm
-                        norm = np.linalg.norm(direction)
-                        if norm > 0:
-                            direction_unit = direction / norm
-                            if sol_offset_pitch != 0 or sol_offset_yaw != 0:
-                                cp, sp = math.cos(sol_offset_pitch), math.sin(sol_offset_pitch)
-                                cy_r, sy_r = math.cos(sol_offset_yaw), math.sin(sol_offset_yaw)
-                                Rp = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
-                                Ry = np.array([[cy_r, 0, sy_r], [0, 1, 0], [-sy_r, 0, cy_r]])
-                                direction_unit = Ry @ Rp @ direction_unit
-                            origin_m = origin_mm / 1000.0
-                            screen_pt_m = sol_projector.project_gaze_to_screen(origin_m, direction_unit)
-                            if screen_pt_m is not None:
-                                pix = sol_projector.physical_to_pixels(screen_pt_m, W, phy_w_m)
-                                if pix:
-                                    sol_mapped = (int(pix[0]), int(pix[1]))
                 except Exception:
                     pass
 

@@ -39,11 +39,6 @@ from ntuh.ui.tester_dashboard import TesterDashboard
 
 from ntuh.sol import offset_choice
 
-try:
-    from ntuh.sol.offset_calibration import apply_angular_offset
-except Exception:
-    apply_angular_offset = None
-
 
 def run_test(cfg, sol_context=None):
     # Use real pixel dimensions from OS (not DPI-scaled pygame.display.Info)
@@ -59,8 +54,7 @@ def run_test(cfg, sol_context=None):
     ensure_pygame_focus()
 
     # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF", never one
-    # found by the User Name. No 3D angular offset is loaded.
-    sol_offset = None
+    # found by the User Name. Applied in 2D, the only gaze method (REQ-0034).
     sol_choice = offset_choice.choose(cfg)
     if sol_choice['load_error']:
         messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
@@ -580,13 +574,7 @@ def run_test(cfg, sol_context=None):
                         break
             if latest_gaze:
                 sol_raw_data = latest_gaze
-                sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-                can_process = False
-                if sol_gaze_method == '2D':
-                    can_process = sol_projector.is_homography_valid()
-                else:
-                    can_process = sol_projector.is_calibrated()
-                if can_process:
+                if sol_projector.is_homography_valid():
                     try:
                         if hasattr(latest_gaze, 'combined'):
                             raw_gaze_2d = None
@@ -594,42 +582,12 @@ def run_test(cfg, sol_context=None):
                                 g2d = latest_gaze.combined.gaze_2d
                                 raw_gaze_2d = (g2d.x, g2d.y)
                                 sol_raw = raw_gaze_2d
-                            if sol_gaze_method == '2D':
-                                if raw_gaze_2d:
-                                    screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
-                                    if screen_pt:
-                                        sol_mapped = screen_pt
-                                        if eval_source != "Webcam":
-                                            _display_gaze[0] = screen_pt
-                            else:
-                                if hasattr(latest_gaze, 'left_eye') and hasattr(latest_gaze, 'right_eye'):
-                                    left_o = latest_gaze.left_eye.gaze.origin
-                                    right_o = latest_gaze.right_eye.gaze.origin
-                                    gaze_origin_mm = np.array([
-                                        (left_o.x + right_o.x) / 2.0,
-                                        (left_o.y + right_o.y) / 2.0,
-                                        (left_o.z + right_o.z) / 2.0
-                                    ])
-                                    g3d = latest_gaze.combined.gaze_3d
-                                    gaze_point_mm = np.array([g3d.x, g3d.y, g3d.z])
-                                    gaze_direction_vec = gaze_point_mm - gaze_origin_mm
-                                    norm = np.linalg.norm(gaze_direction_vec)
-                                    if norm > 0:
-                                        gaze_direction_unit = gaze_direction_vec / norm
-                                        if sol_offset is not None:
-                                            gaze_direction_unit = apply_angular_offset(
-                                                gaze_direction_unit,
-                                                sol_offset['pitch_offset_rad'],
-                                                sol_offset['yaw_offset_rad']
-                                            )
-                                        gaze_origin_m = gaze_origin_mm / 1000.0
-                                        screen_pt_m = sol_projector.project_gaze_to_screen(gaze_origin_m, gaze_direction_unit)
-                                        if screen_pt_m is not None:
-                                            pix = sol_projector.physical_to_pixels(screen_pt_m, W, physical_width_m)
-                                            if pix:
-                                                sol_mapped = (int(pix[0]), int(pix[1]))
-                                                if eval_source != "Webcam":
-                                                    _display_gaze[0] = sol_mapped
+                            if raw_gaze_2d:
+                                screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
+                                if screen_pt:
+                                    sol_mapped = screen_pt
+                                    if eval_source != "Webcam":
+                                        _display_gaze[0] = screen_pt
                     except (AttributeError, Exception):
                         pass
 
@@ -1017,20 +975,10 @@ def run_test(cfg, sol_context=None):
                         sol_debug_counters['frames_with_gaze_data'] += 1
 
                     if latest_gaze:
-                        sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-                        is_ready = sol_projector.is_homography_valid() if sol_gaze_method == '2D' else sol_projector.is_calibrated()
-                        if not is_ready:
+                        if not sol_projector.is_homography_valid():
                             sol_debug_counters['not_calibrated'] += 1
 
-                    # Get gaze method from config
-                    sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-
-                    # Check if we can process gaze (depends on method)
-                    can_process_gaze = False
-                    if sol_gaze_method == '2D':
-                        can_process_gaze = latest_gaze and sol_projector.is_homography_valid()
-                    else:  # 3D method
-                        can_process_gaze = latest_gaze and sol_projector.is_calibrated()
+                    can_process_gaze = latest_gaze and sol_projector.is_homography_valid()
 
                     if can_process_gaze:
                          try:
@@ -1039,73 +987,25 @@ def run_test(cfg, sol_context=None):
                                  sol_debug_counters['gaze_data_structure_error'] += 1
                                  raise AttributeError("Missing left_eye, right_eye, or combined")
 
-                             # Extract raw SDK gaze_2d for both methods
+                             # Extract raw SDK gaze_2d
                              raw_gaze_2d = None
                              if hasattr(latest_gaze.combined, 'gaze_2d'):
                                  g2d = latest_gaze.combined.gaze_2d
                                  raw_gaze_2d = (g2d.x, g2d.y)
 
-                             if sol_gaze_method == '2D':
-                                 # 2D Gaze Mapping: Use gaze_2d and homography
-                                 if raw_gaze_2d:
-                                     screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
-                                     if screen_pt:
-                                         sol_gaze_pt = screen_pt
-                                         sol_debug_counters['valid_gaze'] += 1
+                             # 2D Gaze Mapping: Use gaze_2d and homography
+                             if raw_gaze_2d:
+                                 screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
+                                 if screen_pt:
+                                     sol_gaze_pt = screen_pt
+                                     sol_debug_counters['valid_gaze'] += 1
 
-                                         # Save for CSV recording
-                                         sol_mapped_gaze_pt_for_csv = sol_gaze_pt
-                                         sol_raw_gaze_pt_for_csv = raw_gaze_2d
-                                         sol_raw_gaze_data_for_csv = latest_gaze
-                                     else:
-                                         sol_debug_counters['projection_failed'] += 1
-                             else:
-                                 # 3D Gaze Mapping: Use gaze_3d and ray-plane intersection
-                                 left_o = latest_gaze.left_eye.gaze.origin
-                                 right_o = latest_gaze.right_eye.gaze.origin
-                                 gaze_origin_mm = np.array([
-                                     (left_o.x + right_o.x)/2.0,
-                                     (left_o.y + right_o.y)/2.0,
-                                     (left_o.z + right_o.z)/2.0
-                                 ])
-
-                                 # Get 3D Gaze Point
-                                 g3d = latest_gaze.combined.gaze_3d
-                                 gaze_point_mm = np.array([g3d.x, g3d.y, g3d.z])
-
-                                 # Compute Direction Vector
-                                 gaze_direction_vec = gaze_point_mm - gaze_origin_mm
-                                 norm = np.linalg.norm(gaze_direction_vec)
-
-                                 if norm > 0:
-                                     gaze_direction_unit = gaze_direction_vec / norm
-
-                                     # Apply Sol offset correction if available
-                                     if sol_offset is not None:
-                                         gaze_direction_unit = apply_angular_offset(
-                                             gaze_direction_unit,
-                                             sol_offset['pitch_offset_rad'],
-                                             sol_offset['yaw_offset_rad']
-                                         )
-
-                                     gaze_origin_m = gaze_origin_mm / 1000.0  # Convert to meters
-
-                                     # Projection logic (ArUco marker-based)
-                                     screen_pt_m = sol_projector.project_gaze_to_screen(gaze_origin_m, gaze_direction_unit)
-                                     if screen_pt_m is not None:
-                                          pix = sol_projector.physical_to_pixels(screen_pt_m, W, physical_width_m)
-                                          if pix:
-                                              sol_gaze_pt = (int(pix[0]), int(pix[1]))
-                                              sol_debug_counters['valid_gaze'] += 1
-
-                                              # Save for CSV recording
-                                              sol_mapped_gaze_pt_for_csv = sol_gaze_pt
-                                              sol_raw_gaze_pt_for_csv = raw_gaze_2d
-                                              sol_raw_gaze_data_for_csv = latest_gaze
-                                          else:
-                                              sol_debug_counters['projection_failed'] += 1
-                                     else:
-                                         sol_debug_counters['projection_failed'] += 1
+                                     # Save for CSV recording
+                                     sol_mapped_gaze_pt_for_csv = sol_gaze_pt
+                                     sol_raw_gaze_pt_for_csv = raw_gaze_2d
+                                     sol_raw_gaze_data_for_csv = latest_gaze
+                                 else:
+                                     sol_debug_counters['projection_failed'] += 1
                          except AttributeError as e:
                              sol_debug_counters['attribute_error'] += 1
                              # print(f"[DEBUG] AttributeError in gaze processing: {e}")
