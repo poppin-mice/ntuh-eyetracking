@@ -19,6 +19,7 @@ The IDW approach handles the fact that gaze offset may vary across different scr
 by interpolating from nearby calibration points.
 """
 
+import csv
 import cv2
 import numpy as np
 import json
@@ -382,6 +383,9 @@ class Sol2DOffsetModel:
         self.calibration_points = []
         self.num_points = 0
         self.training_timestamp = None
+        # Leave-one-out errors of the last train(), one per calibration point in order (px in the
+        # model's space): {"idw_px": [...], "const_px": [...]}. Not saved in the profile.
+        self.loo_errors = {}
 
         # Offset mode
         self.offset_mode = offset_mode
@@ -542,8 +546,8 @@ class Sol2DOffsetModel:
                 print(f"  {name}: pixel=({offset_x:.1f}, {offset_y:.1f})px, magnitude={offset_mag:.1f}px")
 
         # Leave-one-out validation (only meaningful with 3+ points)
+        errors = []
         if len(self.calibration_points) >= 3:
-            errors = []
             for i, point in enumerate(self.calibration_points):
                 gaze = point['gaze_2d']
                 if self.offset_mode == OFFSET_MODE_ANGULAR and self.has_camera_intrinsics():
@@ -564,6 +568,18 @@ class Sol2DOffsetModel:
             print(f"[Sol2DOffset] IDW leave-one-out error ({self.offset_mode}): mean={mean_error:.2f}px, max={max_error:.2f}px")
         else:
             print(f"[Sol2DOffset] Using constant offset (< 3 points, IDW validation skipped)")
+
+        # Keep the leave-one-out errors for the calibration record (calib_points.csv). "const"
+        # predicts each point from the mean offset of the other points: what a 1-2 point
+        # calibration applies, and the baseline the IDW has to beat. It needs 2+ points.
+        const_errors = []
+        if len(self.calibration_points) >= 2:
+            for i, point in enumerate(self.calibration_points):
+                rest = [p for j, p in enumerate(self.calibration_points) if j != i]
+                const_errors.append(float(np.hypot(
+                    np.mean([p['offset_x'] for p in rest]) - point['offset_x'],
+                    np.mean([p['offset_y'] for p in rest]) - point['offset_y'])))
+        self.loo_errors = {"idw_px": [float(e) for e in errors], "const_px": const_errors}
 
         # Print average offsets
         print(f"[Sol2DOffset] Average pixel offset: ({self.avg_offset_x:.1f}, {self.avg_offset_y:.1f})px")
@@ -813,10 +829,11 @@ class Sol2DOffsetModel:
         return model
 
 
-def get_sol_2d_offset_path(username, calib_dir):
-    """Get the path for storing 2D offset calibration data."""
+def get_sol_2d_offset_path(username, calib_dir, create=True):
+    """Get the path for storing 2D offset calibration data. create=False only names the file,
+    without creating a missing calibration folder (for looking at a profile, not saving one)."""
     calib_path = Path(calib_dir)
-    if not calib_path.exists():
+    if create and not calib_path.exists():
         calib_path.mkdir(parents=True, exist_ok=True)
 
     safe_username = "".join(c for c in username if c.isalnum() or c in "._-")
@@ -826,7 +843,8 @@ def get_sol_2d_offset_path(username, calib_dir):
     return calib_path / f"{safe_username}_sol_2d_offset.json"
 
 
-def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, target_image_path=""):
+def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, target_image_path="",
+                       error_out=None):
     """
     Save the 2D offset calibration model to a JSON file.
 
@@ -837,12 +855,12 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         screen_width: Screen width in pixels
         screen_height: Screen height in pixels
         target_image_path: Path to the target image used for calibration
+        error_out: a list that receives the reason when writing the file fails (for the
+            calibration session record)
     """
     if model is None or not model.is_trained:
         print("[Sol2DOffset] Cannot save: model not trained")
         return False
-
-    filepath = get_sol_2d_offset_path(username, calib_dir)
 
     data = {
         'version': '1.0',
@@ -856,13 +874,18 @@ def save_sol_2d_offset(username, calib_dir, model, screen_width, screen_height, 
         'model': model.to_dict()
     }
 
+    # The caller shows "not saved" on False, so every way the write can fail must end up there -
+    # including a calibration folder that does not exist and cannot be created.
     try:
+        filepath = get_sol_2d_offset_path(username, calib_dir)
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         print(f"[Sol2DOffset] Saved calibration to {filepath}")
         return True
     except Exception as e:
         print(f"[Sol2DOffset] Failed to save: {e}")
+        if error_out is not None:
+            error_out.append(f"{type(e).__name__}: {e}")
         return False
 
 
@@ -912,6 +935,59 @@ def clear_sol_2d_offset(username, calib_dir):
             print(f"[Sol2DOffset] Failed to clear: {e}")
             return False
     return True
+
+
+# ---------- calibration record (calib_points.csv of a calibration session) ----------
+CALIB_POINT_COLUMNS = ["point_idx", "name", "target_x", "target_y", "n", "n_valid",
+                       "mean_x", "mean_y", "median_x", "median_y", "sd_x", "sd_y",
+                       "used_x", "used_y", "offset_x", "offset_y",
+                       "loo_idw_err_px", "loo_const_err_px", "loo_idw_err_deg", "loo_const_err_deg"]
+
+
+def sample_stats(samples, valid):
+    """n, n_valid, mean, median and SD (per axis) of one calibration point's raw gaze_2d samples
+    (scene-camera px). valid: the gaze_2d validity of each sample."""
+    a = np.asarray(samples, dtype=float).reshape(-1, 2)
+    out = {"n": len(a), "n_valid": int(sum(bool(v) for v in valid))}
+    for name, fn in (("mean", np.mean), ("median", np.median), ("sd", np.std)):
+        out[f"{name}_x"], out[f"{name}_y"] = (float(v) for v in fn(a, axis=0))
+    return out
+
+
+def calib_point_rows(shown, model, px_to_deg=None):
+    """The rows of calib_points.csv (CALIB_POINT_COLUMNS), one per calibration point shown.
+
+    shown: per point, in order, {"name", "target_x", "target_y" (screen px), **sample_stats()}.
+    A point skipped for lack of a homography is not in the model: its model columns stay empty.
+    used (the value fed to training), offset and the leave-one-out errors are in the model's
+    space: screen px in screen mode, scene-camera px otherwise. px_to_deg (screen mode only)
+    fills the *_deg columns.
+    """
+    index = {p.get("position_name"): i for i, p in enumerate(model.calibration_points)}
+    rows = []
+    for idx, point in enumerate(shown):
+        row = dict.fromkeys(CALIB_POINT_COLUMNS, "")
+        row.update(point, point_idx=idx)
+        i = index.get(point["name"])
+        if i is not None:
+            p = model.calibration_points[i]
+            row.update(used_x=float(p["gaze_2d"][0]), used_y=float(p["gaze_2d"][1]),
+                       offset_x=p.get("offset_x", ""), offset_y=p.get("offset_y", ""))
+            for key in ("idw", "const"):
+                errors = getattr(model, "loo_errors", {}).get(f"{key}_px") or []
+                if i < len(errors):
+                    row[f"loo_{key}_err_px"] = errors[i]
+                    if px_to_deg:
+                        row[f"loo_{key}_err_deg"] = px_to_deg(errors[i])
+        rows.append(row)
+    return rows
+
+
+def write_calib_points(path, rows):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CALIB_POINT_COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 class Sol2DOffsetCalibrator:

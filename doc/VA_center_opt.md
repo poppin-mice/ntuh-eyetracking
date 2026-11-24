@@ -37,6 +37,7 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| Operator Code | Code of the person running the test (e.g. `OT1`), never a real name. Remembered between runs and stored in each session's `session_meta.json` (since 1.7.0) | (empty) |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
@@ -141,6 +142,8 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Dict | ArUco dictionary type | DICT_4X4_250 |
 | Gaze Method | 3D (ray-plane) or 2D (homography) | 2D |
 | Pose Smooth / Gaze Smooth | Smoothing factors (0-1, higher = more smooth) | 1 / 1 |
+| Sol built-in calibration done | Tick it after the Sol built-in calibration (Chronus, lighthouse mode) was done for this subject; untick it for the next subject. The program cannot read this from the glasses, so the tick and its time are what every session records (since 1.9.0). Not remembered between runs | OFF |
+| Chronus participant code | The participant code used in the Chronus app. Remembered between runs and stored in every session (since 1.9.0) | (empty) |
 
 > **Note:** Before running experiments, the tester should test different ArUco marker counts (HxV) and pattern sizes on the target screen to ensure markers do not overlap each other or the stimulus area. Choosing the right combination for the specific screen size is important for achieving the best gaze tracking accuracy.
 
@@ -159,6 +162,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 - The accuracy test and the gaze preview both run on the subject screen set at *General → Screen & Viewing → **Subject Screen***, and the operator's monitoring screen is *General → Screen & Viewing → Examiner Screen*. When these are two different monitors, an **examiner view** opens on the Examiner Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
 - The camera picture appears as soon as frames arrive; the target and corrected-gaze markers need a valid homography, so until the ArUco markers are found you see the video with the raw gaze only and a "no homography yet" note.
 - The examiner view is shown only on the Examiner Screen; the subject never sees a gaze dot (so they cannot chase it and bias the measurement). With a single monitor the test runs as before, without a tester window.
+- **Every 2D offset calibration run leaves a folder** `calibration_sessions/<User Name>_<date>_<time>/` (since 1.9.0) with the statistics of each calibration point (`calib_points.csv`), a copy of the profile it saved and whether the save worked; see [session_bundle.md](session_bundle.md).
 - **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
 
 ### Recording Tab
@@ -200,8 +204,28 @@ VA_output/
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
     trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
+    session_meta.json           - Program version, settings, identity, start/end, status (since 1.7.0)
+    events.csv                  - Operator and program events (since 1.7.0)
+    console.log                 - What the program printed during the session (since 1.7.0)
+    crash_log.txt               - Only after an exception (since 1.7.0)
+    va_result.json              - The final result as the result screen shows it (since 1.9.0)
+    calib_profile_snapshot.json - Copy of the Sol offset profile the test applied, if one loaded (since 1.9.0)
+    calib_profiles/             - Copies of the other calibration profiles it loaded (since 1.9.0)
     review_labels.json          - Created later by replayer (review labels)
 ```
+
+A VF session folder holds `vf_result.json` instead of `va_result.json`.
+
+> **Session record (since 1.7.0).** `session_meta.json`, `events.csv` and `console.log` are written
+> into every VA, VF and accuracy-test folder; [session_bundle.md](session_bundle.md) describes them.
+> Everything the program prints is also kept in `logs/console_<date>_<time>.log` next to the exe.
+> The accuracy-test folder (`accuracy_test/<User Name>_<date>_<time>/`) is now created when the test
+> starts and named after the start time, and a test aborted before its first point leaves a folder too.
+>
+> **Since 1.9.0** the record also says which calibration profiles the test looked for and whether each
+> was loaded (with a copy of every loaded profile), whether the Sol built-in calibration was confirmed,
+> and the final result (`va_result.json`, `vf_result.json`, and `result` in `accuracy_report.json` →
+> `meta`; its existing keys are unchanged).
 
 > The screen video may be downscaled (e.g. 4K → 1080p); `screen_meta.json` records the
 > original screen resolution so the replayer can align the gaze overlays.

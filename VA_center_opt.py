@@ -30,6 +30,12 @@ def global_exception_handler(exctype, value, tb):
     full_msg = f"[{timestamp}] CRITICAL UNHANDLED EXCEPTION:\n{err_msg}\n"
     print(full_msg, file=sys.stderr)
     try:
+        # The open session (if any) gets crash_log.txt and ends as "crashed".
+        from ntuh.recording import session_bundle
+        session_bundle.crash_current(exctype, value, tb, where="unhandled")
+    except Exception:
+        pass
+    try:
         with open("va_crash_log.txt", "a") as f:
             f.write(full_msg + "\n" + "="*40 + "\n")
         from tkinter import messagebox
@@ -41,6 +47,10 @@ def global_exception_handler(exctype, value, tb):
 def main():
     # Heavy imports live here (NOT at module top) so a multiprocessing 'spawn' child that
     # re-imports this module as __mp_main__ does not load pygame/tk/mediapipe/gazefollower.
+    # First of all, keep a copy of everything printed (logs/console_<time>.log, and console.log in
+    # each session folder). Here and not at import time, so the Sol child never opens the log.
+    from ntuh.recording import session_bundle
+    session_bundle.install_console_tee()
     import atexit
     import faulthandler
     import threading
@@ -110,6 +120,7 @@ def main():
                 import traceback
                 err_msg = traceback.format_exc()
                 exp_type = s.cfg.get('experiment_type', 'VA')
+                session_bundle.crash_current(*sys.exc_info(), where=f"{exp_type} test")
                 print(f"CRITICAL ERROR IN {exp_type} TEST:\n{err_msg}")
                 with open(f"{exp_type.lower()}_crash_log.txt", "w") as f:
                     f.write(err_msg)
@@ -121,6 +132,9 @@ def main():
                     pygame.quit()
                 except Exception:
                     pass
+            # A session the flow did not close itself (it crashed, or left by a path that does
+            # not finish it) is closed here, so its folder never stays "running".
+            session_bundle.finish_current()
 
             # Show settings window again and restart its timers
             mode = "Practice" if s.cfg.get('practice_mode', False) else "Test"
