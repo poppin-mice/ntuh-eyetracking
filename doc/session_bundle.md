@@ -183,6 +183,12 @@ be computed again from the folder and other calibration methods can be tried on 
 | `points.csv` | One row per recorded point: the `accuracy_data.csv` columns (unchanged headline: mean of 30 render-frame samples), then `target_idx, repeat_idx, collect_start_ms, collect_end_ms, n_render_samples, n_sdk_samples, n_sdk_valid, h_state_mix`, the medians of the SDK samples of the collect window (`raw/corr_median_x/y`, `err_raw/corr_median_deg`) and the same over the valid ones only (`raw/corr_valid_median_x/y`, `err_raw/corr_valid_median_deg`; valid = `gaze_2d` valid and both eyes NORMAL) |
 | `trial_events.csv` | The VA columns, one row per recorded (`REC`) or discarded (`DISCARDED`) point: `trial_number` = target index, `side` = target name, start / end = collect window (seconds), `stim_x/y` = target, `trial_type` = `acc_target` |
 
+`python tools/check_accuracy_replay.py <accuracy session folder>` recomputes the folder from its own
+files (LOGGING_SPEC 8): R1 `raw_screen` from the raw gaze and the logged homography, R2 `corr_screen`
+from `calib_profile_snapshot.json` (or `corr` = `raw` without a profile), R3 the `points.csv` /
+`accuracy_data.csv` headline from the samples `collect_end` lists. It prints, per check, how many rows
+or points it compared and the largest difference in px; PASS at 1e-6 px. Exit code 0 when all pass.
+
 `accuracy_report.json` → `meta` gains `session_id`. The files are written by background threads; the
 test never waits for the disk. The replayer of today opens a folder only when it has a video, which an
 accuracy-test folder does not have yet.
@@ -222,7 +228,7 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `scene_stall` | Accuracy test: SPACE while the scene video was stalled | `scene_age_s` |
 | `collect_discard` | Accuracy test: a point was dropped because the scene stalled while collecting | `n_discarded` |
 | `collect_end`, `point_skipped` | *1.9.0*. Calibration run: a point was recorded, or skipped for lack of a homography | `n`, `n_valid` |
-| `gate_check` | *1.12.0*. Accuracy test start: the calibration gate's decision | `status`, `message`, `condition`, `operator_code`, `time` |
+| `gate_check` | *1.12.0*. Accuracy test start: the calibration gate's decision and the Sol built-in calibration confirmation | `status`, `message`, `condition`, `operator_code`, `time`; `sol_builtin_calibration` = the same block as in `session_meta.json` (`source`, `confirmed`, `performed_at`, `chronus_participant`) |
 | `target_show` | *1.12.0*. Accuracy test: a target appeared (columns `target_idx`, `target_name`, `x`, `y`) | |
 | `space_pressed` | *1.12.0*. Accuracy test: every SPACE | `accepted`, `reject_reason` (`already_collecting`, `stale`, `no_homography`) |
 | `collect_start`, `collect_end` | *1.12.0*. Accuracy test: a point's collect window opened / the point was recorded | end: `n_render_samples`, `n_sdk_samples`, `n_sdk_valid`, `render_samples` (`[[sample_idx, h_id], ...]`: the SDK sample and homography each of the 30 averaged samples used) |

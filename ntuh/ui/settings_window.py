@@ -2835,7 +2835,8 @@ Controls: SPACE = Record point, Q = Cancel"""
             bundle.profile("sol2d_offset",
                            get_sol_2d_offset_path(username, self.calib_dir_var.get(), create=False),
                            offset_model is not None, applied=True)
-        bundle.event("gate_check", **gate.to_dict())
+        bundle.event("gate_check", **gate.to_dict(),
+                     sol_builtin_calibration=bundle.meta.get("sol_builtin_calibration"))
         # Bundle v2: every SDK sample and homography, the targets and per-point results, so the
         # test can be mapped again from its folder (doc/session_bundle.md).
         streams = replay_streams.SolStreams(bundle.folder, offset_model)
