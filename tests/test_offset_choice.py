@@ -6,7 +6,9 @@ Synthetic profiles, participant codes only.
 import csv
 import hashlib
 import json
+import re
 from datetime import date
+from pathlib import Path
 
 from ntuh.recording import session_bundle
 from ntuh.sol import offset_choice
@@ -71,10 +73,32 @@ def test_a_picked_profile_is_applied_and_recorded_with_its_hash(tmp_path, bundle
     assert status == OK and path.name in text and "5 pts" in text and text.isascii()
 
 
-def test_a_2d_profile_is_not_applied_with_the_3d_gaze_method(tmp_path):
-    choice = offset_choice.choose(_cfg(tmp_path, picked=str(_profile(tmp_path)), method="3D"))
-    assert choice["selected"] and not choice["applied"] and choice["model"] is None
-    assert offset_choice.describe(choice)[0] == NOT_SELECTED
+def test_the_profile_is_applied_with_the_gaze_method_missing_or_a_stale_3d(tmp_path):
+    """3D was retired (REQ-0034): the VA/VF load path applies the 2D profile whatever the
+    setting says; it no longer depends on the 3D module."""
+    picked = str(_profile(tmp_path))
+    no_method = {k: v for k, v in _cfg(tmp_path, picked=picked).items() if k != "sol_gaze_method"}
+    for cfg in (no_method, _cfg(tmp_path, picked=picked, method="3D")):
+        choice = offset_choice.choose(cfg)
+        assert choice["applied"] and choice["model"].is_trained and choice["gaze_method"] == "2D"
+        assert offset_choice.describe(choice)[0] == OK
+
+
+def test_a_saved_3d_gaze_method_is_read_as_2d_with_one_notice():
+    method, notice = offset_choice.migrate_gaze_method("3D")
+    assert method == "2D" and "3D" in notice
+    assert offset_choice.migrate_gaze_method("2D") == ("2D", None)
+    assert offset_choice.migrate_gaze_method(None) == ("2D", None)
+
+
+def test_nothing_refers_to_the_retired_3d_offset_module():
+    """ntuh/sol/offset_calibration.py (3D) is gone and no app source names it or its loaders
+    (va_test / vf_test / settings_window import pygame, Tk or the SDK, so they are read, not imported)."""
+    root = Path(__file__).resolve().parents[1]
+    assert not (root / "ntuh" / "sol" / "offset_calibration.py").exists()
+    sources = list((root / "ntuh").rglob("*.py")) + [root / f for f in ("VA_center_opt.py", "calibration.py", "replayer.py")]
+    retired = re.compile(r"\boffset_calibration\b|apply_angular_offset|SOL_OFFSET_AVAILABLE|SolOffsetCalibrator")
+    assert [p.name for p in sources if retired.search(p.read_text(encoding="utf-8"))] == []
 
 
 def test_sol_off_applies_nothing_even_with_a_pick(tmp_path):
