@@ -36,11 +36,19 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| Subject Code | Participant **code** (e.g. `s01`, `K03`), never a real name. Checked as you type (since 1.13.0): the default format is 1–3 letters and 2–3 digits (`^[A-Za-z]{1,3}\d{2,3}$`, settings key `subject_code_regex`); a space or a non-ASCII letter is always refused. A test cannot start without a valid code. Not remembered between runs | (empty) |
+| Condition | `C1` … `C5` (the list of the accuracy test), or empty. Required for *Start Calibration* and the *Accuracy Test*; optional for VA/VF. Not remembered between runs | (empty) |
+| Run (第幾次) | Run number of the next VA/VF session, pre-selected: the sessions of the same subject, condition and test today + 1. It is the `sess<N>` of the folder name. Choosing another number is recorded (`repeat_index_manual` event) | computed |
+| Collection | Collection label (收測場次, e.g. `20261124_NH`), stored in `session_meta.json`. Kept for the rest of the day | (empty) |
+| User Name | **Read-only** since 1.13.0: made from Subject Code and Condition, `s01` + C3 → `s01_c3` (`s01` without a condition). It is part of the output folder names, and the Sol offset profile `<User Name>_sol_2d_offset.json` is looked up by it | (empty) |
 | Operator Code | Code of the person running the test (e.g. `OT1`), never a real name. Remembered between runs and stored in each session's `session_meta.json` (since 1.7.0) | (empty) |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
+
+**Lock (since 1.13.0).** *Start Calibration* (Sol Calib tab) locks Subject Code and Condition until the accuracy test of that condition is **completed**; an aborted test keeps the lock, because it is run again. The red note next to the User Name says so. **Unlock** ends the lock early (for example the wrong subject was entered); it asks first and is recorded (`identity_unlocked` event). The lock is not kept when the program is closed.
+
+**Picking the condition twice.** The accuracy test's start dialog still asks for the condition, and it must be the Condition of the General tab; otherwise the dialog says so and does not start.
 
 **Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
 VA only. "Collect negative samples: *N*" asks the session for *N* negative ("non-target
@@ -170,7 +178,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 - The start dialog shows the status once a condition is picked: `校正檔：已載入（file, time, points）` in green, or `校正檔：未載入` in grey (the condition does not use it) or red (C3/C5 and no profile).
 - During the test the examiner view carries a banner with a status dot: green `OUR CALIB: LOADED <file> <n> pts <time>`, or grey `OUR CALIB: NOT LOADED (...)`. The bar at the bottom of the subject screen shows `Our calib: ON` / `OFF`, which is what a single-monitor setup has.
 - The result dialog repeats the status. It is a **warning** dialog when a C3/C5 test ran without our calibration, or when a profile was loaded but corrected and raw gaze are identical on every point.
-- The report folder name carries the condition: `accuracy_test/<User Name>_<condition>_<YYYYMMDD_HHMMSS>/`, for example `s01_c3_20261122_100305` (before 1.6.0: `<User Name>_<YYYYMMDD_HHMMSS>`). The condition is the one picked in the start dialog, in lower case. The User Name is used as typed, so a User Name that already ends in a condition gives `s01_c3_c3_...`. Existing folders are not renamed.
+- The report folder name carries the condition: `accuracy_test/<User Name>_<YYYYMMDD_HHMMSS>/`, for example `s01_c3_20261122_100305`, where the User Name is made of Subject Code and Condition (since 1.13.0; 1.6.0–1.12.x: `<User Name as typed>_<condition>_<YYYYMMDD_HHMMSS>`, which gave `s01_c3_c3_...` for a User Name typed with its condition; before 1.6.0: `<User Name>_<YYYYMMDD_HHMMSS>`). Existing folders are not renamed.
 - `accuracy_report.json` → `meta` keeps its ten keys (`user`, `timestamp`, `screen_w`, `screen_h`, `view_dist_cm`, `screen_width_cm`, `n_points`, `calib_model_loaded`, `offset_mode`, `aborted`) and gains five:
 
   | Key | Meaning |
@@ -207,7 +215,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 ## Output Data
 
-Experiment data is saved to `VA_output/` **next to `VA_center_opt.exe`**. Strictly, `VA_output/` is created in the folder the program was started from: double-clicking the `.exe` or `run_debug.bat` puts it next to the `.exe`, but a shortcut whose "Start in" folder is elsewhere does not (tracker REQ-0042).
+Experiment data is saved to `VA_output/` (VF: `VF_output/`) **next to `VA_center_opt.exe`**, also when the program is started from a shortcut or another folder (since 1.13.0; before, these two folders and the `va_crash_log.txt` / `vf_crash_log.txt` / `va_trial_crash_log.txt` files went to the folder the program was started from). Run from source, the program folder is the folder of `VA_center_opt.py`, or the folder in the environment variable `NTUH_APP_DIR`.
 
 ### Session Folder
 
@@ -215,7 +223,7 @@ Each session creates a timestamped folder:
 
 ```
 VA_output/
-  VA_{username}_sess1_{date}_{time}/
+  VA_{User Name}_sess{run}_{date}_{time}/     - run = Run (第幾次); always sess1 before 1.13.0
     webcam_gaze_data.csv        - Webcam gaze coordinates per frame
     sol_gaze_data.csv           - Sol gaze coordinates per frame
     webcam_video.mp4            - Webcam recording

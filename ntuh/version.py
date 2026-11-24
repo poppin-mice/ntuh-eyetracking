@@ -187,6 +187,22 @@ VA_center_opt
            profile it saved, and whether the save worked. New result files va_result.json and
            vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
            scores a session again from its own files into a separate _derived folder.
+    1.13.0 Start screen (B-D09 part a): the free-text User Name is replaced by Subject Code
+           (format-checked: default ^[A-Za-z]{1,3}\d{2,3}$, settings key subject_code_regex;
+           spaces and non-ASCII letters always refused), Condition (C1-C5, the accuracy test's
+           list), Run (pre-selected: sessions of the same subject, condition and test today + 1;
+           another choice is logged) and Collection (kept for the day). The User Name is now
+           read-only, made from Subject Code and Condition (s01 + C3 -> s01_c3), so existing
+           profiles named s01_c3_... are still found. VA/VF folders carry the run number
+           (VA_s01_c3_sess2_...; was always sess1); the accuracy-test folder is
+           <User Name>_<date>_<time> (s01_c3_..., never s01_c3_c3_...). Start Calibration needs a
+           Condition and locks Subject Code and Condition until that condition's accuracy test is
+           completed (Unlock ends it early, logged); the accuracy test needs a Condition, and its
+           start dialog refuses a condition other than the General tab's. VA_output/, VF_output/
+           and the crash logs are written under the program folder, wherever the program is
+           started from (NTUH_APP_DIR overrides it for a run from source). Fix: the VF crash
+           dialog named va_crash_log.txt instead of vf_crash_log.txt. session_meta.json gains
+           site.collection_label, condition.repeat_index and condition.repeat_index_computed.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -227,6 +243,11 @@ calibration
            follows at once.
     1.3.0  Everything the program prints is kept in logs/console_<time>.log next to the exe
            (session bundle v1, doc/session_bundle.md).
+    1.5.0  The profile folder name is cleaned by the same rule as VA_center_opt's
+           (identity.safe_code): whitespace -> '_', then only letters, digits, '.', '_', '-'.
+           Codes give the same folder as before; a name with other characters (e.g. '/') no
+           longer creates sub-folders. A blank name gives default_<n>pt (was _<n>pt). The
+           program folder comes from the shared resolver (NTUH_APP_DIR for a run from source).
 replayer
     1.0.0  Baseline: versioning introduced.
     1.1.0  A "Font" spinner in the menu-bar corner, applied live and remembered between runs
@@ -272,8 +293,8 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.9.0",
-    "calibration": "1.3.0",
+    "VA_center_opt": "1.13.0",
+    "calibration": "1.5.0",
     "replayer": "1.2.0",
 }
 

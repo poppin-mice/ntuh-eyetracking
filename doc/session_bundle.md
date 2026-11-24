@@ -13,11 +13,14 @@ Participants are referred to by **code only** everywhere.
 
 | Test | Folder | Since |
 |------|--------|-------|
-| VA | `VA_output/VA_<User Name>_sess1_<date>_<time>/` | 1.7.0 |
-| VF | `VF_output/VF_<User Name>_sess1_<date>_<time>/` | 1.7.0 |
+| VA | `VA_output/VA_<User Name>_sess<run>_<date>_<time>/` (always `sess1` before 1.13.0) | 1.7.0 |
+| VF | `VF_output/VF_<User Name>_sess<run>_<date>_<time>/` (always `sess1` before 1.13.0) | 1.7.0 |
 | Accuracy test | `accuracy_test/<User Name>_<date>_<time>/` | 1.7.0 |
 | Sol 2D offset calibration | `calibration_sessions/<User Name>_<date>_<time>/` | 1.9.0 |
 
+Since 1.13.0 the User Name is made from the Subject Code and Condition fields (`s01` + C3 →
+`s01_c3`) and every folder is under the program folder, whatever folder the program was started from.
+The names are built in one place, `FOLDER_SCHEME` in `ntuh/common/identity.py`.
 Practice mode writes no folder and therefore no bundle. The Sol 3D offset calibration does not write
 a folder yet.
 
@@ -29,7 +32,7 @@ a folder yet.
 | `events.csv` | always | Operator and program events, including what happened since the previous session |
 | `console.log` | always | What the program printed during the session, each line with the time |
 | `crash_log.txt` | only after an exception | Time, where it happened and the traceback |
-| `*_crash_log.txt` | only after an exception | Copies of the crash logs the app writes to its working folder |
+| `*_crash_log.txt` | only after an exception | Copies of the crash logs the app writes to the program folder (before 1.13.0: its working folder) |
 | `va_result.json`, `vf_result.json` | VA / VF, *1.9.0* | The final result, as the result screen shows it |
 | `calib_profile_snapshot.json` | *1.9.0* | Byte copy of the Sol offset profile the test applied (only if one was loaded), or of the profile a calibration run saved |
 | `calib_profiles/<role>__<file>` | *1.9.0* | Byte copies of the other calibration profiles the test loaded |
@@ -64,11 +67,13 @@ A `crashed` session also needs `crash_log.txt`.
 | `abort_reason` | `operator_q`, `operator_esc`, `window_close`, `worker_failed`, `stimulus_image_missing`, `stimulus_image_unreadable`, `superseded_by_new_session`, `not_finished_by_flow` (the test returned without closing its record), or `exception:<type>: <message>` |
 | `software` | `app`, `app_version`, `app_versions` (all three apps), `build_id` (git short SHA), `commit_date`, `build_date`, `dirty` (built with uncommitted changes), `frozen` (exe or source), `python_version`, `sol_sdk_version`, `chronus_remote_api_version` (once Sol was connected) |
 | `site.laptop_id` | First 8 hex characters of sha256(computer name). The name itself is never stored |
+| `site.collection_label` | The **Collection** field (收測場次), `null` when empty. *1.13.0* |
 | `operator.operator_code` | The **Operator Code** field on the General tab |
-| `subject.subject_code` | Parsed from the User Name (`s01_c3` → `s01`) |
-| `condition.condition_code`, `condition.take` | Parsed from the User Name (`s05_c5-1` → `C5`, take `1`) |
-| `user_name_legacy` | The User Name exactly as typed |
-| `identity_source` | `parsed_from_user_name` until validated identity fields exist |
+| `subject.subject_code` | The **Subject Code** field (*1.13.0*); before, parsed from the User Name (`s01_c3` → `s01`) |
+| `condition.condition_code`, `condition.take` | The **Condition** field (*1.13.0*; the accuracy test: the condition of its start dialog); before, parsed from the User Name (`s05_c5-1` → `C5`, take `1`). `take` is only parsed from the User Name, so it is `null` since 1.13.0 |
+| `condition.repeat_index`, `condition.repeat_index_computed` | *1.13.0*. The run number used (VA/VF: the `sess<N>` of the folder) and the one the program computed (sessions of the same subject, condition and test that day + 1). They differ when the operator chose another run number. `null` before 1.13.0 |
+| `user_name_legacy` | The User Name: as typed before 1.13.0, made from Subject Code and Condition since |
+| `identity_source` | `start_screen` (the validated fields, *1.13.0*) or `parsed_from_user_name` |
 | `sol_builtin_calibration` | *1.9.0*. See [Sol built-in calibration](#sol-built-in-calibration) |
 | `our_calibration` | *1.9.0*, VA / VF / accuracy test. See [Calibration profiles](#calibration-profiles) |
 | `calibration_result` | *1.9.0*, calibration run. See [Sol calibration runs](#sol-calibration-runs) |
@@ -192,6 +197,8 @@ detail_json`. `pc_timestamp_ms` is the PC clock in milliseconds since 1970, the 
 | `session_start`, `session_end` | | `kind`, `app` / `status`, `abort_reason` |
 | `app_start` | The settings window opened | `user_name`, `calib_dir` |
 | `user_name_changed` | The User Name changed (logged once it has settled, not per keystroke) | `old`, `new` |
+| `identity_locked`, `identity_unlocked` | *1.13.0*. Start Calibration locked Subject Code and Condition; the lock ended because that condition's accuracy test completed, or the operator pressed Unlock | `subject_code`, `condition_code` / `reason` (`accuracy_test_completed`, `operator`), `operator_code` |
+| `repeat_index_manual` | *1.13.0*. A VA/VF test started with a run number other than the computed one | `computed`, `chosen` |
 | `calib_dir_changed` | The Calibration Folder changed | `old`, `new`, `reason`: `operator`, or `fallback_anonymous_9pt` when Start Test replaced it |
 | `clear_offset` | Clear Offset was pressed | `method` (2D / 3D), `user_name`, `file`, `existed`, `cleared` |
 | `profile_loaded`, `profile_missing` | *1.9.0*. A calibration profile was looked for, by a test or by the gaze preview | `role`, `applied`, `looked_for_path`, `exists`, `present`. From the preview only `role`, `where`, `looked_for_path` |
@@ -229,8 +236,8 @@ The Sol child process has no console of its own; what it reports to the main pro
 - Paths are stored relative to the program folder, or with the user folder written as `%USERPROFILE%`.
   The console log, the crash logs (also the copied `*_crash_log.txt`) and free text in an event
   (an error message) replace the user folder the same way.
-- Use codes in the User Name, Operator Code and Chronus participant code fields: they are stored as
-  typed. The copies of calibration profiles hold the User Name they were saved under.
+- Use codes in the Subject Code, Operator Code, Collection and Chronus participant code fields: they
+  are stored as typed (the Subject Code is checked: no spaces, no non-ASCII letters). The copies of calibration profiles hold the User Name they were saved under.
 
 ## Checking bundles
 
