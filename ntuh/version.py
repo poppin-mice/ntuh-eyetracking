@@ -149,6 +149,22 @@ VA_center_opt
            negatives already), so a low-VA subject gets few or no catch trials instead of a
            block of them at the end; only what is still owed is forced in when the staircase
            ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
+    1.6.0  Accuracy Test: a required Condition (C1-C5) in a new start dialog decides whether our
+           Sol 2D offset profile is used. C3/C5 no longer start silently without it (4 of 14
+           C3/C5 tests in one field session ran on raw gaze unnoticed): a missing profile is an
+           error dialog, and continuing without calibration needs the operator code and is
+           recorded. C1/C2/C4 ignore a profile that exists. The status is shown in the start
+           dialog, as a banner with a status dot on the examiner view, on the subject-screen
+           bar and in the result dialog (a warning when expected but not applied, or applied
+           but corrected == raw). accuracy_report.json meta gains condition_code,
+           our_calibration_expected, profile_path, profile_calibration_timestamp and gate; the
+           ten existing keys are unchanged. The report folder name gains the condition:
+           accuracy_test/<User Name>_<condition>_<date>_<time> (was <User Name>_<date>_<time>).
+           Fix: a 2D offset calibration whose profile could not be written still said
+           "Calibration Complete". It now says "Calibration NOT saved" with the path and keeps
+           the model in memory for the accuracy test that follows.
+           Fix: "Last Calibrated" kept the previous user's time when the new user had no
+           profile (2D and 3D); it now follows the current user and gaze method.
     1.7.0  Session bundle v1, part 1 (doc/session_bundle.md): every VA, VF and accuracy-test
            folder now carries session_meta.json (program version and build, the settings the
            test ran with, subject / condition / operator as separate fields, start and end

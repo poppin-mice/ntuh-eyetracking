@@ -156,6 +156,14 @@ def monitor_dpi_scale(x, y):
         return None
 
 
+def centered_on_monitor_at(monitors, px, py, width, height):
+    """Top-left (x, y) that centres a width x height window on the monitor containing the point
+    (px, py); the first monitor when none contains it. Physical pixels, as get_monitor_info_windows()."""
+    m = next((m for m in monitors if m['x'] <= px < m['x'] + m['width']
+              and m['y'] <= py < m['y'] + m['height']), monitors[0])
+    return m['x'] + (m['width'] - width) // 2, m['y'] + (m['height'] - height) // 2
+
+
 def screen_options(monitors):
     """Screen-picker labels for a monitor list: "<index>: <name> (<w>x<h>)".
 
