@@ -8,6 +8,7 @@ import math
 import os
 import time
 
+from ntuh.common.app_env import APP_DIR
 from ntuh.recording.session_bundle import sha256_file
 from ntuh.sol.accuracy_test import px_per_cm_of
 
@@ -36,6 +37,14 @@ def frame_at(durations_ms, t_s):
         if t < d:
             return i
         t -= d
+
+
+def resolve(path, app_dir=None):
+    """`path` as given, or under the program folder when a relative path is not found from the
+    working directory: the program may be started from a shortcut or another folder, and the
+    default stimulus_images/... must not turn into the ring because of that."""
+    alt = os.path.join(app_dir or APP_DIR, path)
+    return alt if not os.path.isabs(path) and not os.path.isfile(path) and os.path.isfile(alt) else path
 
 
 def draw_ring(win, center, col):
@@ -94,6 +103,7 @@ def load(path, size, center_dot=False):
     path = (path or "").strip()
     if not path:
         return Sprite(RING)
+    path = resolve(path)
     if not os.path.isfile(path):
         print(f"[Target] not found, using the ring: {path}")
         return Sprite(RING, warning="target_image_missing", requested=path)

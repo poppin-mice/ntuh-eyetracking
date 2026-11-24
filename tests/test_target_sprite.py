@@ -4,6 +4,7 @@
 The pure logic needs neither Pillow nor pygame; the picture tests skip without them (CI)."""
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -46,6 +47,18 @@ def _meta(bundle):
 
 def _events(bundle):
     return (bundle.folder / "events.csv").read_text(encoding="utf-8")
+
+
+def test_a_relative_path_is_also_looked_for_in_the_program_folder(tmp_path):
+    """Started from a shortcut, the working directory is not the program folder: the default
+    stimulus_images/... must still be found there."""
+    (tmp_path / "stimulus_images").mkdir()
+    picture = tmp_path / "stimulus_images" / "t01_target.png"
+    picture.write_bytes(b"x")
+    rel = "stimulus_images/t01_target.png"                      # not under the tests' working directory
+    assert Path(ts.resolve(rel, tmp_path)) == picture
+    assert ts.resolve("stimulus_images/nope.png", tmp_path) == "stimulus_images/nope.png"
+    assert ts.resolve(str(picture), tmp_path / "elsewhere") == str(picture)   # absolute: as given
 
 
 def test_empty_path_is_the_ring_without_a_warning(bundle_app):
