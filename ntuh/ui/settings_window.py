@@ -40,6 +40,7 @@ from ntuh.ui.calib_status import draw_calib_status
 from ntuh.sol import calib_gate
 from ntuh.common import identity
 from ntuh.sol import offset_choice
+from ntuh.sol import sol2d_profiles
 from ntuh.tracking.sol_session import run_sol_worker
 
 try:
@@ -51,7 +52,7 @@ except ImportError:
 try:
     from ntuh.sol.offset_calibration_2d import (
         Sol2DOffsetCalibrator, Sol2DOffsetModel,
-        load_sol_2d_offset, save_sol_2d_offset, clear_sol_2d_offset, get_sol_2d_offset_path,
+        load_sol_2d_offset, save_sol_2d_offset,
         sample_stats, calib_point_rows, write_calib_points,
         CALIBRATION_POSITIONS_2D, compute_safe_calibration_positions,
         OFFSET_MODE_PIXEL, OFFSET_MODE_ANGULAR, OFFSET_MODE_SCREEN,
@@ -398,7 +399,7 @@ class SettingsWindow(tk.Tk):
         # Calibration folder (webcam-specific)
         pad = self.ui_pad
         grp_calib = ttk.LabelFrame(frame, text="Calibration"); grp_calib.pack(fill="x", pady=(0, 5))
-        ttk.Label(grp_calib, text="Calibration Folder:", font=label_font).grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(grp_calib, text="Calibration Folder (webcam only):", font=label_font).grid(row=0, column=0, sticky="w", **pad)
         cdir_frame = ttk.Frame(grp_calib); cdir_frame.grid(row=0, column=1, sticky="w", **pad)
         ttk.Entry(cdir_frame, textvariable=self.calib_dir_var, font=entry_font, width=40).pack(side="left")
         def _browse_calib_dir():
@@ -1088,14 +1089,15 @@ Controls: SPACE = Record point, Q = Cancel"""
     def _pick_va_offset_profile(self):
         """Pick the Sol 2D offset profile VA/VF apply: from the Sol profile folder only, shown
         with its user name, time and points; one not made today needs a confirm."""
-        folder = self.calib_dir_var.get().strip() or "calibration_profiles"
-        path = filedialog.askopenfilename(parent=self, initialdir=folder, title="Sol offset for VA/VF",
-                                          filetypes=[("Sol 2D offset profile", "*" + offset_choice.SUFFIX)])
+        folder = sol2d_profiles.profile_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        path = filedialog.askopenfilename(parent=self, initialdir=str(folder), title="Sol offset for VA/VF",
+                                          filetypes=[("Sol 2D offset profile", "*.json")])
         if not path:
             return
         choice = offset_choice.choose({"enable_sol": True, "sol_gaze_method": "2D",
                                        offset_choice.SETTING: path})
-        error = offset_choice.pick_error(path, folder) or choice["load_error"]
+        error = offset_choice.pick_error(path) or choice["load_error"]
         if error:
             messagebox.showerror("Sol offset for VA/VF", f"{path}\n\n{error}")
             return
@@ -1103,7 +1105,8 @@ Controls: SPACE = Record point, Q = Cancel"""
         old = not offset_choice.made_today(s["calibration_timestamp"])
         if old and not messagebox.askyesno(
                 "Sol offset for VA/VF",
-                f"這個校正檔不是今天做的 / This profile was NOT made today:\n\n{Path(path).name}\n"
+                f"這個校正檔不是今天做的 / This profile was NOT made today:\n\n{Path(path).name}"
+                f"{'  (舊格式 / legacy)' if s['legacy_profile'] else ''}\n"
                 f"user {s['username']}, {s['n_points']} pts, {s['calibration_timestamp']}\n\n"
                 f"仍要在 VA/VF 套用？ Apply it to VA/VF anyway?"):
             return
@@ -1149,8 +1152,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                 self.lbl_sol_2d_offset_status.config(text="N/A (install scikit-learn)")
             return
 
-        username = self.user_var.get().strip() or "anonymous"
-        offset_data = load_sol_2d_offset(username, Path(self.calib_dir_var.get()))
+        offset_data, path, _ = self._load_sol_2d_profile()
 
         if offset_data and offset_data.get('model'):
             num_points = offset_data.get('num_calibration_points', 0)
@@ -1161,7 +1163,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             else:
                 method_label = "Calibrated (IDW)"
             self.lbl_sol_2d_offset_status.config(text=method_label)
-            self.lbl_sol_2d_offset_points.config(text=f"({num_points} pts)")
+            self.lbl_sol_2d_offset_points.config(text=f"({num_points} pts, {path.name})")
         else:
             timestamp = None
             self.lbl_sol_2d_offset_status.config(text="Not calibrated")
@@ -1185,19 +1187,31 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.lbl_sol_offset_connect_note.config(text="(Connect Sol glasses first)")
 
     def clear_sol_2d_offset(self):
-        """Clear the 2D Sol offset calibration."""
+        """Clear the 2D Sol offset calibration: delete the profile the selection rule picks for
+        this subject and condition, so the next one back (if any) is picked. A legacy profile is
+        never deleted. (#17 replaces the delete with a confirm and a move to deleted/.)"""
         if not SOL_2D_OFFSET_AVAILABLE:
             return
 
         username = self.user_var.get().strip() or "anonymous"
         self._note_identity_changes()
-        path = get_sol_2d_offset_path(username, Path(self.calib_dir_var.get()))
+        _, path, found = self._load_sol_2d_profile()
         existed = path.exists()
-        cleared = clear_sol_2d_offset(username, Path(self.calib_dir_var.get()))
+        cleared = False
+        if found and not found["legacy_profile"]:
+            try:
+                path.unlink()
+                cleared = True
+            except OSError as e:
+                print(f"[Sol2DOffset] Failed to clear: {e}")
         session_bundle.app_event("clear_offset", method="2D", user_name=username, file=str(path),
-                                 existed=existed, cleared=bool(cleared))
+                                 existed=existed, cleared=cleared,
+                                 legacy_profile=bool(found and found["legacy_profile"]))
         self.update_sol_2d_offset_display()
-        messagebox.showinfo("2D Offset Cleared", "2D gaze offset calibration has been cleared.")
+        messagebox.showinfo("2D Offset Cleared",
+                            f"2D gaze offset calibration has been cleared:\n{path.name}" if cleared else
+                            f"Nothing cleared (a legacy profile is never deleted):\n{path.name}" if found else
+                            "Nothing to clear: no profile for this subject and condition.")
 
     def start_sol_2d_offset_calibration(self):
         """Start the 2D Sol offset calibration process."""
@@ -1442,9 +1456,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         self._note_identity_changes()
         view_dist_cm = self.safe_get_float(self.view_dist_cm_var, 60.0)
         screen_width_cm = self.safe_get_float(self.scr_width_cm_var, 53.0)
+        # The run folder's name is the calib_session_id, and the name of the profile it saves.
+        calib_folder = identity.output_root("sol2d_calibration") / identity.session_folder_name(
+            "sol2d_calibration", username, None, time.strftime('%Y%m%d_%H%M%S'))
+        new_profile = sol2d_profiles.profile_path(calib_folder.name)
         bundle = session_bundle.start(
-            identity.output_root("sol2d_calibration") / identity.session_folder_name(
-                "sol2d_calibration", username, None, time.strftime('%Y%m%d_%H%M%S')),
+            calib_folder,
             "sol2d_calibration", user_name=username, operator_code=self.operator_code_var.get(),
             identity=self._identity_fields("sol2d_calibration"),
             display={"screen_w_px": screen_w, "screen_h_px": screen_h, "screen_width_cm": screen_width_cm,
@@ -1460,6 +1477,12 @@ Controls: SPACE = Record point, Q = Cancel"""
         shown_points = []           # per point shown: name, target and the statistics of its samples
         collected_gaze_valid = []   # gaze_2d validity of each collected sample
         abort_key = None            # "q" / "window_close" when the operator cancelled
+        # The per-point record (calib_points.csv, and the profile's per_point). LOO errors in
+        # degrees only in screen mode, where px are screen px.
+        from ntuh.sol.accuracy_test import px_to_deg
+        to_deg = ((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
+                  if calibrator.offset_mode == OFFSET_MODE_SCREEN else None)
+        point_rows = None
 
         try:
             while running and not calibrator.calibration_complete:
@@ -1815,13 +1838,18 @@ Controls: SPACE = Record point, Q = Cancel"""
                     # Save the model
                     model = calibrator.get_model()
                     n_pts = len(model.calibration_points)
+                    point_rows = calib_point_rows(shown_points, model, to_deg)
                     saved = save_sol_2d_offset(
                         username,
-                        Path(self.calib_dir_var.get()),
+                        None,
                         model,
                         screen_w, screen_h,
                         calibrator.target_image_path,
-                        error_out=save_errors
+                        error_out=save_errors,
+                        filepath=new_profile,       # a new file per run, never overwritten
+                        extra=sol2d_profiles.profile_fields(
+                            calib_folder.name, self.subject_code_var.get(), self._condition_code(),
+                            session_bundle.software_block("VA_center_opt"), point_rows)
                     )
                     # A profile that did not reach the disk must not read as success, but the
                     # subject has just sat through the calibration: keep the trained model in
@@ -1830,7 +1858,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                         'username': username, 'model': model, 'num_calibration_points': n_pts,
                         'calibration_timestamp': time.strftime("%Y-%m-%dT%H:%M:%S"), 'unsaved': True}
                     kind, title, text = calib_gate.calibration_done_dialog(
-                        saved, n_pts, self._sol_2d_profile_path(username))
+                        saved, n_pts, new_profile)
                     show = messagebox.showinfo if kind == "info" else messagebox.showerror
                     self.after(0, lambda: show(title, text))
                 else:
@@ -1838,8 +1866,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                     self.after(0, lambda: messagebox.showerror("Calibration Failed",
                         "Failed to train the offset model. Please try again."))
                 # In the record: saved or not, why not, and a copy of the profile as written.
-                bundle.profile_written("sol2d_offset",
-                                       get_sol_2d_offset_path(username, self.calib_dir_var.get(), create=False),
+                bundle.profile_written("sol2d_offset", new_profile,
                                        saved, error="; ".join(save_errors) or None, trained=bool(trained),
                                        points_recorded=len(calibrator.model.calibration_points))
             else:
@@ -1854,13 +1881,11 @@ Controls: SPACE = Record point, Q = Cancel"""
 
         finally:
             # The calibration record: calib_points.csv (also for a cancelled or crashed run), then
-            # the session is closed. LOO errors in degrees only in screen mode, where px are screen px.
+            # the session is closed.
             try:
-                from ntuh.sol.accuracy_test import px_to_deg
-                to_deg = ((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
-                          if calibrator.offset_mode == OFFSET_MODE_SCREEN else None)
                 write_calib_points(bundle.folder / "calib_points.csv",
-                                   calib_point_rows(shown_points, calibrator.model, to_deg))
+                                   point_rows if point_rows is not None
+                                   else calib_point_rows(shown_points, calibrator.model, to_deg))
             except Exception as e:
                 print(f"[2D Cal] Could not write calib_points.csv: {e}")
             if calibrator.calibration_complete:
@@ -1944,16 +1969,13 @@ Controls: SPACE = Record point, Q = Cancel"""
         preview_2d_offset_model = None
         if SOL_2D_OFFSET_AVAILABLE:
             username = self.user_var.get().strip() or 'anonymous'
-            calib_dir = Path(self.calib_dir_var.get())
-            from ntuh.sol.offset_calibration_2d import get_sol_2d_offset_path
-            offset_path = get_sol_2d_offset_path(username, calib_dir)
+            preview_2d_offset_data, offset_path, _ = self._load_sol_2d_profile()
             print(f"[Sol Preview] Looking for 2D offset: {offset_path} (exists: {offset_path.exists()})")
-            preview_2d_offset_data = load_sol_2d_offset(username, calib_dir)
             if preview_2d_offset_data and preview_2d_offset_data.get('model') and preview_2d_offset_data['model'].is_trained:
                 preview_2d_offset_model = preview_2d_offset_data['model']
                 print(f"[Sol Preview] Loaded 2D offset model for user '{username}' ({len(preview_2d_offset_model.calibration_points)} points)")
             else:
-                print(f"[Sol Preview] No 2D offset model found for user '{username}' in {calib_dir}")
+                print(f"[Sol Preview] No 2D offset model found for user '{username}' in {offset_path.parent}")
             session_bundle.app_event("profile_loaded" if preview_2d_offset_model else "profile_missing",
                                      role="sol2d_offset", where="preview", looked_for_path=str(offset_path))
 
@@ -2257,18 +2279,11 @@ Controls: SPACE = Record point, Q = Cancel"""
             messagebox.showwarning("Webcam disabled", "Enable the Webcam tracker first (General tab).")
             return
 
-        # Resolve calibration profile (fallback to anonymous_9pt like the test does)
-        calib_dir = self.calib_dir_var.get().strip()
-        calib_path = Path(calib_dir) if calib_dir else None
-        if not calib_path or not calib_path.exists() or not (calib_path / "svr_x.xml").exists():
-            default_profile = APP_DIR / "calibration_profiles" / "anonymous_9pt"
-            if default_profile.exists() and (default_profile / "svr_x.xml").exists():
-                calib_path = default_profile
-                print(f"[Webcam Preview] Using default calibration profile: {default_profile}")
-            else:
-                messagebox.showerror("Calibration required",
-                                     "No webcam calibration profile found.\nRun webcam calibration first.")
-                return
+        # The webcam model: the operator chooses when the Calibration Folder has none, as at Start.
+        calib_path = self._webcam_model_folder("webcam_preview")
+        if not calib_path:
+            return
+        calib_path = Path(calib_path)
 
         # Release the settings camera preview so GazeFollower can open the webcam
         self.stop_preview()
@@ -2439,23 +2454,55 @@ Controls: SPACE = Record point, Q = Cancel"""
             self.btn_start.configure(state="disabled")
             self.btn_practice.configure(state="disabled")
 
-    def _sol_2d_profile_path(self, username):
-        """The Sol 2D offset profile file this User Name maps to (it may not exist)."""
-        calib_dir = Path(self.calib_dir_var.get())
-        try:
-            return get_sol_2d_offset_path(username, calib_dir)
-        except OSError:        # the folder does not exist and cannot be created
-            return calib_dir / f"{username}_sol_2d_offset.json"
-
-    def _load_sol_2d_profile(self, username):
-        """This User Name's 2D offset profile: the saved file, else a calibration from this run
-        that could not be saved (see _run_sol_2d_offset_calibration). None if there is neither."""
-        data = (load_sol_2d_offset(username, Path(self.calib_dir_var.get()))
-                if SOL_2D_OFFSET_AVAILABLE else None)
+    def _load_sol_2d_profile(self):
+        """(profile, path, found) for this subject and condition. found: the summary of the file
+        the selection rule picks (ntuh/sol/sol2d_profiles.py), None if none; profile: that file
+        loaded, else a calibration from this run that could not be saved (see
+        _run_sol_2d_offset_calibration), else None; path: the file, else where it was looked for."""
+        username = self.user_var.get().strip() or "anonymous"
+        found = sol2d_profiles.find(self.subject_code_var.get(), self._condition_code())
+        path = (Path(found["path"]) if found
+                else sol2d_profiles.profile_dir() / f"{identity.safe_code(username)}_*.json")
+        data = (load_sol_2d_offset(None, None, filepath=path)
+                if found and SOL_2D_OFFSET_AVAILABLE else None)
         if calib_gate.profile_usable(data):
-            return data
+            return data, path, found
         kept = getattr(self, '_unsaved_sol_2d', None)
-        return kept if kept and kept['username'] == username else None
+        return (kept if kept and kept['username'] == username else None), path, found
+
+    def _webcam_model_folder(self, where):
+        """The webcam model folder to use, or None = do not start. A Calibration Folder without a
+        model is never replaced silently: the operator chooses (sol2d_profiles.webcam_choice), the
+        choice is logged and kept for the session record, and a new folder becomes the setting."""
+        folder = self.calib_dir_var.get().strip()
+        default = APP_DIR / "calibration_profiles" / "anonymous_9pt"
+        answer = picked = None
+        if not sol2d_profiles.has_webcam_model(folder):
+            yes = messagebox.askyesnocancel(
+                "網路攝影機模型 / Webcam model",
+                f"Calibration Folder 裡沒有網路攝影機模型 / No webcam model in the Calibration Folder:\n"
+                f"{folder or '(empty)'}\n\n"
+                f"是 (Yes)：使用預設模型 / use the default model {default.name}\n"
+                f"否 (No)：選擇模型資料夾 / pick a model folder\n"
+                f"取消 (Cancel)：不開始，先做網路攝影機校正 / do not start: run the webcam calibration first",
+                icon=messagebox.WARNING, parent=self)
+            answer = None if yes is None else "default" if yes else "pick"
+            if answer == "pick":
+                picked = filedialog.askdirectory(parent=self, title="Webcam model folder",
+                                                 initialdir=str(self.default_calib_dir))
+        choice, use = sol2d_profiles.webcam_choice(folder, default, answer, picked)
+        self._webcam_model_choice = choice
+        if choice != "calibration_folder":
+            session_bundle.app_event("webcam_model_choice", where=where, choice=choice,
+                                     calib_dir=folder or None, used=use)
+        if choice == "default_model_missing" or (choice == "picked_folder_without_model" and picked):
+            messagebox.showerror("網路攝影機模型 / Webcam model",
+                                 f"那裡沒有網路攝影機模型 (svr_x.xml) / no webcam model there:\n"
+                                 f"{default if answer == 'default' else picked}", parent=self)
+        if use and use != folder:
+            self.calib_dir_var.set(use)
+            self._note_identity_changes(reason=choice)
+        return use
 
     def _ask_accuracy_condition(self, username, profile, profile_name):
         """Start dialog of the accuracy test: the operator must pick the condition (there is no
@@ -2524,12 +2571,24 @@ Controls: SPACE = Record point, Q = Cancel"""
     def _accuracy_gate(self, username):
         """Ask for the condition and decide whether our calibration profile is applied.
         Returns (gate, profile, profile_path), or None when the test must not start."""
-        profile = self._load_sol_2d_profile(username)
-        profile_path = self._sol_2d_profile_path(username)
+        profile, profile_path, found = self._load_sol_2d_profile()
         condition = self._ask_accuracy_condition(username, profile, profile_path.name)
         if condition is None:
             return None
         gate = calib_gate.decide_gate(condition, profile)
+        if gate.apply and found and not offset_choice.made_today(found["calibration_timestamp"]):
+            go = messagebox.askyesno(
+                f"{condition}: 校正檔不是今天做的 / profile NOT made today",
+                f"{profile_path.name}{'  (舊格式 / legacy)' if found['legacy_profile'] else ''}\n"
+                f"{found['calibration_timestamp']}\n\n"
+                f"仍要套用？按「否」返回，先重做 5 點校正。\n"
+                f"Apply it anyway? No = go back and run the 5-point calibration first.",
+                icon=messagebox.WARNING, default=messagebox.NO, parent=self)
+            session_bundle.app_event("profile_not_today", path=str(profile_path),
+                                     calibration_timestamp=found["calibration_timestamp"],
+                                     legacy_profile=found["legacy_profile"], confirmed=go)
+            if not go:
+                return None
         if not gate.may_start:
             print(f"[Accuracy] BLOCKED - {gate.message} (looked for {profile_path})")
             if not messagebox.askyesno(f"{condition}: 找不到校正檔 / calibration profile missing",
@@ -2670,9 +2729,7 @@ Controls: SPACE = Record point, Q = Cancel"""
                              "points_per_ring": 8, "include_corners": True},
             config=self._collect_gui_values())
         if SOL_2D_OFFSET_AVAILABLE:      # the profile this test looked for, and whether it is applied
-            bundle.profile("sol2d_offset",
-                           get_sol_2d_offset_path(username, self.calib_dir_var.get(), create=False),
-                           offset_model is not None, applied=True)
+            bundle.profile("sol2d_offset", profile_path, offset_model is not None, applied=True)
         abort_reason = [None]
 
         def note_abort(key, reason):
@@ -3319,32 +3376,22 @@ Controls: SPACE = Record point, Q = Cancel"""
         # The profile picked for VA/VF stays when the User Name changes: one made under another
         # name (the previous subject's) is applied only after a confirm (REQ-0031).
         picked = getattr(self, 'sol_offset_profile', "") if self.enable_sol_var.get() else ""
-        other = offset_choice.other_user(picked, self.user_var.get().strip() or "anonymous")
+        other = offset_choice.other_user(picked, self.subject_code_var.get())
         if other is not None:
             go = messagebox.askyesno(
                 "Sol offset for VA/VF",
-                f"選的校正檔是「{other}」的，不是目前的 User Name / The picked profile was made "
-                f"under User Name '{other}', not the current one:\n\n{Path(picked).name}\n\n"
+                f"選的校正檔是「{other}」的，不是目前的受試者 / The picked profile was made "
+                f"for '{other}', not the current subject:\n\n{Path(picked).name}\n\n"
                 f"仍要套用並開始？ Apply it and start anyway?\n(No = 不開始 / do not start)")
             session_bundle.app_event("profile_selected", where="start_confirm", path=picked,
                                      username=other, other_user_confirmed=go)
             if not go:
                 return
 
-        # Validation — fallback to anonymous_9pt if no valid calibration profile
-        if self.enable_webcam_var.get():
-            calib_dir = self.calib_dir_var.get().strip()
-            calib_path = Path(calib_dir) if calib_dir else None
-            if not calib_path or not calib_path.exists() or not (calib_path / "svr_x.xml").exists():
-                # Fallback to default anonymous_9pt profile
-                default_profile = APP_DIR / "calibration_profiles" / "anonymous_9pt"
-                if default_profile.exists() and (default_profile / "svr_x.xml").exists():
-                    self.calib_dir_var.set(str(default_profile))
-                    self._note_identity_changes(reason="fallback_anonymous_9pt")
-                    print(f"[Webcam] Using default calibration profile: {default_profile}")
-                else:
-                    messagebox.showerror("Error", "Webcam enabled but no valid calibration profile found.")
-                    return
+        # The webcam model: never replaced silently when the Calibration Folder has none.
+        self._webcam_model_choice = None
+        if self.enable_webcam_var.get() and not self._webcam_model_folder("start"):
+            return
 
         sw_cm = float(self.scr_width_cm_var.get())
         dist_cm = float(self.view_dist_cm_var.get())
@@ -3370,6 +3417,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             'collection_label': self.collection_label_var.get().strip(),
             'operator_code': self.operator_code_var.get().strip(),
             'calib_dir': self.calib_dir_var.get().strip(),
+            'webcam_model_choice': self._webcam_model_choice,
             'stim_dur': self.safe_get_float(self.stim_var, 5.0),
             'pass_dur': self.safe_get_float(self.pass_dur_var, 2.0),
             'blank_dur': self.safe_get_float(self.blank_var, 1.0),

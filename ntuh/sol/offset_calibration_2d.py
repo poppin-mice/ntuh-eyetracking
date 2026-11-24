@@ -929,21 +929,6 @@ def load_sol_2d_offset(username, calib_dir, filepath=None):
         return None
 
 
-def clear_sol_2d_offset(username, calib_dir):
-    """Delete the 2D offset calibration file."""
-    filepath = get_sol_2d_offset_path(username, calib_dir)
-
-    if filepath.exists():
-        try:
-            os.remove(filepath)
-            print(f"[Sol2DOffset] Cleared calibration: {filepath}")
-            return True
-        except Exception as e:
-            print(f"[Sol2DOffset] Failed to clear: {e}")
-            return False
-    return True
-
-
 # ---------- calibration record (calib_points.csv of a calibration session) ----------
 CALIB_POINT_COLUMNS = ["point_idx", "name", "target_x", "target_y", "n", "n_valid",
                        "mean_x", "mean_y", "median_x", "median_y", "sd_x", "sd_y",

@@ -2,26 +2,19 @@
 """Our Sol offset in VA / VF: only the profile the operator picked (REQ-0031).
 
 Setting "Sol offset for VA/VF" = cfg['sol_offset_profile']: empty = OFF (the default), or the
-path of a *_sol_2d_offset.json picked from the Sol profile folder. A profile named after the
-User Name is never looked up. No Tk, no pygame, no SDK: tests/test_offset_choice.py.
+path of a profile picked from the Sol profile folder calibration_profiles/sol2d/ (or a legacy
+*_sol_2d_offset.json in calibration_profiles/, ntuh/sol/sol2d_profiles.py). A profile is never
+looked up by the User Name. No Tk, no pygame, no SDK: tests/test_offset_choice.py.
 The accuracy test keeps its own rule (ntuh/sol/calib_gate.py).
 """
-import json
 from datetime import datetime
 from pathlib import Path
 
+from ntuh.sol import sol2d_profiles
 from ntuh.sol.calib_gate import NOT_SELECTED, OK, profile_usable
 
 SETTING = "sol_offset_profile"
-SUFFIX = "_sol_2d_offset.json"
-
-
-def profile_summary(path):
-    """username, calibration_timestamp and n_points of a profile file (raises if unreadable)."""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return {"username": data.get("username"),
-            "calibration_timestamp": data.get("calibration_timestamp"),
-            "n_points": data.get("num_calibration_points")}
+profile_summary = sol2d_profiles.summary        # username, subject / condition, time, n_points ...
 
 
 def made_today(timestamp, today=None):
@@ -32,26 +25,30 @@ def made_today(timestamp, today=None):
         return False
 
 
-def other_user(path, user_name):
-    """The user name the picked profile was made under when it is not `user_name`, else None.
-    The pick stays when the User Name changes, so at Start the previous subject's profile is
+def other_user(path, subject_code):
+    """The subject the picked profile was made for when it is not `subject_code`, else None.
+    Only the subject is compared, not the condition: VA / VF may use a profile made in any
+    condition. A legacy profile whose User Name has no subject code gives that User Name.
+    The pick stays when the subject changes, so at Start the previous subject's profile is
     asked about, not applied unasked. An unreadable file is None: choose() reports that one."""
     try:
-        made_for = profile_summary(path)["username"] if path else user_name
+        s = profile_summary(path) if path else {"subject_code": subject_code}
     except Exception:
         return None
-    return made_for if made_for != user_name else None
+    made_for = s["subject_code"] or s.get("username")
+    return made_for if made_for != subject_code else None
 
 
-def pick_error(path, folder):
-    """Why a picked file cannot be the VA/VF profile, or None: it must be a Sol 2D offset
-    profile directly in the Sol profile folder."""
+def pick_error(path, app_dir=None):
+    """Why a picked file cannot be the VA/VF profile, or None: it must be a profile directly in
+    the Sol profile folder, or a legacy *_sol_2d_offset.json directly in calibration_profiles/."""
     path = Path(path)
-    if not path.name.endswith(SUFFIX):
-        return f"not a Sol 2D offset profile (*{SUFFIX})"
-    if path.resolve().parent != Path(folder).resolve():
-        return f"not in the Sol profile folder {folder}"
-    return None
+    new_dir, old_dir = sol2d_profiles.profile_dir(app_dir), sol2d_profiles.legacy_dir(app_dir)
+    if path.suffix == ".json" and path.resolve().parent == new_dir.resolve():
+        return None
+    if path.name.endswith(sol2d_profiles.LEGACY_SUFFIX) and path.resolve().parent == old_dir.resolve():
+        return None
+    return f"not a Sol 2D offset profile in {new_dir} (or a legacy *{sol2d_profiles.LEGACY_SUFFIX} in {old_dir})"
 
 
 def migrate_gaze_method(saved):
@@ -87,7 +84,8 @@ def describe(choice):
     if not choice["selected"]:
         return NOT_SELECTED, "OUR CALIB: NOT APPLIED (Sol offset for VA/VF: OFF)"
     s, name = choice["summary"] or {}, Path(choice["path"]).name
-    facts = f"{name}  user {s.get('username')}  {s.get('n_points')} pts  {str(s.get('calibration_timestamp'))[:16]}"
+    facts = (f"{name}  user {s.get('username')}  {s.get('n_points')} pts  {str(s.get('calibration_timestamp'))[:16]}"
+             + ("  LEGACY" if s.get("legacy_profile") else ""))
     if choice["applied"]:
         return OK, f"OUR CALIB: APPLIED {facts}"
     return NOT_SELECTED, f"OUR CALIB: NOT APPLIED ({choice['load_error']}) {facts}"

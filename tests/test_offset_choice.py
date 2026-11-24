@@ -11,7 +11,7 @@ from datetime import date
 from pathlib import Path
 
 from ntuh.recording import session_bundle
-from ntuh.sol import offset_choice
+from ntuh.sol import offset_choice, sol2d_profiles
 from ntuh.sol.calib_gate import NOT_SELECTED, OK
 from ntuh.sol.offset_calibration_2d import Sol2DOffsetModel, save_sol_2d_offset
 
@@ -113,23 +113,35 @@ def test_a_missing_or_broken_pick_is_a_load_error(tmp_path):
     assert offset_choice.choose(_cfg(tmp_path, picked=str(bad)))["load_error"]
 
 
-def test_only_a_2d_profile_directly_in_the_profile_folder_can_be_picked(tmp_path):
-    path = _profile(tmp_path)
-    assert offset_choice.pick_error(path, tmp_path) is None
-    assert offset_choice.pick_error(path, tmp_path / "other")
-    assert offset_choice.pick_error(tmp_path / "s01_c5_sol_offset.json", tmp_path)
+def test_only_a_profile_in_the_sol_profile_folder_or_a_legacy_one_can_be_picked(tmp_path):
+    new_dir, old_dir = sol2d_profiles.profile_dir(tmp_path), sol2d_profiles.legacy_dir(tmp_path)
+    assert offset_choice.pick_error(new_dir / "s01_c5_20261124_100000.json", tmp_path) is None
+    assert offset_choice.pick_error(old_dir / "s01_c5_sol_2d_offset.json", tmp_path) is None   # legacy
+    assert offset_choice.pick_error(old_dir / "s01_c5_20261124_100000.json", tmp_path)
+    assert offset_choice.pick_error(old_dir / "anonymous_9pt" / "s01_c5_sol_2d_offset.json", tmp_path)
+    assert offset_choice.pick_error(old_dir / "s01_c5_sol_offset.json", tmp_path)
 
 
-def test_a_pick_made_under_another_user_name_is_reported(tmp_path):
-    path = str(_profile(tmp_path))                          # made under s01_c5
-    assert offset_choice.other_user(path, "s01_c5") is None
-    assert offset_choice.other_user(path, "s02_c5") == "s01_c5"
-    assert offset_choice.other_user("", "s02_c5") is None   # OFF: nothing to ask
+def test_a_pick_made_for_another_subject_is_reported(tmp_path):
+    """The subject is compared, not the condition: VA / VF may use a profile of any condition."""
+    path = str(_profile(tmp_path))                          # legacy, User Name s01_c5
+    assert offset_choice.other_user(path, "s01") is None
+    assert offset_choice.other_user(path, "s02") == "s01"
+    assert offset_choice.other_user("", "s02") is None      # OFF: nothing to ask
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    new = tmp_path / "s07_c3_20261124_100000.json"          # a new profile: its subject_code field
+    new.write_text(json.dumps({**data, "calib_session_id": new.stem, "subject_code": "s07",
+                               "condition_code": "C3"}), encoding="utf-8")
+    assert offset_choice.other_user(str(new), "s07") is None
+    assert offset_choice.other_user(str(new), "s01") == "s07"
+    anon = _profile(tmp_path, code="anonymous")             # legacy without a subject code
+    assert offset_choice.other_user(str(anon), "s01") == "anonymous"
 
 
 def test_summary_and_made_today(tmp_path):
     s = offset_choice.profile_summary(_profile(tmp_path))
     assert s["username"] == "s01_c5" and s["n_points"] == 5
+    assert s["legacy_profile"] and (s["subject_code"], s["condition_code"]) == ("s01", "C5")
     assert offset_choice.made_today(s["calibration_timestamp"])
     assert not offset_choice.made_today("2026-09-18T10:00:00", today=date(2026, 11, 24))
     assert not offset_choice.made_today(None)
