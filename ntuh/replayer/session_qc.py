@@ -187,6 +187,14 @@ def _acc_table(s):
     return cols, out
 
 
+def cal_window(s, p):
+    """The sol_gaze_data.csv rows of one calib_points.csv point: collecting, its point_idx, inside
+    its collect window (an earlier attempt the operator had to repeat is outside)."""
+    t0, t1 = float(p.get("collect_start_ms") or "-inf"), float(p.get("collect_end_ms") or "inf")
+    return [r for r in s["gaze"] if r["phase"] == "collecting" and r["target_idx"] == p["point_idx"]
+            and t0 <= float(r["pc_timestamp_ms"]) <= t1]
+
+
 def _cal_table(s):
     from ntuh.sol import stability
     from ntuh.sol.accuracy_test import _apply_homography
@@ -202,9 +210,7 @@ def _cal_table(s):
                         None if not p.get("collect_start_ms") else
                         (float(p["collect_start_ms"]) - s["t0_ms"]) / 1000.0))
             continue
-        t0, t1 = float(p.get("collect_start_ms") or "-inf"), float(p.get("collect_end_ms") or "inf")
-        win = [r for r in s["gaze"] if r["phase"] == "collecting" and r["target_idx"] == k
-               and t0 <= float(r["pc_timestamp_ms"]) <= t1]
+        win = cal_window(s, p)
         logged_est = ar._xy(p, "est") if p.get("est_x", "") != "" else None
         est, missing = logged_est, logged_est is None
         if p.get("estimator") == stability.STEADIEST:
@@ -342,3 +348,50 @@ def point_table(s):
     cols, rows = (_cal_table if s["kind"] == "cal" else _acc_table)(s)
     return {"columns": cols, "rows": [r[0] for r in rows], "flags": [r[1] for r in rows],
             "t_s": [r[2] for r in rows]}
+
+
+# ---------- calibration view ----------
+def sd_ellipse(xy):
+    """1-SD ellipse of points (n, 2): (centre x, centre y, semi-major, semi-minor, angle deg of the
+    major axis), or None for fewer than 2 points."""
+    xy = np.asarray(xy, dtype=float).reshape(-1, 2)
+    if len(xy) < 2:
+        return None
+    vals, vecs = np.linalg.eigh(np.cov(xy.T))
+    major = vecs[:, 1]
+    return (float(xy[:, 0].mean()), float(xy[:, 1].mean()), float(np.sqrt(max(vals[1], 0.0))),
+            float(np.sqrt(max(vals[0], 0.0))), float(np.degrees(np.arctan2(major[1], major[0]))))
+
+
+def cal_clouds(s):
+    """Per recorded calibration point, in screen px: the sample cloud (raw_screen of its collect
+    window, with validity), mean and median of the valid samples, their 1-SD ellipse, the target,
+    used, and the logged leave-one-out IDW error (px, "" when not computed)."""
+    out = []
+    for p in s["calib_points"]:
+        if p.get("used_x", "") == "":
+            continue
+        win = cal_window(s, p)
+        xy = np.column_stack([_num(win, "raw_screen_x"), _num(win, "raw_screen_y")]).reshape(-1, 2)
+        valid = sample_valid(win) & np.isfinite(xy).all(axis=1)
+        good = xy[valid]
+        out.append({"name": p["name"], "xy": xy, "valid": valid,
+                    "mean": tuple(good.mean(axis=0)) if len(good) else None,
+                    "median": tuple(np.median(good, axis=0)) if len(good) else None,
+                    "ellipse": sd_ellipse(good), "target": ar._xy(p, "target"), "used": ar._xy(p, "used"),
+                    "loo_px": float(p["loo_idw_err_px"]) if p.get("loo_idw_err_px", "") != "" else None})
+    return out
+
+
+def offset_field(s, w, h, nx=16, ny=9):
+    """[(x, y, dx, dy)]: the offset the session's screen-mode IDW profile adds at a grid of screen
+    points (calib_profile_snapshot.json); [] without a trained screen-mode profile."""
+    model = s["model"]
+    if model is None or not getattr(model, "is_trained", False) or getattr(model, "offset_mode", "") != "screen":
+        return []
+    out = []
+    for y in np.linspace(h / (2 * ny), h - h / (2 * ny), ny):
+        for x in np.linspace(w / (2 * nx), w - w / (2 * nx), nx):
+            cx, cy = model.predict((float(x), float(y)))
+            out.append((float(x), float(y), float(cx - x), float(cy - y)))
+    return out

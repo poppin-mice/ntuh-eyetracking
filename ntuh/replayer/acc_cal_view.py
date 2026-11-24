@@ -77,6 +77,8 @@ class ScreenCanvas(QWidget):
     0.5 s of raw (grey) and corrected (green) gaze, each sample dot red when invalid, and each
     recorded point's gaze with its error line from the target (yellow)."""
 
+    LEGEND = "grey: raw gaze  green: corrected  red dot: invalid sample  yellow: recorded point"
+
     def __init__(self, s, parent=None):
         super().__init__(parent)
         self.s = s
@@ -105,6 +107,7 @@ class ScreenCanvas(QWidget):
         k, m = self._map()
         x0, y0 = m(0, 0)
         p.fillRect(QRectF(x0, y0, self.sw * k, self.sh * k), QColor("#808080"))
+        p.setClipRect(QRectF(x0, y0, self.sw * k, self.sh * k))
         for x, y in self.markers.values():
             mx, my = m(x, y)
             p.fillRect(QRectF(mx, my, self.marker_px * k, self.marker_px * k), QColor("white"))
@@ -140,9 +143,62 @@ class ScreenCanvas(QWidget):
                 p.setBrush(QColor(color if v else "#ff1744"))
                 p.drawEllipse(QRectF(x - 2.5, y - 2.5, 5, 5))
         p.setPen(QColor("white"))
-        p.drawText(QRectF(x0 + 6, y0 + self.sh * k - 20, 600, 16), Qt.AlignmentFlag.AlignLeft,
-                   "grey: raw gaze  green: corrected  red dot: invalid sample  yellow: recorded point")
+        p.drawText(QRectF(x0 + 6, y0 + self.sh * k - 20, self.sw * k - 12, 16), Qt.AlignmentFlag.AlignLeft,
+                   self.LEGEND)
         p.end()
+
+
+class CalCanvas(ScreenCanvas):
+    """Calibration view: the IDW offset field of the saved profile as arrows (blue), and per point
+    the sample cloud, mean (+) and median (o) of the valid samples, the 1-SD ellipse, used (the
+    value trained on) and the leave-one-out residual as a dashed circle around the target."""
+
+    LEGEND = ("blue: profile offset field  purple: point samples  +: mean  o: median  ellipse: 1 SD  "
+              "yellow: target -> used, dashed: leave-one-out error")
+
+    def __init__(self, s, parent=None):
+        super().__init__(s, parent)
+        self.field = qc.offset_field(s, self.sw, self.sh)
+        self.clouds = qc.cal_clouds(s)
+
+    def paint_extra(self, p, k, m):
+        p.setPen(QPen(QColor("#4fc3f7"), 1))
+        for x, y, dx, dy in self.field:
+            (ax, ay), (bx, by) = m(x, y), m(x + dx, y + dy)
+            p.drawLine(int(ax), int(ay), int(bx), int(by))
+            p.drawEllipse(QRectF(bx - 1.5, by - 1.5, 3, 3))
+        for c in self.clouds:
+            p.setPen(Qt.PenStyle.NoPen)
+            for (x, y), v in zip(c["xy"], c["valid"]):
+                if x == x and y == y:
+                    p.setBrush(QColor("#ce93d8" if v else "#ff1744"))
+                    px, py = m(x, y)
+                    p.drawEllipse(QRectF(px - 1.5, py - 1.5, 3, 3))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            if c["ellipse"]:
+                cx, cy, a, b, ang = c["ellipse"]
+                p.save()
+                p.setPen(QPen(QColor("#ffffff"), 1))
+                p.translate(*m(cx, cy))
+                p.rotate(ang)
+                p.drawEllipse(QRectF(-a * k, -b * k, 2 * a * k, 2 * b * k))
+                p.restore()
+            if c["mean"]:
+                mx, my = m(*c["mean"])
+                p.setPen(QPen(QColor("#ffffff"), 2))
+                p.drawLine(int(mx - 6), int(my), int(mx + 6), int(my))
+                p.drawLine(int(mx), int(my - 6), int(mx), int(my + 6))
+                p.drawEllipse(QRectF(*m(*c["median"]), 0, 0).adjusted(-5, -5, 5, 5))
+            if c["target"] and c["used"]:
+                (tx, ty), (ux, uy) = m(*c["target"]), m(*c["used"])
+                p.setPen(QPen(QColor("#fdd835"), 2))
+                p.drawLine(int(tx), int(ty), int(ux), int(uy))
+                if c["loo_px"] is not None:
+                    p.setPen(QPen(QColor("#fdd835"), 1, Qt.PenStyle.DashLine))
+                    r = c["loo_px"] * k
+                    p.drawEllipse(QRectF(tx - r, ty - r, 2 * r, 2 * r))
+                    p.drawText(QRectF(tx + 8, ty + 8, 200, 16), Qt.AlignmentFlag.AlignLeft,
+                               f"{c['name']}  LOO {c['loo_px']:.0f} px")
 
 
 class AccCalView(QWidget):
@@ -165,7 +221,7 @@ class AccCalView(QWidget):
         if self.s["load_error"]:
             lay.addWidget(QLabel(f"No bundle v2 samples in this folder: {self.s['load_error']}"))
         self.split = QSplitter(Qt.Orientation.Horizontal)
-        self.screen = ScreenCanvas(self.s)
+        self.screen = (CalCanvas if self.s["kind"] == "cal" else ScreenCanvas)(self.s)
         self.split.addWidget(self.screen)
         self.split.addWidget(self._point_table())
         self.split.setSizes([900, 600])
@@ -178,6 +234,10 @@ class AccCalView(QWidget):
         controls.addWidget(self.play_btn)
         controls.addWidget(self.time_label)
         controls.addStretch(1)
+        # ponytail: scene-video panel not built - no session writes sol_video.mp4 yet (LOGGING_SPEC 5,
+        # Tier 2). When one does, add a panel to self.split here (VideoController reads that file).
+        if (self.s["folder"] / "sol_video.mp4").is_file():
+            controls.addWidget(QLabel("sol_video.mp4 present: the scene-video panel is not built yet"))
         lay.addLayout(controls)
         self.timeline = TimelineView(qc.timeline(self.s))
         self.timeline.seek.connect(self.set_time)

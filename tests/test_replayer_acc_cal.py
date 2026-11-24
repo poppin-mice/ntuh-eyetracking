@@ -4,9 +4,11 @@ on the synthetic sessions of test_accuracy_replay.py and test_calib_point_estima
 window is only built when PyQt6 is installed (not on CI). Synthetic data only."""
 import csv
 import json
+import math
 import os
 import shutil
 
+import numpy as np
 import pytest
 
 from ntuh.recording import session_bundle as sb
@@ -265,3 +267,27 @@ def test_screen_state_follows_the_session(acc):
     later = qc.screen_state(s, a1)
     p = car_read(acc / "points.csv")[0]
     assert later["done"] == [(float(p["target_x"]), float(p["target_y"]), float(p["corr_x"]), float(p["corr_y"]))]
+
+
+def test_sd_ellipse_of_known_spreads():
+    rng = np.random.default_rng(0)
+    cx, cy, a, b, ang = qc.sd_ellipse(rng.normal(0, 1, (20000, 2)) * [4.0, 1.0] + [100.0, 50.0])
+    assert (cx, cy) == pytest.approx((100.0, 50.0), abs=0.1)
+    assert (a, b) == pytest.approx((4.0, 1.0), rel=0.03) and abs(math.sin(math.radians(ang))) < 0.02
+    assert qc.sd_ellipse([[1.0, 2.0]]) is None
+
+
+def test_calibration_view_clouds_and_offset_field(cal):
+    s = qc.load(cal)
+    clouds = qc.cal_clouds(s)
+    rows = car_read(cal / "calib_points.csv")
+    assert [c["name"] for c in clouds] == [r["name"] for r in rows]
+    for c, r in zip(clouds, rows):
+        assert len(c["xy"]) == 360 and c["valid"].sum() == int(r["n_sdk_valid"])
+        assert c["loo_px"] == pytest.approx(float(r["loo_idw_err_px"]))
+        assert c["used"] == (float(r["used_x"]), float(r["used_y"])) and c["ellipse"][2] >= c["ellipse"][3]
+    field = qc.offset_field(s, 3840, 2160, nx=4, ny=3)
+    assert len(field) == 12
+    x, y, dx, dy = field[0]
+    assert (x + dx, y + dy) == pytest.approx(s["model"].predict((x, y)))
+    assert qc.offset_field({**s, "model": None}, 3840, 2160) == []
