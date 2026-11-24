@@ -945,7 +945,9 @@ CALIB_POINT_COLUMNS = ["point_idx", "name", "target_x", "target_y", "n", "n_vali
                        # bundle v2 (LOGGING_SPEC 4.6): the collection and the point estimate
                        "collect_start_ms", "collect_end_ms", "n_render_samples", "n_sdk_samples",
                        "n_sdk_valid", "estimator", "est_x", "est_y", "window_start_sdk_ms",
-                       "window_end_sdk_ms", "window_n", "window_spread_px"]
+                       "window_end_sdk_ms", "window_n", "window_spread_px",
+                       # 1.18.0: auto-advance (ntuh/sol/stability.py Dwell), empty under SPACE
+                       "dwell_s", "n_stable", "insufficient", "threshold_deg"]
 
 
 def sample_stats(samples, valid):

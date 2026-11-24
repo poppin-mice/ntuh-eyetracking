@@ -11,6 +11,8 @@ import os
 
 import numpy as np
 
+from ntuh.sol.stability import DWELL_COLUMNS
+
 
 def px_per_cm_of(screen_w_px, screen_width_cm):
     return screen_w_px / float(screen_width_cm) if screen_width_cm else 0.0
@@ -236,7 +238,8 @@ POINT_EXTRA_COLUMNS = ["target_idx", "repeat_idx", "collect_start_ms", "collect_
                        "raw_median_x", "raw_median_y", "corr_median_x", "corr_median_y",
                        "err_raw_median_deg", "err_corr_median_deg",
                        "raw_valid_median_x", "raw_valid_median_y", "corr_valid_median_x",
-                       "corr_valid_median_y", "err_raw_valid_median_deg", "err_corr_valid_median_deg"]
+                       "corr_valid_median_y", "err_raw_valid_median_deg", "err_corr_valid_median_deg",
+                       *DWELL_COLUMNS]          # 1.18.0: auto-advance, empty under SPACE
 POINT_COLUMNS = ACCURACY_DATA_COLUMNS + POINT_EXTRA_COLUMNS
 # trial_events.csv as the VA recorder writes it, so the current replayer timeline shows the points.
 TRIAL_EVENT_COLUMNS = ["trial_number", "cpd", "side", "start_timestamp", "end_timestamp", "result",

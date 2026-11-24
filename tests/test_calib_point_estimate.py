@@ -205,7 +205,8 @@ def test_calib_points_keeps_the_b_d02_columns_first_and_records_the_estimate(cal
     assert list(rows[0])[:20] == B_D02_COLUMNS
     assert list(rows[0])[20:] == ["collect_start_ms", "collect_end_ms", "n_render_samples", "n_sdk_samples",
                                   "n_sdk_valid", "estimator", "est_x", "est_y", "window_start_sdk_ms",
-                                  "window_end_sdk_ms", "window_n", "window_spread_px"]
+                                  "window_end_sdk_ms", "window_n", "window_spread_px",
+                                  "dwell_s", "n_stable", "insufficient", "threshold_deg"]   # 1.18.0
     for p, (_, _, held) in zip(rows, TARGETS):
         assert p["estimator"] == st.STEADIEST and int(p["n_render_samples"]) >= 90
         assert math.dist((float(p["est_x"]), float(p["est_y"])), held) < 1.0
