@@ -335,3 +335,50 @@ def test_batch_export_renders_one_png_per_session(data_root, tmp_path, qapp):
     _, pngs = qc.export_all(data_root, tmp_path / "out", render_png)
     assert [p.name for p in pngs] == [f.name + ".png" for f in qc.find_sessions(data_root)]
     assert all(p.stat().st_size > 10000 for p in pngs) and files_state(data_root) == before
+
+
+def va_folder(root):
+    """A minimal synthetic VA session: 1 s screen video with its timestamps and two trials."""
+    import cv2
+    folder = root / "VA_output" / "VA_s01_c3_sess1_20261124_100000"
+    folder.mkdir(parents=True)
+    (folder / qc.META_FILE).write_text(json.dumps({"session_kind": "va"}), encoding="utf-8")
+    w = cv2.VideoWriter(str(folder / "screen_record.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), 10, (64, 36))
+    for i in range(10):
+        w.write(np.full((36, 64, 3), 20 * i, dtype=np.uint8))
+    w.release()
+    with open(folder / "screen_video_timestamp.csv", "w", encoding="utf-8") as f:
+        f.write("timestamp\n" + "".join(f"{1000.0 + i / 10}\n" for i in range(10)))
+    with open(folder / "trial_events.csv", "w", encoding="utf-8") as f:
+        f.write("trial_number,cpd,side,start_timestamp,end_timestamp,result\n1,2.0,left,1000.1,1000.4,PASS\n"
+                "2,4.0,right,1000.5,1000.8,FAIL\n")
+    return folder
+
+
+class FakeSettings:
+    def __init__(self, *a):
+        pass
+
+    def value(self, key, default=None):
+        return default
+
+    def setValue(self, *a):
+        pass
+
+
+def test_open_session_routes_by_kind_and_va_is_unchanged(acc, tmp_path, qapp, monkeypatch):
+    from ntuh.replayer import app as replayer_app
+    monkeypatch.setattr(replayer_app, "QSettings", FakeSettings)            # not the user's registry
+    va = va_folder(tmp_path)
+    win = replayer_app.ReplayerApp()
+    for folder in (va, acc):
+        monkeypatch.setattr(replayer_app.QFileDialog, "getExistingDirectory", lambda *a, f=folder: str(f))
+        win._open_session()
+    assert win.engine.session_dir == str(va) and win.engine.duration == pytest.approx(0.9)
+    assert len(win.engine.trial_events_df) == 2 and win.engine.review["trials"]["2"]["label"] == "fail"
+    assert [w.view.s["folder"] for w in win._acc_cal_windows] == [acc]
+    win.engine.set_trial_label(1, "discard")                          # VA review labels: as before
+    assert json.loads((va / "review_labels.json").read_text(encoding="utf-8"))["trials"]["1"]["label"] == "discard"
+    for w in win._acc_cal_windows:
+        w.close()
+    win.close()
