@@ -2011,7 +2011,7 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
             # The calibration record: calib_points.csv (also for a cancelled or crashed run), then
             # the session is closed. LOO errors in degrees only in screen mode, where px are screen px.
             try:
-                to_deg =((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
+                to_deg = ((lambda px: px_to_deg(px, view_dist_cm, screen_w, screen_width_cm))
                           if calibrator.offset_mode == OFFSET_MODE_SCREEN else None)
                 write_calib_points(bundle.folder / "calib_points.csv",
                                    calib_point_rows(shown_points, calibrator.model, to_deg))
