@@ -823,7 +823,7 @@ def main():
     # Pressing 'q' on any calibration screen raises SystemExit (see _install_q_to_quit);
     # we catch it to shut down cleanly without saving, matching VA_center_opt's 'q'-to-exit.
     completed = ok = False
-    save_error, status, abort_reason = None, "aborted", None
+    save_error, status, abort_reason, error = None, "aborted", None, None
     try:
         gf.preview(win=win)
         gf.calibrate(win=win)
@@ -837,7 +837,8 @@ def main():
         print("[Calibration] Aborted by user (Q).")
         abort_reason = "operator_q"
         bundle.event("abort", key="q")
-    except Exception:
+    except Exception as e:
+        error = e
         bundle.crash(*sys.exc_info(), where="calibration")
         import traceback
         traceback.print_exc()
@@ -874,6 +875,9 @@ def main():
     elif completed:
         messagebox.showerror("Not saved", f"The calibration could not be saved to:\n{profile_dir}"
                                           f"\n\n{save_error or 'The model was not trained (too few valid samples).'}")
+    elif error is not None:      # recorded above; the operator must see it too
+        messagebox.showerror("Calibration error", f"The calibration stopped with an error and was not saved:"
+                                                  f"\n\n{type(error).__name__}: {error}")
 
     # [FIX] Restore original keyboard layout on exit (atexit is the backstop).
     kb_manager.restore()

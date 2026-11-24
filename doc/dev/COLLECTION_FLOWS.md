@@ -13,7 +13,7 @@ each flow writes. "app" = the files the flow wrote before the session bundle exi
 |------|----------------------|--------|----------------|--------------------|
 | VA | VA_center_opt, Start Test | `VA_output/VA_<User Name>_sess1_<date>_<time>/` | `va` | `trial_events.csv`, `sol_gaze_data.csv`, `webcam_gaze_data.csv`, `sol_quality_metrics.json`, screen / webcam / Sol videos with their `*_timestamp.csv`, `screen_meta.json` (app); `va_result.json`, `calib_profile_snapshot.json`, `calib_profiles/` (B-D02) |
 | VF | VA_center_opt, Start Test (VF) | `VF_output/VF_<User Name>_sess1_<date>_<time>/` | `vf` | as VA, with `vf_result.json` instead of `va_result.json` |
-| Accuracy test | VA_center_opt, Sol tab | `accuracy_test/<User Name>_<date>_<time>/` | `accuracy_test` | `accuracy_report.json`, `accuracy_data.csv` (app); `meta.result`, `calib_profile_snapshot.json` (B-D02) |
+| Accuracy test | VA_center_opt, Sol tab | `accuracy_test/<User Name>_<condition>_<date>_<time>/` | `accuracy_test` | `accuracy_report.json`, `accuracy_data.csv` (app); `meta.result`, `calib_profile_snapshot.json` (B-D02) |
 | Sol 2D calibration | VA_center_opt, Sol tab | `calibration_sessions/<User Name>_<date>_<time>/` | `sol2d_calibration` | `calib_points.csv`, `calib_profile_snapshot.json` (B-D02) |
 | Webcam calibration | calibration, Start calibration | `calibration_sessions/<user>_<pts>pt_<date>_<time>/` next to `calibration.exe` | `webcam_calibration` | `webcam_calib_samples.csv`, `webcam_calib_points.csv`, `webcam_calib_features.npz`, `gazefollower.log`, `calib_profiles/webcam__*` (B-D29) |
 | Verify Gaze | VA_center_opt, Webcam tab, Verify Gaze (Webcam) | `verify_gaze/<User Name>_<date>_<time>/` | `verify_gaze` | `calib_profiles/webcam__*` (B-D29) |

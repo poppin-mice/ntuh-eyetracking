@@ -15,6 +15,7 @@ VA_output/
 VF_output/
 accuracy_test/
 calibration_sessions/
+verify_gaze/
 data/
 *.csv
 

@@ -2476,7 +2476,7 @@ Controls: SPACE = Record point, Q = Cancel"""
             webcam = WebCamCamera(webcam_id=cid)
             calib = SVRCalibration(model_save_path=str(calib_path))
             gf = GazeFollower(config=dcfg, calibration=calib, camera=webcam)
-            bundle.profile("webcam", calib_path, gf.calibration.has_calibrated, applied=True)
+            bundle.profile("webcam", calib_path, gf.calibration.has_calibrated)
             if not gf.calibration.has_calibrated:
                 bundle.finish("aborted", "profile_not_calibrated")
                 messagebox.showerror("Calibration required", "The selected profile is not calibrated.")

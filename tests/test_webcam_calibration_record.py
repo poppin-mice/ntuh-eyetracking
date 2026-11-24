@@ -144,7 +144,7 @@ def test_a_verify_gaze_record_names_the_profile_it_used(bundle_app, profile_dir)
     (profile_dir / "svr_x.xml").write_bytes(b"model")
     folder = bundle_app / "verify_gaze" / "s01_20261124_101000"
     bundle = sb.start(folder, "verify_gaze", user_name="s01", mapping={"gaze_method": "webcam"})
-    bundle.profile("webcam", profile_dir, True, applied=True)
+    bundle.profile("webcam", profile_dir, True)
     bundle.update(verify_result={"frames": 120, "frames_gaze_on_screen": 100})
     bundle.finish("completed")
 

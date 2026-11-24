@@ -187,7 +187,7 @@ VA_center_opt
            profile it saved, and whether the save worked. New result files va_result.json and
            vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
            scores a session again from its own files into a separate _derived folder.
-    1.14.0 (provisional) Every Verify Gaze (Webcam) leaves a short record in
+    1.14.0 Every Verify Gaze (Webcam) leaves a short record in
            verify_gaze/<User Name>_<time>/: start, end, the webcam profile it used (copied, with
            sha256) and on how many frames the gaze was on the screen (doc/session_bundle.md).
 calibration
