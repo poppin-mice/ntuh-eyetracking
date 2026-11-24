@@ -25,6 +25,7 @@ from gazefollower.camera import WebCamCamera
 
 from ntuh.recording.recorder import Recorder
 from ntuh.recording import session_bundle
+from ntuh.ui import target_sprite
 from ntuh.common.app_env import APP_DIR, LAST_SETTINGS_FILE
 from ntuh.common.optics import px_to_cm, screen_width_deg_from_cm
 from ntuh.version import get_version
@@ -246,7 +247,11 @@ class SettingsWindow(tk.Tk):
 
         # [NEW] Sol Offset Calibration Vars
         self.sol_offset_target_img_var = tk.StringVar(value="stimulus_images/ball.jpg")
-        self.sol_offset_target_size_var = tk.StringVar(value="100")
+        # Target picture (target_sprite.py): size in degrees and the centre dot are shared with the
+        # accuracy test, whose picture is acc_target_img_var ("" = the ring, as before 1.19.0).
+        self.sol_offset_target_deg_var = tk.StringVar(value="2.5")
+        self.target_center_dot_var = tk.BooleanVar(value=False)
+        self.acc_target_img_var = tk.StringVar(value="")
         self.sol_offset_num_points_var = tk.StringVar(value="5")
         # Offset space: screen-space (after homography, drift-free) vs camera-space (legacy);
         # selectable so the two can be compared with the accuracy test.
@@ -966,6 +971,12 @@ class SettingsWindow(tk.Tk):
                      width=10).grid(row=4, column=1, sticky="w", **pad)
         ttk.Label(grp_preview, text="auto: next point after enough stable gaze (Sol Calib tab settings); space: operator",
                   font=self.f_hint, foreground="gray").grid(row=4, column=2, columnspan=2, sticky="w", **pad)
+        ttk.Label(grp_preview, text="Accuracy Target Image:", font=self.f_body).grid(row=5, column=0, sticky="w", **pad)
+        ttk.Entry(grp_preview, textvariable=self.acc_target_img_var, width=40).grid(row=5, column=1, columnspan=2, sticky="w", **pad)
+        ttk.Button(grp_preview, text="Browse...", command=lambda: (p := filedialog.askopenfilename(
+            parent=self, filetypes=target_sprite.FILETYPES)) and self.acc_target_img_var.set(p)).grid(row=5, column=3, **pad)
+        ttk.Label(grp_preview, text="empty = the ring; PNG/JPG/GIF: size and centre dot on the Sol Calib tab",
+                  font=self.f_hint, foreground="gray").grid(row=6, column=0, columnspan=4, sticky="w", **pad)
 
     def build_sol_offset_tab(self, parent, l_font, e_font):
         """Build the Sol Offset Calibration tab (simplified, auto-detects 2D/3D method)."""
@@ -989,14 +1000,17 @@ class SettingsWindow(tk.Tk):
         ttk.Entry(img_frame, textvariable=self.sol_offset_target_img_var, font=e_font, width=40).pack(side="left")
 
         def _browse_target_img():
-            p = filedialog.askopenfilename(parent=self, filetypes=[("Images", "*.png;*.jpg;*.jpeg;*.bmp"), ("All", "*.*")])
+            p = filedialog.askopenfilename(parent=self, filetypes=target_sprite.FILETYPES)
             if p:
                 self.sol_offset_target_img_var.set(p)
                 print(f"[Offset Cal] Selected target image: {p}")
         ttk.Button(img_frame, text="Browse...", command=_browse_target_img).pack(side="left", padx=5)
+        ttk.Label(img_frame, text="PNG/JPG/GIF; empty = ring", font=self.f_hint, foreground="gray").pack(side="left")
 
-        ttk.Label(grp_target, text="Target Size (px):", font=l_font).grid(row=1, column=0, sticky="w", **pad)
-        ttk.Spinbox(grp_target, textvariable=self.sol_offset_target_size_var, from_=50, to=500, increment=10, width=10).grid(row=1, column=1, sticky="w", **pad)
+        ttk.Label(grp_target, text="Target Size (deg):", font=l_font).grid(row=1, column=0, sticky="w", **pad)
+        ttk.Spinbox(grp_target, textvariable=self.sol_offset_target_deg_var, from_=0.5, to=10.0, increment=0.5, width=10).grid(row=1, column=1, sticky="w", **pad)
+        ttk.Checkbutton(grp_target, text="Centre dot (pictures; also the accuracy test)",
+                        variable=self.target_center_dot_var).grid(row=1, column=2, sticky="w", **pad)
 
         ttk.Label(grp_target, text="Calibration Points:", font=l_font).grid(row=2, column=0, sticky="w", **pad)
         ttk.Combobox(grp_target, textvariable=self.sol_offset_num_points_var, values=["1", "3", "5", "9"], state="readonly", width=10).grid(row=2, column=1, sticky="w", **pad)
@@ -1233,21 +1247,8 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
 
         target_img_path = self.sol_offset_target_img_var.get().strip()
         print(f"[2D Offset Cal] Target image path: {target_img_path}")
-        print(f"[2D Offset Cal] Path exists: {os.path.exists(target_img_path)}")
-
-        if not target_img_path or not os.path.exists(target_img_path):
-            messagebox.showerror("Error", f"Please select a valid target image.\nPath: {target_img_path}")
-            return
-
-        # Try to load the image to verify it's readable
-        test_img = cv2.imread(target_img_path)
-        if test_img is None:
-            # Try with Unicode path handling
-            test_img = cv2.imdecode(np.fromfile(target_img_path, dtype=np.uint8), cv2.IMREAD_COLOR)
-        print(f"[2D Offset Cal] cv2.imread result: {'OK' if test_img is not None else 'FAILED'}")
-        if test_img is None:
-            messagebox.showerror("Error", f"Failed to load target image with OpenCV.\nPath: {target_img_path}\nCheck if file is a valid image.")
-            return
+        # Empty = the ring; a missing or unreadable file falls back to the ring with a warning
+        # event (target_sprite.load in the run below).
 
         if self.sol_cam_params is None:
             messagebox.showerror("Error", "Sol camera parameters not available.")
@@ -1291,7 +1292,9 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
         marker_container_size = sol_cfg_for_assets['marker_pattern_size'] + 30
 
         # Create calibrator
-        target_size = self.safe_get_int(self.sol_offset_target_size_var, 100)
+        target_size = target_sprite.size_px(self.safe_get_float(self.sol_offset_target_deg_var, 2.5),
+                                            self.safe_get_float(self.view_dist_cm_var, 60.0), screen_w,
+                                            self.safe_get_float(self.scr_width_cm_var, 53.0))
         num_points = self.safe_get_int(self.sol_offset_num_points_var, 5)
 
         # Offset space chosen in the Sol Calib tab. Screen-space (default) applies the correction
@@ -1316,10 +1319,6 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
             num_points=num_points
         )
         calibrator.set_safe_positions(safe_positions)
-
-        if calibrator.target_image is None:
-            messagebox.showerror("Error", "Failed to load target image.")
-            return
 
         # Set flag to prevent queue flushing
         self.in_sol_offset_calibration = True
@@ -1453,16 +1452,10 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
         last_scene_t = None
         SCENE_STALE_S = 2.0
 
-        # Load target image for pygame display
-        target_surface = None
-        try:
-            if calibrator.target_image_display is not None:
-                target_cv = calibrator.target_image_display.copy()
-                target_cv = cv2.cvtColor(target_cv, cv2.COLOR_BGR2RGB)
-                target_surface = pygame.image.frombuffer(target_cv.tobytes(), target_cv.shape[1::-1], "RGB")
-                print(f"[2D Cal] Target surface created: {calibrator.target_display_size}x{calibrator.target_display_size}")
-        except Exception as e:
-            print(f"[2D Cal] Failed to create target surface: {e}")
+        # The target (ring, picture or GIF), every frame decoded before the loop (target_sprite.py)
+        target = target_sprite.load(calibrator.target_image_path, calibrator.target_display_size,
+                                    self.target_center_dot_var.get())
+        calibrator.target_image_path = target.path or ""    # the profile names what was shown
 
         # Focus-independent key detection via Win32 API
         # Allows SPACE/Q to work even when the OpenCV tester window has focus
@@ -1495,6 +1488,7 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
                              "target_display_size_px": calibrator.target_display_size,
                              "point_advance": "auto" if auto else "space", **dwell_cfg},
             config=self._collect_gui_values())
+        target.note(bundle, self.safe_get_float(self.sol_offset_target_deg_var, 2.5))
         # Bundle v2: every SDK sample and every homography of the run (doc/session_bundle.md).
         from ntuh.recording import replay_streams
         from ntuh.sol import sol_ipc
@@ -1891,10 +1885,8 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
 
                 # Draw target at current calibration position
                 target_screen_pos = calibrator.get_current_target_screen_position()
-                if target_screen_pos and target_surface:
-                    tx = target_screen_pos[0] - calibrator.target_display_size // 2
-                    ty = target_screen_pos[1] - calibrator.target_display_size // 2
-                    win.blit(target_surface, (tx, ty))
+                if target_screen_pos:
+                    target.draw(win, target_screen_pos)
 
                 # Draw gaze visualization if enabled
                 if self.sol_cal_show_gaze_var.get() and latest_gaze and sol_projector.is_homography_valid():
@@ -2163,7 +2155,9 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
             result = calibrator.run_calibration(
                 num_points=self.safe_get_int(self.sol_offset_num_points_var, 5),
                 target_image_path=self.sol_offset_target_img_var.get().strip() or None,
-                target_size_px=self.safe_get_int(self.sol_offset_target_size_var, 100),
+                target_size_px=target_sprite.size_px(self.safe_get_float(self.sol_offset_target_deg_var, 2.5),
+                                                     self.safe_get_float(self.view_dist_cm_var, 60.0), screen_w,
+                                                     self.safe_get_float(self.scr_width_cm_var, 53.0)),
                 user_screen_idx=user_screen_idx,
                 tester_screen_idx=tester_screen_idx,
                 monitor_info=self.monitor_info_list if hasattr(self, 'monitor_info_list') else None
@@ -3115,6 +3109,12 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
                      "max_dwell_s": self.safe_get_float(self.point_max_dwell_s_var, stability.MAX_DWELL_S)}
         bundle.update(protocol_params={"samples_per_point_render_frames": SAMPLES,
                                        "point_advance": "auto" if auto else "space", **dwell_cfg})
+        # The target: the ring by default, or a picture / GIF decoded now (target_sprite.py)
+        target_deg = self.safe_get_float(self.sol_offset_target_deg_var, 2.5)
+        target = target_sprite.load(self.acc_target_img_var.get(),
+                                    target_sprite.size_px(target_deg, view_dist_cm, screen_w, screen_width_cm),
+                                    self.target_center_dot_var.get())
+        target.note(bundle, target_deg)
         dwell = None
         USABLE = ("LIVE", "CACHED")
         detected_marker_ids = []
@@ -3493,10 +3493,7 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
                                            (pos[0] + marker_container_size // 2, pos[1] + marker_container_size // 2), 8)
                 tx, ty = int(tgt['x']), int(tgt['y'])
                 col = (255, 80, 80) if collecting and not auto else (255, 255, 0)   # auto: subject sees no change
-                pygame.draw.circle(win, col, (tx, ty), 26, 3)
-                pygame.draw.circle(win, col, (tx, ty), 6)
-                pygame.draw.line(win, col, (tx - 36, ty), (tx + 36, ty), 1)
-                pygame.draw.line(win, col, (tx, ty - 36), (tx, ty + 36), 1)
+                target.draw(win, (tx, ty), col)
 
                 if collecting and not auto:
                     msg = f"Collecting {len(corr_samples)}/{SAMPLES} - hold still"
@@ -3927,7 +3924,9 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
 
             # Sol offset calibration settings
             'sol_offset_target_img': self.sol_offset_target_img_var.get(),
-            'sol_offset_target_size': self.sol_offset_target_size_var.get(),
+            'sol_offset_target_deg': self.sol_offset_target_deg_var.get(),
+            'target_center_dot': self.target_center_dot_var.get(),
+            'acc_target_img': self.acc_target_img_var.get(),
             'sol_offset_num_points': self.sol_offset_num_points_var.get(),
             'sol_offset_mode': self.sol_offset_mode_var.get(),
             'sol_offset_user_screen': self.sol_offset_user_screen_var.get(),
@@ -4064,7 +4063,8 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
             self.sol_marker_size_var, self.sol_aruco_dict_var,
             self.sol_pose_smooth_var, self.sol_gaze_smooth_var, self.sol_gaze_method_var,
             self.sol_cal_show_gaze_var,
-            self.sol_offset_target_img_var, self.sol_offset_target_size_var,
+            self.sol_offset_target_img_var, self.sol_offset_target_deg_var,
+            self.target_center_dot_var, self.acc_target_img_var,
             self.sol_offset_num_points_var, self.sol_offset_mode_var, self.sol_offset_user_screen_var,
             self.sol_offset_tester_screen_var,
             self.calib_collect_s_var, self.calib_point_estimator_var,
@@ -4147,7 +4147,10 @@ Controls: SPACE = Record point (space), R = Redo, S = Skip (auto), Q = Cancel"""
             if 'sol_gaze_method' in data: self.sol_gaze_method_var.set(data['sol_gaze_method'])
 
             if 'sol_offset_target_img' in data: self.sol_offset_target_img_var.set(data['sol_offset_target_img'])
-            if 'sol_offset_target_size' in data: self.sol_offset_target_size_var.set(str(data['sol_offset_target_size']))
+            # 'sol_offset_target_size' (px, before 1.19.0) is ignored: the size is now in degrees.
+            if 'sol_offset_target_deg' in data: self.sol_offset_target_deg_var.set(str(data['sol_offset_target_deg']))
+            if 'target_center_dot' in data: self.target_center_dot_var.set(bool(data['target_center_dot']))
+            if 'acc_target_img' in data: self.acc_target_img_var.set(data['acc_target_img'])
             if 'sol_offset_num_points' in data: self.sol_offset_num_points_var.set(str(data['sol_offset_num_points']))
             if 'sol_offset_mode' in data: self.sol_offset_mode_var.set(str(data['sol_offset_mode']))
             # Screens are re-resolved against the monitors connected RIGHT NOW: a saved label
