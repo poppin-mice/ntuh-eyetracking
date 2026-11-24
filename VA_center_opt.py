@@ -36,7 +36,7 @@ def global_exception_handler(exctype, value, tb):
     except Exception:
         pass
     try:
-        with open("va_crash_log.txt", "a") as f:
+        with open(APP_DIR / "va_crash_log.txt", "a") as f:
             f.write(full_msg + "\n" + "="*40 + "\n")
         from tkinter import messagebox
         messagebox.showerror("Critical Error", f"Application Crashed!\nSee va_crash_log.txt\n\n{value}")
@@ -122,10 +122,11 @@ def main():
                 exp_type = s.cfg.get('experiment_type', 'VA')
                 session_bundle.crash_current(*sys.exc_info(), where=f"{exp_type} test")
                 print(f"CRITICAL ERROR IN {exp_type} TEST:\n{err_msg}")
-                with open(f"{exp_type.lower()}_crash_log.txt", "w") as f:
+                crash_log = APP_DIR / f"{exp_type.lower()}_crash_log.txt"
+                with open(crash_log, "w") as f:
                     f.write(err_msg)
                 try:
-                    messagebox.showerror("Crash", f"An error occurred:\n{e}\nSee va_crash_log.txt")
+                    messagebox.showerror("Crash", f"An error occurred:\n{e}\nSee {crash_log.name}")
                 except Exception:
                     pass  # messagebox may fail if tkinter is not available
                 try:

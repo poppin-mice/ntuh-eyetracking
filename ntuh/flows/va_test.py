@@ -17,6 +17,8 @@ from ntuh.sol.connector import SolConnector, SDK_AVAILABLE
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
 from ntuh.recording import session_bundle
+from ntuh.common.app_env import APP_DIR
+from ntuh.common.identity import output_root
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -342,7 +344,8 @@ def run_test(cfg, sol_context=None):
         print("[Practice Mode] Using DummyRecorder - no data will be saved")
         recorder = DummyRecorder()
     else:
-        recorder = Recorder(output_dir="VA_output", subject_id=cfg['user_name'], session_num="1", is_va=True,
+        recorder = Recorder(output_dir=str(output_root("va")), subject_id=cfg['user_name'],
+                            session_num=cfg.get('repeat_index', 1), is_va=True,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
     # Session bundle: session_meta.json, events.csv and console.log in the session folder
     # (doc/session_bundle.md). Practice mode has no folder, so it writes nothing.
@@ -1355,7 +1358,7 @@ def run_test(cfg, sol_context=None):
 
         # Write to crash log file
         try:
-            with open("va_trial_crash_log.txt", "a") as f:
+            with open(APP_DIR / "va_trial_crash_log.txt", "a") as f:
                 f.write(f"\n{'='*60}\n")
                 f.write(f"Trial {trial_number} crash at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"{'='*60}\n")

@@ -14,6 +14,7 @@ import pygame
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
 from ntuh.recording import session_bundle
+from ntuh.common.identity import output_root
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -191,7 +192,8 @@ def run_vf_test(cfg, sol_context=None):
     if cfg.get('practice_mode', False):
         recorder = DummyRecorder()
     else:
-        recorder = Recorder(output_dir="VF_output", subject_id=cfg.get('user_name', 'test'), is_va=False,
+        recorder = Recorder(output_dir=str(output_root("vf")), subject_id=cfg.get('user_name', 'test'),
+                            session_num=cfg.get('repeat_index', 1), is_va=False,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
     # Session bundle (doc/session_bundle.md); nothing in practice mode, which has no folder.
     bundle = session_bundle.start(getattr(recorder, 'session_dir', None), 'vf', cfg=cfg)
@@ -840,8 +842,8 @@ def run_vf_test(cfg, sol_context=None):
         if results and not cfg.get('practice_mode', False):
             import pandas as pd
             df = pd.DataFrame(results)
-            Path("VF_output").mkdir(parents=True, exist_ok=True)
-            csv_path = f"VF_output/vf_{cfg.get('user_name', 'test')}.csv"
+            output_root("vf").mkdir(parents=True, exist_ok=True)
+            csv_path = output_root("vf") / f"vf_{cfg.get('user_name', 'test')}.csv"
             df.to_csv(csv_path, index=False)
             print(f"[VF Test] Results saved to {csv_path}")
 
