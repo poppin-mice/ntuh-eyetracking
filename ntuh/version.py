@@ -195,7 +195,7 @@ VA_center_opt
            status for the whole test; session_meta.json our_calibration.expected = a profile
            was picked, plus gaze_method; events.csv gains profile_selected.
     1.13.0 Start screen (B-D09 part a): the free-text User Name is replaced by Subject Code
-           (format-checked: default ^[A-Za-z]{1,3}\d{2,3}$, settings key subject_code_regex;
+           (format-checked: default 1-3 letters then 2-3 digits, settings key subject_code_regex;
            spaces and non-ASCII letters always refused), Condition (C1-C5, the accuracy test's
            list), Run (pre-selected: sessions of the same subject, condition and test today + 1;
            another choice is logged) and Collection (kept for the day). The User Name is now
