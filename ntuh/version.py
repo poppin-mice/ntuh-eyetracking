@@ -190,7 +190,8 @@ VA_center_opt
     1.11.0 VA and VF no longer apply our Sol offset by User Name (REQ-0031). New setting "Sol
            offset for VA/VF" on the Sol Calib tab: OFF (default) or a 2D profile picked from
            the Calibration Folder, shown with its user, points and time (a confirm when not
-           made today), applied with the 2D gaze method only. The examiner view shows the
+           made today, and at Start when it was made under another User Name), applied with
+           the 2D gaze method only. The examiner view shows the
            status for the whole test; session_meta.json our_calibration.expected = a profile
            was picked, plus gaze_method; events.csv gains profile_selected.
 calibration

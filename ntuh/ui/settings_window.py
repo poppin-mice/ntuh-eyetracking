@@ -3507,6 +3507,21 @@ Controls: SPACE = Record point, Q = Cancel"""
         self.stop_preview()
         self._note_identity_changes()
 
+        # The profile picked for VA/VF stays when the User Name changes: one made under another
+        # name (the previous subject's) is applied only after a confirm (REQ-0031).
+        picked = getattr(self, 'sol_offset_profile', "") if self.enable_sol_var.get() else ""
+        other = offset_choice.other_user(picked, self.user_var.get().strip() or "anonymous")
+        if other is not None:
+            go = messagebox.askyesno(
+                "Sol offset for VA/VF",
+                f"選的校正檔是「{other}」的，不是目前的 User Name / The picked profile was made "
+                f"under User Name '{other}', not the current one:\n\n{Path(picked).name}\n\n"
+                f"仍要套用並開始？ Apply it and start anyway?\n(No = 不開始 / do not start)")
+            session_bundle.app_event("profile_selected", where="start_confirm", path=picked,
+                                     username=other, other_user_confirmed=go)
+            if not go:
+                return
+
         # Validation — fallback to anonymous_9pt if no valid calibration profile
         if self.enable_webcam_var.get():
             calib_dir = self.calib_dir_var.get().strip()

@@ -96,6 +96,13 @@ def test_only_a_2d_profile_directly_in_the_profile_folder_can_be_picked(tmp_path
     assert offset_choice.pick_error(tmp_path / "s01_c5_sol_offset.json", tmp_path)
 
 
+def test_a_pick_made_under_another_user_name_is_reported(tmp_path):
+    path = str(_profile(tmp_path))                          # made under s01_c5
+    assert offset_choice.other_user(path, "s01_c5") is None
+    assert offset_choice.other_user(path, "s02_c5") == "s01_c5"
+    assert offset_choice.other_user("", "s02_c5") is None   # OFF: nothing to ask
+
+
 def test_summary_and_made_today(tmp_path):
     s = offset_choice.profile_summary(_profile(tmp_path))
     assert s["username"] == "s01_c5" and s["n_points"] == 5

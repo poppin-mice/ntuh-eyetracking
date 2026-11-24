@@ -32,6 +32,17 @@ def made_today(timestamp, today=None):
         return False
 
 
+def other_user(path, user_name):
+    """The user name the picked profile was made under when it is not `user_name`, else None.
+    The pick stays when the User Name changes, so at Start the previous subject's profile is
+    asked about, not applied unasked. An unreadable file is None: choose() reports that one."""
+    try:
+        made_for = profile_summary(path)["username"] if path else user_name
+    except Exception:
+        return None
+    return made_for if made_for != user_name else None
+
+
 def pick_error(path, folder):
     """Why a picked file cannot be the VA/VF profile, or None: it must be a Sol 2D offset
     profile directly in the Sol profile folder."""

@@ -194,6 +194,8 @@ Now nothing is applied unless the operator picks a profile in the group *Sol off
   angular offset is applied in VA/VF any more.
 - During the test the examiner view (Examiner Screen) has a strip under its panels with a status dot:
   green `OUR CALIB: APPLIED <file> user <name> <n> pts <time>`, or grey `OUR CALIB: NOT APPLIED (...)`.
+- The pick stays when the User Name changes. *Start* asks for a confirm when the picked profile was made
+  under another User Name (the previous subject's); *No* does not start.
 - A picked file that can no longer be read stops the test before it starts, with an error dialog.
 - The session records the choice: `session_meta.json` → `our_calibration.expected` (a profile was picked),
   `gaze_method`, the profile entry with its sha256 and the copy `calib_profile_snapshot.json`, and the
