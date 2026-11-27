@@ -127,6 +127,16 @@ def test_a_pick_made_under_another_user_name_is_reported(tmp_path):
     assert offset_choice.other_user("", "s02_c5") is None   # OFF: nothing to ask
 
 
+def test_a_pick_that_cannot_be_used_stops_the_test_before_its_window_opens():
+    """The picked profile is checked before the test window is created: a pick that could not be
+    loaded used to leave the black test window on the subject screen. va_test / vf_test import
+    pygame and the SDK, so their source is read, not imported."""
+    flows = Path(__file__).resolve().parents[1] / "ntuh" / "flows"
+    for name in ("va_test.py", "vf_test.py"):
+        src = (flows / name).read_text(encoding="utf-8")
+        assert 0 < src.index("offset_choice.choose(cfg)") < src.index("pygame.display.set_mode(")
+
+
 def test_summary_and_made_today(tmp_path):
     s = offset_choice.profile_summary(_profile(tmp_path))
     assert s["username"] == "s01_c5" and s["n_points"] == 5
