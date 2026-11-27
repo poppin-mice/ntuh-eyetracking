@@ -16,6 +16,7 @@ import pygame
 from ntuh.sol.connector import SolConnector, SDK_AVAILABLE
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
+from ntuh.recording import session_bundle
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -24,31 +25,32 @@ from ntuh.common.optics import to_rgb_tuple, mean_color_rgb
 from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import resolve_tester_rect
 from ntuh.vavf.stimuli import (
-    CATCH_CYCLES_PER_PX, DO_BLUR, CatchScheduler, Staircase, catch_trial_cpd,
-    generate_grating_oriented_patch, get_va_result_cpd, prepare_patch_grid,
+    CATCH_CYCLES_PER_PX, DO_BLUR, VA_RESULT_FILE, VA_STAIRCASE, CatchScheduler, Staircase,
+    build_va_result, catch_trial_cpd, generate_grating_oriented_patch, prepare_patch_grid,
 )
+from ntuh.version import get_version
 from ntuh.tracking.sol_quality import (
     DashboardState, SolQualityTracker, build_summary_lines, build_quality_summary,
 )
 from ntuh.tracking.sol_session import run_sol_worker
 from ntuh.ui.tester_dashboard import TesterDashboard
 
-try:
-    from ntuh.sol.offset_calibration import load_sol_offset, apply_angular_offset
-    SOL_OFFSET_AVAILABLE = True
-except Exception:
-    SOL_OFFSET_AVAILABLE = False
-    load_sol_offset = apply_angular_offset = None
-
-try:
-    from ntuh.sol.offset_calibration_2d import load_sol_2d_offset
-    SOL_2D_OFFSET_AVAILABLE = True
-except Exception:
-    SOL_2D_OFFSET_AVAILABLE = False
-    load_sol_2d_offset = None
+from ntuh.sol import offset_choice
 
 
 def run_test(cfg, sol_context=None):
+    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF", never one
+    # found by the User Name. Applied in 2D, the only gaze method (REQ-0034). Checked before the
+    # test window opens: a picked file that is gone stops the test without leaving a black
+    # window behind.
+    sol_choice = offset_choice.choose(cfg)
+    if sol_choice['load_error']:
+        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
+                                      f"{sol_choice['load_error']}")
+        return
+    sol_2d_offset_model = sol_choice['model']
+    print(f"[Sol Offset] {offset_choice.describe(sol_choice)[1]}")
+
     # Use real pixel dimensions from OS (not DPI-scaled pygame.display.Info)
     W = cfg.get('screen_w', 1920)
     H = cfg.get('screen_h', 1080)
@@ -67,6 +69,7 @@ def run_test(cfg, sol_context=None):
     if cfg['enable_webcam']:
         profile_dir = Path(cfg['calib_dir'])
         if not profile_dir.exists():
+            pygame.quit()       # the test does not start: close its window
             messagebox.showerror("Error", "Calibration folder missing")
             return
         dcfg = DefaultConfig()
@@ -76,6 +79,7 @@ def run_test(cfg, sol_context=None):
         calib = SVRCalibration(model_save_path=str(profile_dir))
         gf = GazeFollower(config=dcfg, calibration=calib, camera=webcam)
         if not gf.calibration.has_calibrated:
+            pygame.quit()       # the test does not start: close its window
             messagebox.showerror("Error", "Calibration not found. Run calibration.py first.")
             return
         ensure_pygame_focus()
@@ -104,32 +108,6 @@ def run_test(cfg, sol_context=None):
     }
 
     # [NOTE] Gaze caching is now handled by persistent sol_gaze_pt variable (matches preview behavior)
-
-    # Load Sol offset calibration if available
-    sol_offset = None
-    sol_2d_offset_model = None
-    if cfg['enable_sol'] and SOL_OFFSET_AVAILABLE:
-        username = cfg.get('user_name', 'anonymous')
-        calib_dir = Path(cfg.get('calib_dir', 'calibration_profiles'))
-
-        # Load 3D angular offset (for 3D gaze method)
-        sol_offset = load_sol_offset(username, calib_dir)
-        if sol_offset:
-            print(f"[Sol Offset] Loaded 3D offset for user '{username}':")
-            print(f"             Pitch: {sol_offset['pitch_offset_deg']:.2f} deg ({sol_offset['pitch_offset_rad']:.4f} rad)")
-            print(f"             Yaw: {sol_offset['yaw_offset_deg']:.2f} deg ({sol_offset['yaw_offset_rad']:.4f} rad)")
-        else:
-            print(f"[Sol Offset] No 3D offset calibration found for user '{username}'.")
-
-        # Load 2D offset model (for 2D gaze method)
-        if SOL_2D_OFFSET_AVAILABLE:
-            sol_2d_offset_data = load_sol_2d_offset(username, calib_dir)
-            if sol_2d_offset_data and sol_2d_offset_data.get('model') and sol_2d_offset_data['model'].is_trained:
-                sol_2d_offset_model = sol_2d_offset_data['model']
-                print(f"[Sol 2D Offset] Loaded 2D offset model for user '{username}':")
-                print(f"             Points: {sol_2d_offset_data.get('num_calibration_points', '?')}, Trained: {sol_2d_offset_data.get('calibration_timestamp', '?')}")
-            else:
-                print(f"[Sol 2D Offset] No 2D offset calibration found for user '{username}'. Using raw gaze_2d.")
 
     # Aruco Assets
     aruco_markers_px = {}
@@ -342,6 +320,13 @@ def run_test(cfg, sol_context=None):
     else:
         recorder = Recorder(output_dir="VA_output", subject_id=cfg['user_name'], session_num="1", is_va=True,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
+    # Session bundle: session_meta.json, events.csv and console.log in the session folder
+    # (doc/session_bundle.md). Practice mode has no folder, so it writes nothing.
+    bundle = session_bundle.start(getattr(recorder, 'session_dir', None), 'va', cfg=cfg)
+    # Which calibration profiles this test looked for, and what it found (with a copy of each).
+    if cfg['enable_webcam']:
+        bundle.profile("webcam", cfg['calib_dir'], loaded=True)    # without one the test did not start
+    offset_choice.record(bundle, sol_choice)
 
     # [NEW] Sol gaze-quality tracker (missing-data rate over RECEIVED samples) + tester dashboard
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -355,7 +340,8 @@ def run_test(cfg, sol_context=None):
         tester_rect = resolve_tester_rect(cfg)
         if cfg.get('enable_webcam') or cfg.get('enable_sol'):
             dashboard = TesterDashboard(gf, sol_quality, dash_state, cfg, tester_rect=tester_rect,
-                                        session_dir=getattr(recorder, 'session_dir', None))
+                                        session_dir=getattr(recorder, 'session_dir', None),
+                                        calib_status=offset_choice.describe(sol_choice))
             dashboard.start()
             print(f"[Dashboard] Examiner dashboard started (rect: {tester_rect})" if tester_rect
                   else "[Dashboard] No separate Examiner Screen - collecting quality, no window.")
@@ -406,7 +392,16 @@ def run_test(cfg, sol_context=None):
     screen_record_frame_counter = 0
 
     # Staircase
-    stair = Staircase(start=2.0, step=2.0, minv=2.0, maxv=20.0)
+    stair = Staircase(**VA_STAIRCASE)
+    # Every trial as (cpd, passed, "normal" | "catch"), in order: what the result is built from.
+    trial_log = []
+
+    def save_va_result():
+        """Write va_result.json into the session folder (practice mode has none). Returns the
+        result, which is also what the result screen shows."""
+        result = build_va_result(trial_log, get_version("VA_center_opt"))
+        bundle.write_json(VA_RESULT_FILE, result)
+        return result
 
     # --- Catch trials (negative-sample collection; OFF by default) ---
     # A catch trial renders the target at a frequency nobody can resolve, so the subject has
@@ -580,13 +575,7 @@ def run_test(cfg, sol_context=None):
                         break
             if latest_gaze:
                 sol_raw_data = latest_gaze
-                sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-                can_process = False
-                if sol_gaze_method == '2D':
-                    can_process = sol_projector.is_homography_valid()
-                else:
-                    can_process = sol_projector.is_calibrated()
-                if can_process:
+                if sol_projector.is_homography_valid():
                     try:
                         if hasattr(latest_gaze, 'combined'):
                             raw_gaze_2d = None
@@ -594,42 +583,12 @@ def run_test(cfg, sol_context=None):
                                 g2d = latest_gaze.combined.gaze_2d
                                 raw_gaze_2d = (g2d.x, g2d.y)
                                 sol_raw = raw_gaze_2d
-                            if sol_gaze_method == '2D':
-                                if raw_gaze_2d:
-                                    screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
-                                    if screen_pt:
-                                        sol_mapped = screen_pt
-                                        if eval_source != "Webcam":
-                                            _display_gaze[0] = screen_pt
-                            else:
-                                if hasattr(latest_gaze, 'left_eye') and hasattr(latest_gaze, 'right_eye'):
-                                    left_o = latest_gaze.left_eye.gaze.origin
-                                    right_o = latest_gaze.right_eye.gaze.origin
-                                    gaze_origin_mm = np.array([
-                                        (left_o.x + right_o.x) / 2.0,
-                                        (left_o.y + right_o.y) / 2.0,
-                                        (left_o.z + right_o.z) / 2.0
-                                    ])
-                                    g3d = latest_gaze.combined.gaze_3d
-                                    gaze_point_mm = np.array([g3d.x, g3d.y, g3d.z])
-                                    gaze_direction_vec = gaze_point_mm - gaze_origin_mm
-                                    norm = np.linalg.norm(gaze_direction_vec)
-                                    if norm > 0:
-                                        gaze_direction_unit = gaze_direction_vec / norm
-                                        if sol_offset is not None:
-                                            gaze_direction_unit = apply_angular_offset(
-                                                gaze_direction_unit,
-                                                sol_offset['pitch_offset_rad'],
-                                                sol_offset['yaw_offset_rad']
-                                            )
-                                        gaze_origin_m = gaze_origin_mm / 1000.0
-                                        screen_pt_m = sol_projector.project_gaze_to_screen(gaze_origin_m, gaze_direction_unit)
-                                        if screen_pt_m is not None:
-                                            pix = sol_projector.physical_to_pixels(screen_pt_m, W, physical_width_m)
-                                            if pix:
-                                                sol_mapped = (int(pix[0]), int(pix[1]))
-                                                if eval_source != "Webcam":
-                                                    _display_gaze[0] = sol_mapped
+                            if raw_gaze_2d:
+                                screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
+                                if screen_pt:
+                                    sol_mapped = screen_pt
+                                    if eval_source != "Webcam":
+                                        _display_gaze[0] = screen_pt
                     except (AttributeError, Exception):
                         pass
 
@@ -755,6 +714,7 @@ def run_test(cfg, sol_context=None):
         thr = float(cfg.get('valid_start_threshold', 80.0))
         blank_bg = PAPER_GRAY if PAPER_COLOR_ENABLED else to_rgb_tuple(cfg['bg_color'])
         forced = False
+        gate_t0, last_pct = time.time(), (None, None)   # for the gate_override event
         # Focus-independent SPACE, same approach as the offset calibration: cv2.waitKey only
         # reports keys while the dashboard window holds OS focus and pygame.event only while the
         # subject window does, so neither alone is reliable here. Seed prev from the current state
@@ -779,6 +739,9 @@ def run_test(cfg, sol_context=None):
                     forced = True
             if forced:
                 print("[wait_for_stable_quality] SPACE pressed - forcing trial start")
+                bundle.event("gate_override", trial=trial_number, key="space",
+                             waited_s=round(time.time() - gate_t0, 2), threshold_pct=thr,
+                             sol_valid_pct=last_pct[0], webcam_valid_pct=last_pct[1])
                 break   # skip the rest of the frame (render + screen encode) so the start is instant
             win.fill(blank_bg)
             if cfg['enable_sol']:
@@ -802,6 +765,7 @@ def run_test(cfg, sol_context=None):
                 sol_raw_gaze_data=sol_rd if cfg.get('rec_sol_data') else None,
                 sol_frame=sol_f)
             sol_pct, wc_pct = sol_quality.window_validity()
+            last_pct = (sol_pct if need_sol else None, wc_pct if need_wc else None)
             dash_state.update(gate=(sol_pct if need_sol else None, wc_pct if need_wc else None, thr, True))
             ok = True
             if need_sol: ok = ok and (sol_pct is not None and sol_pct >= thr)
@@ -876,8 +840,11 @@ def run_test(cfg, sol_context=None):
             if sol_projector: sol_projector.stop_background_detection()
             if dashboard is not None: dashboard.stop()
             finalize_sol_quality_metrics()
+            save_va_result()            # the operator stopped the test: recorded as not finished
             recorder.close()
+            bundle.event("abort", key="q", where="quality_gate", trial=trial_number)
             pygame.quit()
+            bundle.finish("aborted", "operator_q")
             return
 
         start  = time.time()
@@ -907,8 +874,11 @@ def run_test(cfg, sol_context=None):
                     if sol_projector: sol_projector.stop_background_detection()
                     if dashboard is not None: dashboard.stop()
                     finalize_sol_quality_metrics()
+                    save_va_result()    # the operator stopped the test: recorded as not finished
                     recorder.close()
+                    bundle.event("abort", key="q", where="trial", trial=trial_number)
                     pygame.quit()
+                    bundle.finish("aborted", "operator_q")
                     return
 
             t = time.time() - start
@@ -1006,20 +976,10 @@ def run_test(cfg, sol_context=None):
                         sol_debug_counters['frames_with_gaze_data'] += 1
 
                     if latest_gaze:
-                        sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-                        is_ready = sol_projector.is_homography_valid() if sol_gaze_method == '2D' else sol_projector.is_calibrated()
-                        if not is_ready:
+                        if not sol_projector.is_homography_valid():
                             sol_debug_counters['not_calibrated'] += 1
 
-                    # Get gaze method from config
-                    sol_gaze_method = cfg.get('sol_gaze_method', '3D')
-
-                    # Check if we can process gaze (depends on method)
-                    can_process_gaze = False
-                    if sol_gaze_method == '2D':
-                        can_process_gaze = latest_gaze and sol_projector.is_homography_valid()
-                    else:  # 3D method
-                        can_process_gaze = latest_gaze and sol_projector.is_calibrated()
+                    can_process_gaze = latest_gaze and sol_projector.is_homography_valid()
 
                     if can_process_gaze:
                          try:
@@ -1028,73 +988,25 @@ def run_test(cfg, sol_context=None):
                                  sol_debug_counters['gaze_data_structure_error'] += 1
                                  raise AttributeError("Missing left_eye, right_eye, or combined")
 
-                             # Extract raw SDK gaze_2d for both methods
+                             # Extract raw SDK gaze_2d
                              raw_gaze_2d = None
                              if hasattr(latest_gaze.combined, 'gaze_2d'):
                                  g2d = latest_gaze.combined.gaze_2d
                                  raw_gaze_2d = (g2d.x, g2d.y)
 
-                             if sol_gaze_method == '2D':
-                                 # 2D Gaze Mapping: Use gaze_2d and homography
-                                 if raw_gaze_2d:
-                                     screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
-                                     if screen_pt:
-                                         sol_gaze_pt = screen_pt
-                                         sol_debug_counters['valid_gaze'] += 1
+                             # 2D Gaze Mapping: Use gaze_2d and homography
+                             if raw_gaze_2d:
+                                 screen_pt = sol_projector.project_gaze_2d_to_screen(raw_gaze_2d)
+                                 if screen_pt:
+                                     sol_gaze_pt = screen_pt
+                                     sol_debug_counters['valid_gaze'] += 1
 
-                                         # Save for CSV recording
-                                         sol_mapped_gaze_pt_for_csv = sol_gaze_pt
-                                         sol_raw_gaze_pt_for_csv = raw_gaze_2d
-                                         sol_raw_gaze_data_for_csv = latest_gaze
-                                     else:
-                                         sol_debug_counters['projection_failed'] += 1
-                             else:
-                                 # 3D Gaze Mapping: Use gaze_3d and ray-plane intersection
-                                 left_o = latest_gaze.left_eye.gaze.origin
-                                 right_o = latest_gaze.right_eye.gaze.origin
-                                 gaze_origin_mm = np.array([
-                                     (left_o.x + right_o.x)/2.0,
-                                     (left_o.y + right_o.y)/2.0,
-                                     (left_o.z + right_o.z)/2.0
-                                 ])
-
-                                 # Get 3D Gaze Point
-                                 g3d = latest_gaze.combined.gaze_3d
-                                 gaze_point_mm = np.array([g3d.x, g3d.y, g3d.z])
-
-                                 # Compute Direction Vector
-                                 gaze_direction_vec = gaze_point_mm - gaze_origin_mm
-                                 norm = np.linalg.norm(gaze_direction_vec)
-
-                                 if norm > 0:
-                                     gaze_direction_unit = gaze_direction_vec / norm
-
-                                     # Apply Sol offset correction if available
-                                     if sol_offset is not None:
-                                         gaze_direction_unit = apply_angular_offset(
-                                             gaze_direction_unit,
-                                             sol_offset['pitch_offset_rad'],
-                                             sol_offset['yaw_offset_rad']
-                                         )
-
-                                     gaze_origin_m = gaze_origin_mm / 1000.0  # Convert to meters
-
-                                     # Projection logic (ArUco marker-based)
-                                     screen_pt_m = sol_projector.project_gaze_to_screen(gaze_origin_m, gaze_direction_unit)
-                                     if screen_pt_m is not None:
-                                          pix = sol_projector.physical_to_pixels(screen_pt_m, W, physical_width_m)
-                                          if pix:
-                                              sol_gaze_pt = (int(pix[0]), int(pix[1]))
-                                              sol_debug_counters['valid_gaze'] += 1
-
-                                              # Save for CSV recording
-                                              sol_mapped_gaze_pt_for_csv = sol_gaze_pt
-                                              sol_raw_gaze_pt_for_csv = raw_gaze_2d
-                                              sol_raw_gaze_data_for_csv = latest_gaze
-                                          else:
-                                              sol_debug_counters['projection_failed'] += 1
-                                     else:
-                                         sol_debug_counters['projection_failed'] += 1
+                                     # Save for CSV recording
+                                     sol_mapped_gaze_pt_for_csv = sol_gaze_pt
+                                     sol_raw_gaze_pt_for_csv = raw_gaze_2d
+                                     sol_raw_gaze_data_for_csv = latest_gaze
+                                 else:
+                                     sol_debug_counters['projection_failed'] += 1
                          except AttributeError as e:
                              sol_debug_counters['attribute_error'] += 1
                              # print(f"[DEBUG] AttributeError in gaze processing: {e}")
@@ -1290,6 +1202,7 @@ def run_test(cfg, sol_context=None):
         # acuity: it must not move the staircase or reach the score. It is already in
         # trial_events.csv, which is what the ML pipeline reads.
         catch.record(is_catch, passed)
+        trial_log.append((cpd, passed, "catch" if is_catch else "normal"))
         if is_catch:
             print(f"[Catch] trial {trial_number} logged ({'PASS' if passed else 'FAIL'}); "
                   f"{catch.needed} negative sample(s) still needed "
@@ -1313,6 +1226,10 @@ def run_test(cfg, sol_context=None):
         print(f"Error: {trial_err}")
         print(f"Full traceback:\n{err_msg}")
 
+        # The test goes on, so this is an event and not the end of the session.
+        bundle.event("exception", where="trial", trial=trial_number,
+                     error=f"{type(trial_err).__name__}: {trial_err}")
+
         # Write to crash log file
         try:
             with open("va_trial_crash_log.txt", "a") as f:
@@ -1328,6 +1245,9 @@ def run_test(cfg, sol_context=None):
         # Consume the slot even on error: a forced catch trial runs only because the staircase
         # is already done, so leaving it owed would loop here forever.
         catch.record(is_catch, False)
+        # Mirror what the staircase is told, at the level it is at, so the result follows its path.
+        trial_log.append((catch_cpd if is_catch else float(stair.freq), False,
+                          "catch" if is_catch else "normal"))
         if not is_catch:
             stair.update(False)  # Mark as failed
         print(f"[TRIAL ERROR] Attempting to continue to next trial...")
@@ -1372,9 +1292,11 @@ def run_test(cfg, sol_context=None):
         print("[Data Quality] " + ", ".join(
             f"{lbl} {('%.0f%%' % pct) if pct is not None else 'N/A'}" for lbl, pct, _k in summary_lines))
 
-    # Final Result
-    final_cpd = float(stair.freq)
-    va_score  = get_va_result_cpd(final_cpd)
+    # Final Result: saved before the result screen (which can stay open for a long time), and the
+    # screen shows the saved values, so the two cannot differ.
+    result = save_va_result()
+    final_cpd = result["legacy"]["next_level_cpd"]
+    va_score  = result["legacy"]["va_score"]
 
     # Result Screen
     result_font = pygame.font.SysFont(None, 80)
@@ -1408,3 +1330,4 @@ def run_test(cfg, sol_context=None):
     if sol_projector: sol_projector.stop_background_detection()
     recorder.close()
     pygame.quit()
+    bundle.finish("completed")     # after the window is gone: hashing the folder takes a moment

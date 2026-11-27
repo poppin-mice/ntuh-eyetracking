@@ -102,6 +102,9 @@ calibration_profiles/{username}_{points}pt/
 
 Example: code `s01` with 9 points creates `calibration/calibration_profiles/s01_9pt/`
 
+Since 1.3.0 everything the program prints is also kept in `logs/console_<date>_<time>.log` next to
+`calibration.exe`.
+
 > **To use a profile in VA_center_opt:** the finished profile is **copied automatically** into
 > `VA_center_opt/calibration_profiles/{username}_{points}pt/` when that folder exists next to
 > `calibration/` (the standard release layout) — the "Done" dialog lists both paths. If the copy

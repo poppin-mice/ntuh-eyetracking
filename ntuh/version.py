@@ -149,6 +149,53 @@ VA_center_opt
            negatives already), so a low-VA subject gets few or no catch trials instead of a
            block of them at the end; only what is still owed is forced in when the staircase
            ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
+    1.6.0  Accuracy Test: a required Condition (C1-C5) in a new start dialog decides whether our
+           Sol 2D offset profile is used. C3/C5 no longer start silently without it (4 of 14
+           C3/C5 tests in one field session ran on raw gaze unnoticed): a missing profile is an
+           error dialog, and continuing without calibration needs the operator code and is
+           recorded. C1/C2/C4 ignore a profile that exists. The status is shown in the start
+           dialog, as a banner with a status dot on the examiner view, on the subject-screen
+           bar and in the result dialog (a warning when expected but not applied, or applied
+           but corrected == raw). accuracy_report.json meta gains condition_code,
+           our_calibration_expected, profile_path, profile_calibration_timestamp and gate; the
+           ten existing keys are unchanged. The report folder name gains the condition:
+           accuracy_test/<User Name>_<condition>_<date>_<time> (was <User Name>_<date>_<time>).
+           Fix: a 2D offset calibration whose profile could not be written still said
+           "Calibration Complete". It now says "Calibration NOT saved" with the path and keeps
+           the model in memory for the accuracy test that follows.
+           Fix: "Last Calibrated" kept the previous user's time when the new user had no
+           profile (2D and 3D); it now follows the current user and gaze method.
+    1.7.0  Session bundle v1, part 1 (doc/session_bundle.md): every VA, VF and accuracy-test
+           folder now carries session_meta.json (program version and build, the settings the
+           test ran with, subject / condition / operator as separate fields, start and end
+           time, status completed / aborted / crashed, and a sha256 manifest of the folder),
+           events.csv (aborts, the SPACE override of the quality gate, Clear Offset, a changed
+           User Name or Calibration Folder, scene stalls, Sol worker crashes, exceptions,
+           including what happened since the previous session) and console.log. Everything
+           printed is also kept in logs/console_<time>.log. New "Operator Code" field on the
+           General tab. The accuracy-test folder is created when the test starts and named
+           after the start time; accuracy_report.json meta gains started_at (the ten existing
+           keys are unchanged). tools/check_session_bundle.py checks the folders.
+    1.9.0  Session bundle v1, part 2 (doc/session_bundle.md). (1.8.0 is the VA threshold
+           result.) session_meta.json now says which calibration profiles a test looked for,
+           whether each was loaded, its sha256 and which profiles the folder held, and the
+           folder keeps a byte copy of every loaded profile (calib_profile_snapshot.json,
+           calib_profiles/). New "Sol built-in calibration done" checkbox and Chronus
+           participant code on the Sol tab, stored in every session. Every Sol 2D offset
+           calibration run writes its own folder under calibration_sessions/ with the
+           per-point statistics and leave-one-out errors (calib_points.csv), a copy of the
+           profile it saved, and whether the save worked. New result files va_result.json and
+           vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
+           scores a session again from its own files into a separate _derived folder.
+    1.11.0 VA and VF no longer apply our Sol offset by User Name (REQ-0031). New setting "Sol
+           offset for VA/VF" on the Sol Calib tab: OFF (default) or a 2D profile picked from
+           the Calibration Folder, shown with its user, points and time (a confirm when not
+           made today, and at Start when it was made under another User Name), applied with
+           the 2D gaze method only. The examiner view shows the
+           status for the whole test; session_meta.json our_calibration.expected = a profile
+           was picked, plus gaze_method; events.csv gains profile_selected.
+    1.15.0 The 3D Sol gaze method and its 3D offset calibration are removed (REQ-0034): 2D
+           is the only method; a saved "3D" setting is read as 2D with a console notice.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -187,6 +234,8 @@ calibration
            clinic screens (more so now that the app is per-monitor DPI aware and Windows no
            longer stretches the window). It retunes Tk's named fonts, so the whole window
            follows at once.
+    1.3.0  Everything the program prints is kept in logs/console_<time>.log next to the exe
+           (session bundle v1, doc/session_bundle.md).
 replayer
     1.0.0  Baseline: versioning introduced.
     1.1.0  A "Font" spinner in the menu-bar corner, applied live and remembered between runs
@@ -232,8 +281,8 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.5.0",
-    "calibration": "1.2.0",
+    "VA_center_opt": "1.15.0",
+    "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
 

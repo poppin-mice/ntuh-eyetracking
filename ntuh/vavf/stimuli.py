@@ -160,6 +160,50 @@ class Staircase:
                (self.incorrect_streak >= 4)
 
 
+# ---------- VA result ----------
+VA_STAIRCASE = {"start": 2.0, "step": 2.0, "minv": 2.0, "maxv": 20.0}   # the staircase the VA test runs
+VA_RESULT_FILE = "va_result.json"
+
+
+def build_va_result(trials, app_version=None):
+    """The content of va_result.json: what the VA result screen shows, from the trials alone.
+
+    trials: ordered (cpd, passed, trial_type) of EVERY trial, trial_type "normal" or "catch".
+    The run is replayed through Staircase itself, so this is the test's own scoring; a catch
+    trial never moves the staircase. The VA test and tools/rescore_session.py both call it.
+
+    `legacy` holds the two values on the result screen: the level the staircase would show next
+    and its VA score. The key names are the ones the threshold-rule result (ntuh.va_result v1)
+    uses, which adds its own values beside them.
+    """
+    trials = [(float(cpd), bool(passed), str(kind)) for cpd, passed, kind in trials]
+    stair = Staircase(**VA_STAIRCASE)
+    for _, passed, kind in trials:
+        if kind == "normal":
+            stair.update(passed)
+    if len(stair.reversals) >= 4:               # the three ways Staircase.done() ends, in its order
+        stop_reason = "four_reversals"
+    elif stair.freq >= stair.maxv and stair.max_correct_streak >= 3:
+        stop_reason = "max_streak"
+    elif stair.incorrect_streak >= 4:
+        stop_reason = "four_consecutive_fails"
+    else:
+        stop_reason = None                      # the operator stopped the test
+    return {
+        "schema": "ntuh.va_result", "schema_version": 1,
+        "app": "VA_center_opt", "app_version": app_version,
+        "staircase_finished": stop_reason is not None,
+        "stop_reason": stop_reason,
+        "reversals": list(stair.reversals),
+        "n_trials": len(trials),
+        "n_normal_trials": sum(kind == "normal" for _, _, kind in trials),
+        "trials": [{"trial": i, "cpd": cpd, "result": "PASS" if passed else "FAIL", "trial_type": kind}
+                   for i, (cpd, passed, kind) in enumerate(trials, start=1)],
+        "legacy": {"next_level_cpd": float(stair.freq), "va_score": get_va_result_cpd(stair.freq)},
+        "staircase": dict(VA_STAIRCASE),
+    }
+
+
 # ---------- Catch-trial scheduler ----------
 class CatchScheduler:
     """Decides, one trial at a time, whether the next VA trial is a catch trial.
