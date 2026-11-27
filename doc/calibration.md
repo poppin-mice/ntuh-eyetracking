@@ -102,6 +102,17 @@ calibration_profiles/{username}_{points}pt/
 
 Example: code `s01` with 9 points creates `calibration/calibration_profiles/s01_9pt/`
 
+Since 1.3.0 everything the program prints is also kept in `logs/console_<date>_<time>.log` next to
+`calibration.exe`.
+
+Since 1.4.0 every run, also one cancelled with Q, writes its own folder
+`calibration_sessions/{username}_{points}pt_<date>_<time>/` next to `calibration.exe`: the settings,
+every camera frame of the calibration with its timestamp and whether it was used, statistics per
+point, the training set, gazefollower's log, and a copy (with sha256) of the model it saved. The
+profile folder above is still overwritten in place; the run folders keep the earlier models. See
+[session_bundle.md](session_bundle.md#webcam-calibration-runs). When the model could not be saved,
+a "Not saved" dialog says so (it used to say "Done").
+
 > **To use a profile in VA_center_opt:** the finished profile is **copied automatically** into
 > `VA_center_opt/calibration_profiles/{username}_{points}pt/` when that folder exists next to
 > `calibration/` (the standard release layout) — the "Done" dialog lists both paths. If the copy

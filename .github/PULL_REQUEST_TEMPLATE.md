@@ -19,6 +19,7 @@ Tasks are tracked in the private repo `poppin-mice/ntuh-eyetracking-qc` and on t
 
 - [ ] None
 - [ ] Changes files or columns in `VA_output/`, `VF_output/` or `accuracy_test/` -> described below, `doc/<app>.md` updated, QC scripts and model-repo loaders to be told
+- [ ] A new data-collection feature writes through `SessionBundle` and is listed in `doc/dev/COLLECTION_FLOWS.md`
 
 ## How verified
 

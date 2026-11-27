@@ -134,6 +134,7 @@ The contract for what each session must record (session metadata, sample-level S
 events, calibration profiles) is **`doc/dev/LOGGING_SPEC.md`**. It is a draft (v0.1, 2026-09-27) and is
 added by its own PR. Until that PR is merged, ask Edan for the draft. New logging work follows it, and a
 format change updates it in the same PR.
+Any new data-collection feature writes through `SessionBundle` (`ntuh/recording/session_bundle.py`); list it in `doc/dev/COLLECTION_FLOWS.md`.
 
 ### Tests
 
@@ -206,7 +207,10 @@ are built **locally** with `release.py` (not in CI).
    This cleans/builds all three apps, runs `stage_release.py`, writes
    `release/YYYYMMDD_NTUH_EyeTracking_Suite.zip` (date-first, git-ignored), and creates per-app git
    tags `VA_center_opt-vX.Y.Z`, `calibration-vX.Y.Z`, `replayer-vX.Y.Z` for the current versions.
-4. **A human** pushes the tags (`git push --tags`) and, for a stable release, opens a PR to merge
+4. **A human** runs the with-glasses checks in
+   [`doc/dev/release_hardware_checklist.md`](doc/dev/release_hardware_checklist.md) on the built exes
+   (the automated tests need no hardware, so they cannot cover this). A failed check blocks the release.
+5. **A human** pushes the tags (`git push --tags`) and, for a stable release, opens a PR to merge
    `develop → main`. Hand off the zip from `release/`.
 
 ### Release artifact conventions
