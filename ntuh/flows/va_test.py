@@ -41,6 +41,18 @@ from ntuh.sol import offset_choice
 
 
 def run_test(cfg, sol_context=None):
+    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF", never one
+    # found by the User Name. Applied in 2D, the only gaze method (REQ-0034). Checked before the
+    # test window opens: a picked file that is gone stops the test without leaving a black
+    # window behind.
+    sol_choice = offset_choice.choose(cfg)
+    if sol_choice['load_error']:
+        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
+                                      f"{sol_choice['load_error']}")
+        return
+    sol_2d_offset_model = sol_choice['model']
+    print(f"[Sol Offset] {offset_choice.describe(sol_choice)[1]}")
+
     # Use real pixel dimensions from OS (not DPI-scaled pygame.display.Info)
     W = cfg.get('screen_w', 1920)
     H = cfg.get('screen_h', 1080)
@@ -53,22 +65,13 @@ def run_test(cfg, sol_context=None):
     print(f"[Test] Window: {W}x{H} at ({screen_x},{screen_y}), NOFRAME mode")
     ensure_pygame_focus()
 
-    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF", never one
-    # found by the User Name. Applied in 2D, the only gaze method (REQ-0034).
-    sol_choice = offset_choice.choose(cfg)
-    if sol_choice['load_error']:
-        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
-                                      f"{sol_choice['load_error']}")
-        return
-    sol_2d_offset_model = sol_choice['model']
-    print(f"[Sol Offset] {offset_choice.describe(sol_choice)[1]}")
-
     # 1. Initialize Webcam Tracker
     gf = None
     webcam = None
     if cfg['enable_webcam']:
         profile_dir = Path(cfg['calib_dir'])
         if not profile_dir.exists():
+            pygame.quit()       # the test does not start: close its window
             messagebox.showerror("Error", "Calibration folder missing")
             return
         dcfg = DefaultConfig()
@@ -78,6 +81,7 @@ def run_test(cfg, sol_context=None):
         calib = SVRCalibration(model_save_path=str(profile_dir))
         gf = GazeFollower(config=dcfg, calibration=calib, camera=webcam)
         if not gf.calibration.has_calibrated:
+            pygame.quit()       # the test does not start: close its window
             messagebox.showerror("Error", "Calibration not found. Run calibration.py first.")
             return
         ensure_pygame_focus()
