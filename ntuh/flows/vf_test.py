@@ -38,6 +38,15 @@ def run_vf_test(cfg, sol_context=None):
     """Run Visual Field (VF) test - moving stimulus across grid positions."""
     import os as os_module
 
+    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF". Checked
+    # before the test window opens, so a picked file that is gone leaves no window behind.
+    sol_choice = offset_choice.choose(cfg)
+    if sol_choice['load_error']:
+        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
+                                      f"{sol_choice['load_error']}")
+        return
+    print(f"[VF Sol] {offset_choice.describe(sol_choice)[1]}")
+
     W = cfg.get('screen_w', 1920)
     H = cfg.get('screen_h', 1080)
     screen_x = cfg.get('screen_x', 0)
@@ -47,15 +56,6 @@ def run_vf_test(cfg, sol_context=None):
     win = pygame.display.set_mode((W, H), pygame.NOFRAME)
     print(f"[VF Test] Window: {W}x{H} at ({screen_x},{screen_y}), NOFRAME mode")
     ensure_pygame_focus()
-
-    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF".
-    sol_choice = offset_choice.choose(cfg)
-    if sol_choice['load_error']:
-        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
-                                      f"{sol_choice['load_error']}")
-        pygame.quit()
-        return
-    print(f"[VF Sol] {offset_choice.describe(sol_choice)[1]}")
 
     cx, cy = W // 2, H // 2
     vf_bg = to_rgb_tuple(cfg.get('vf_bg_color', (0, 0, 0)))
