@@ -13,6 +13,8 @@ import pygame
 
 from ntuh.sol.projector import ScreenProjector3D, create_calibration_assets
 from ntuh.recording.recorder import Recorder, DummyRecorder
+from ntuh.recording import session_bundle
+from ntuh.sol import offset_choice
 from gazefollower import GazeFollower
 from gazefollower.misc import DefaultConfig
 from gazefollower.calibration import SVRCalibration
@@ -20,6 +22,7 @@ from gazefollower.camera import WebCamCamera
 from ntuh.common.optics import to_rgb_tuple
 from ntuh.common.pygame_utils import ensure_pygame_focus
 from ntuh.common.win_monitors import resolve_tester_rect
+from ntuh.version import get_version
 from ntuh.vavf.stimuli import (
     VF_ANGULAR_DIAMETERS, vf_angular_to_pixel_diameter, vf_convert_positions_to_pixels,
     vf_generate_points, vf_get_quadrant,
@@ -33,6 +36,15 @@ from ntuh.ui.tester_dashboard import TesterDashboard
 def run_vf_test(cfg, sol_context=None):
     """Run Visual Field (VF) test - moving stimulus across grid positions."""
     import os as os_module
+
+    # Our Sol offset (REQ-0031): only the profile picked under "Sol offset for VA/VF". Checked
+    # before the test window opens, so a picked file that is gone leaves no window behind.
+    sol_choice = offset_choice.choose(cfg)
+    if sol_choice['load_error']:
+        messagebox.showerror("Error", f"Sol offset profile cannot be used:\n{sol_choice['path']}\n"
+                                      f"{sol_choice['load_error']}")
+        return
+    print(f"[VF Sol] {offset_choice.describe(sol_choice)[1]}")
 
     W = cfg.get('screen_w', 1920)
     H = cfg.get('screen_h', 1080)
@@ -133,37 +145,12 @@ def run_vf_test(cfg, sol_context=None):
 
         phy_w_m = cfg.get('sol_screen_phy_width_mm', 530.0) / 1000.0
 
-        # Load 2D offset model if using 2D gaze method
-        sol_2d_offset_model = None
-        if sol_gaze_method == '2D':
-            try:
-                from ntuh.sol.offset_calibration_2d import load_sol_2d_offset, Sol2DOffsetModel
-                offset_data = load_sol_2d_offset(cfg.get('user_name', 'anonymous'),
-                                                  Path(cfg.get('calib_dir', 'calibration_profiles')))
-                if offset_data:
-                    sol_2d_offset_model = Sol2DOffsetModel.from_dict(offset_data)
-                    print(f"[VF Sol] Loaded 2D offset model ({sol_2d_offset_model.num_points} pts)")
-                    # Also set on projector for integrated smoothing
-                    if sol_2d_offset_model.is_trained:
-                        sol_projector.set_gaze_2d_offset_model(sol_2d_offset_model)
-                        print(f"[VF Sol] Applied 2D offset model to projector")
-            except Exception as e:
-                print(f"[VF Sol] Failed to load 2D offset: {e}")
-
-        # Load 3D offset if using 3D method
+        # Our Sol offset: only the picked profile, applied in 2D (REQ-0031). No 3D angular offset.
+        if sol_choice['model'] is not None:
+            sol_projector.set_gaze_2d_offset_model(sol_choice['model'])
+            print(f"[VF Sol] Applied 2D offset model to projector")
         sol_offset_pitch = 0.0
         sol_offset_yaw = 0.0
-        if sol_gaze_method == '3D':
-            try:
-                from ntuh.sol.offset_calibration import load_sol_offset
-                sol_offset = load_sol_offset(cfg.get('user_name', 'anonymous'),
-                                              Path(cfg.get('calib_dir', 'calibration_profiles')))
-                if sol_offset:
-                    sol_offset_pitch = sol_offset.get('pitch_offset_rad', 0.0)
-                    sol_offset_yaw = sol_offset.get('yaw_offset_rad', 0.0)
-                    print(f"[VF Sol] Loaded 3D offset: pitch={math.degrees(sol_offset_pitch):.2f} yaw={math.degrees(sol_offset_yaw):.2f}")
-            except Exception as e:
-                print(f"[VF Sol] Failed to load 3D offset: {e}")
 
         # Start background detection AFTER scene stream is resumed and offset models loaded
         sol_projector.start_background_detection(
@@ -177,6 +164,12 @@ def run_vf_test(cfg, sol_context=None):
     else:
         recorder = Recorder(output_dir="VF_output", subject_id=cfg.get('user_name', 'test'), is_va=False,
                             screen_max_height=(720 if cfg.get('rec_resolution') == "1280x720" else 1080))
+    # Session bundle (doc/session_bundle.md); nothing in practice mode, which has no folder.
+    bundle = session_bundle.start(getattr(recorder, 'session_dir', None), 'vf', cfg=cfg)
+    # Which calibration profiles this test looked for, and what it found (with a copy of each).
+    if cfg['enable_webcam']:
+        bundle.profile("webcam", cfg['calib_dir'], loaded=True)    # without one the test did not start
+    offset_choice.record(bundle, sol_choice)
 
     # [NEW] Sol gaze-quality tracker + tester dashboard (mirrors the VA test)
     sol_quality = (SolQualityTracker(window_sec=cfg.get('sol_quality_window', 3.0))
@@ -189,7 +182,8 @@ def run_vf_test(cfg, sol_context=None):
         tester_rect = resolve_tester_rect(cfg)
         if cfg.get('enable_webcam') or cfg.get('enable_sol'):
             dashboard = TesterDashboard(gf, sol_quality, dash_state, cfg, tester_rect=tester_rect,
-                                        session_dir=getattr(recorder, 'session_dir', None))
+                                        session_dir=getattr(recorder, 'session_dir', None),
+                                        calib_status=offset_choice.describe(sol_choice))
             dashboard.start()
             print(f"[VF Dashboard] Examiner dashboard started (rect: {tester_rect})" if tester_rect
                   else "[VF Dashboard] No separate Examiner Screen - collecting quality, no window.")
@@ -239,6 +233,7 @@ def run_vf_test(cfg, sol_context=None):
 
     vf_stim_path = cfg.get('vf_stim_path', '')
     if not vf_stim_path or not Path(vf_stim_path).exists():
+        bundle.finish("aborted", "stimulus_image_missing")
         pygame.quit()
         messagebox.showerror("VF Test Error",
                              f"Stimulus image not found:\n{vf_stim_path}\n\n"
@@ -248,6 +243,7 @@ def run_vf_test(cfg, sol_context=None):
         raw = pygame.image.load(vf_stim_path)
         stim_img = pygame.transform.scale(raw, (diameter_px, diameter_px))
     except Exception as e:
+        bundle.finish("aborted", "stimulus_image_unreadable")
         pygame.quit()
         messagebox.showerror("VF Test Error",
                              f"Failed to load stimulus image:\n{vf_stim_path}\n\n{e}")
@@ -620,6 +616,7 @@ def run_vf_test(cfg, sol_context=None):
 
             # [NEW] Quality gate: wait until enabled trackers have stable valid data (if enabled).
             if wait_for_stable_quality() == 'quit':
+                bundle.event("abort", key="q", where="quality_gate", trial=idx + 1)
                 quit_requested = True
                 break
 
@@ -642,6 +639,7 @@ def run_vf_test(cfg, sol_context=None):
 
                 for ev in pygame.event.get():
                     if ev.type == pygame.KEYDOWN and ev.key == pygame.K_q:
+                        bundle.event("abort", key="q", where="trial", trial=idx + 1)
                         quit_requested = True
 
                 if quit_requested:
@@ -825,10 +823,17 @@ def run_vf_test(cfg, sol_context=None):
             print("[Data Quality] " + ", ".join(
                 f"{lbl} {('%.0f%%' % pct) if pct is not None else 'N/A'}" for lbl, pct, _k in summary_lines))
 
+        # Final result, saved before the summary screen that shows the same two numbers.
+        pass_count = sum(1 for r in results if r['result'] == 'PASS')
+        total = len(results)
+        bundle.write_json("vf_result.json", {
+            "schema": "ntuh.vf_result", "schema_version": 1,
+            "app": "VA_center_opt", "app_version": get_version("VA_center_opt"),
+            "finished": not quit_requested, "n_points": total, "n_pass": pass_count,
+            "points": results})
+
         # Show summary
         if results:
-            pass_count = sum(1 for r in results if r['result'] == 'PASS')
-            total = len(results)
             win.fill(vf_bg)
             summary = font.render(f"VF Test Complete: {pass_count}/{total} PASS", True, (255, 255, 255))
             win.blit(summary, (cx - summary.get_width() // 2, cy - summary.get_height() // 2))
@@ -851,6 +856,7 @@ def run_vf_test(cfg, sol_context=None):
         import traceback
         print(f"[VF Test] Error: {e}")
         traceback.print_exc()
+        bundle.crash(type(e), e, e.__traceback__, where="vf_test")
     finally:
         if dashboard is not None:
             dashboard.stop()
@@ -862,3 +868,5 @@ def run_vf_test(cfg, sol_context=None):
             sol_projector.stop_background_detection()
         recorder.close()
         pygame.quit()
+        bundle.finish("aborted" if quit_requested else "completed",
+                      "operator_q" if quit_requested else None)

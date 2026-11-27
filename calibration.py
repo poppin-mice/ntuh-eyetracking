@@ -732,6 +732,10 @@ class CalibGUI(tk.Tk):
 import numpy as np
 
 def main():
+    # Keep a copy of everything printed in logs/console_<time>.log. In main(), not at import time.
+    from ntuh.recording import session_bundle
+    session_bundle.install_console_tee(APP_DIR)
+
     # [FIX] DPI Awareness: per-monitor V2, so the pygame window's coordinates are the
     # same physical pixels get_monitor_info_windows() reports. Must run before any
     # window exists (Tk or SDL), hence first thing in main().
