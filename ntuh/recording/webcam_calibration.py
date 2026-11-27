@@ -17,8 +17,9 @@ SAMPLES_FILE = "webcam_calib_samples.csv"
 POINTS_FILE = "webcam_calib_points.csv"
 FEATURES_FILE = "webcam_calib_features.npz"
 GF_LOG_FILE = "gazefollower.log"
-# target_* and raw_gaze_* are in gazefollower's units: fractions of the screen width / height
-# (calibration.py never sets a physical screen size). Never rename or reorder: append at the end.
+# target_* are fractions of the screen width / height (calibration.py never sets a physical screen
+# size). raw_gaze_* is the gaze model's estimate before calibration, in the model's own unit: not a
+# screen position. Never rename or reorder: append at the end.
 SAMPLE_COLUMNS = ["attempt", "point_idx", "target_x", "target_y", "pc_timestamp_ms",
                   "camera_timestamp_ns", "gaze_status", "left_openness", "right_openness",
                   "raw_gaze_x", "raw_gaze_y", "used"]

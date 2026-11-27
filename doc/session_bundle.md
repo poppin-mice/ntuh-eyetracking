@@ -190,11 +190,13 @@ copied to `VA_center_opt/calibration_profiles/`; the run folder is what keeps th
 - `webcam_calib_samples.csv`: one row per camera frame gazefollower looked at during the
   calibration: `attempt, point_idx, target_x, target_y, pc_timestamp_ms, camera_timestamp_ns,
   gaze_status, left_openness, right_openness, raw_gaze_x, raw_gaze_y, used`. `point_idx` -1 is the
-  centre target shown first, whose frames are not used. `target_*` and `raw_gaze_*` (the uncalibrated
-  estimate) are fractions of the screen width and height. `used` = 1 for the frames the model was
-  trained on (45 per point, after the 1.5 s settling time, both eyes open).
+  centre target shown first, whose frames are not used. `target_*` are fractions of the screen width
+  and height. `raw_gaze_*` is the gaze model's own estimate before calibration, in the model's
+  unit: it is **not** a screen position (on one bench run x ran from -2.2 to 2.8 and y from -14.5
+  to -1.1), so compare it between frames of a point, not with the target. `used` = 1 for the frames
+  the model was trained on (45 per point, after the 1.5 s settling time, both eyes open).
 - `webcam_calib_points.csv`: per attempt and point: `target_x, target_y, n_frames, n_used`, mean and SD
-  of the used `raw_gaze` (`raw_mean_x/y`, `raw_sd_x/y`), and `fit_err_px`: the mean distance between
+  of the used `raw_gaze` (`raw_mean_x/y`, `raw_sd_x/y`, in the model's unit), and `fit_err_px`: the mean distance between
   the trained model's prediction and the target, in screen px, on its own training frames (so an
   optimistic error). Only the last attempt was trained, so earlier attempts have none.
 - `webcam_calib_features.npz`: the training set as gazefollower used it (`features`, `labels`,
