@@ -36,10 +36,19 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| Subject Code | Participant **code** (e.g. `s01`, `K03`), never a real name. Checked as you type (since 1.13.0): the default format is 1–3 letters and 2–3 digits (`^[A-Za-z]{1,3}\d{2,3}$`, settings key `subject_code_regex`); a space or a non-ASCII letter is always refused. A test cannot start without a valid code. Not remembered between runs | (empty) |
+| Condition | `C1` … `C5` (the list of the accuracy test), or empty. Required for *Start Calibration* and the *Accuracy Test*; optional for VA/VF. Not remembered between runs | (empty) |
+| Run (第幾次) | Run number of the next VA/VF session, pre-selected: the sessions of the same subject, condition and test today + 1. It is the `sess<N>` of the folder name. Choosing another number is recorded (`repeat_index_manual` event) | computed |
+| Collection | Collection label (收測場次, e.g. `20261124_NH`), stored in `session_meta.json`. Kept for the rest of the day | (empty) |
+| User Name | **Read-only** since 1.13.0: made from Subject Code and Condition, `s01` + C3 → `s01_c3` (`s01` without a condition). It is part of the output folder names. Since 1.16.0 no Sol offset profile is looked up by it: the accuracy test finds the profile by Subject Code and Condition (see *Sol offset profiles* on the Sol Calib tab), VA/VF apply only a picked one | (empty) |
+| Operator Code | Code of the person running the test (e.g. `OT1`), never a real name. Remembered between runs and stored in each session's `session_meta.json` (since 1.7.0) | (empty) |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
+
+**Lock (since 1.13.0).** *Start Calibration* (Sol Calib tab) locks Subject Code and Condition until the accuracy test of that condition is **completed**; an aborted test keeps the lock, because it is run again. The red note next to the User Name says so. **Unlock** ends the lock early (for example the wrong subject was entered); it asks first and is recorded (`identity_unlocked` event). The lock is not kept when the program is closed.
+
+**Picking the condition twice.** The accuracy test's start dialog still asks for the condition, and it must be the Condition of the General tab; otherwise the dialog says so and does not start.
 
 **Negative Sample Collection Mode** (General tab, under the quality gate) — **off by default**,
 VA only. "Collect negative samples: *N*" asks the session for *N* negative ("non-target
@@ -122,14 +131,14 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Calibration Folder | The webcam profile folder to use: select the participant's own `<code>_<points>pt` folder. The profile is **not** picked by User Name | calibration_profiles/ (holds no profile itself, see note) |
+| Calibration Folder (webcam only) | The webcam profile folder to use: select the participant's own `<code>_<points>pt` folder. The profile is **not** picked by User Name. Since 1.16.0 it is used for the webcam model only, not for the Sol offset profiles | calibration_profiles/ (holds no profile itself, see note) |
 | Select Camera | Webcam device index | 0 |
 
 > **Note:** Profiles live in the `calibration_profiles/` folder **next to `VA_center_opt.exe`**. `calibration.exe` copies each finished profile here automatically (as well as to its own `calibration/calibration_profiles/`); if the two app folders are not side by side, copy the `<code>_<points>pt` folder here by hand. Then select that `<code>_<points>pt` folder itself as the Calibration Folder: a parent folder such as `calibration_profiles/` holds no profile. A default `anonymous_9pt` profile is included.
 >
-> **Silent fallback (tracker REQ-0041).** If the selected folder holds no webcam profile (no `svr_x.xml`), *Start* switches the Calibration Folder to `anonymous_9pt` without a warning (only the console says so) and keeps that setting for later runs.
+> **No webcam model in the folder (since 1.16.0, tracker REQ-0041).** If the selected folder holds no webcam profile (no `svr_x.xml`), *Start* (and *Preview Webcam Gaze*) asks: **Yes** = use the default model `anonymous_9pt`, **No** = pick a model folder, **Cancel** = do not start (run the webcam calibration first). The folder chosen becomes the Calibration Folder setting. The answer is logged (`webcam_model_choice` event) and a VA/VF session stores it in `session_meta.json` -> `config.webcam_model_choice`; its webcam profile entry shows which folder was used. Before 1.16.0, *Start* switched to `anonymous_9pt` without a warning and kept that setting.
 >
-> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found and the test runs on uncorrected Sol gaze. The test screens give no warning; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0018, REQ-0031).
+> **The Sol offset profiles are no longer in this folder (since 1.16.0).** They are in `calibration_profiles/sol2d/` next to the program, whatever this setting is (see *Sol offset profiles* on the Sol Calib tab). Before 1.16.0 Sol calibration saved `<User Name>_sol_2d_offset.json` into the current Calibration Folder, so changing this folder (or the automatic switch above) lost the profile.
 
 ### Sol Tab
 
@@ -139,8 +148,10 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Markers (HxV) | ArUco marker grid layout | 8 x 5 |
 | Pattern Size (px) | Size of each ArUco marker on screen | 200 |
 | Dict | ArUco dictionary type | DICT_4X4_250 |
-| Gaze Method | 3D (ray-plane) or 2D (homography) | 2D |
+| Gaze Method | 2D (homography) only. The 3D method and its offset calibration were removed in 1.15.0 (tracker REQ-0034); a saved `3D` setting is read as 2D, with a console notice | 2D |
 | Pose Smooth / Gaze Smooth | Smoothing factors (0-1, higher = more smooth) | 1 / 1 |
+| Sol built-in calibration done | Tick it after the Sol built-in calibration (Chronus, lighthouse mode) was done for this subject; untick it for the next subject. The program cannot read this from the glasses, so the tick and its time are what every session records (since 1.9.0). Not remembered between runs | OFF |
+| Chronus participant code | The participant code used in the Chronus app. Remembered between runs and stored in every session (since 1.9.0) | (empty) |
 
 > **Note:** Before running experiments, the tester should test different ArUco marker counts (HxV) and pattern sizes on the target screen to ensure markers do not overlap each other or the stimulus area. Choosing the right combination for the specific screen size is important for achieving the best gaze tracking accuracy.
 
@@ -156,9 +167,90 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 **Accuracy Test** (button in *Preview Gaze Mapping*): measures Sol gaze accuracy + precision before and after the loaded 2D offset, over concentric-ring + corner targets, and saves a CSV/JSON report plus heatmap/by-angle PNGs under `accuracy_test/`. The subject fixates each target and the operator presses **SPACE** (ESC/Q aborts).
 
+**Condition and our calibration (since 1.6.0).** The Accuracy Test opens with a start dialog in which the operator must pick the **Condition** (C1–C5; there is no default). The condition decides whether our offset profile (the one found for the subject and condition, see *Sol offset profiles* below; before 1.16.0 `<User Name>_sol_2d_offset.json` in the Calibration Folder) is used:
+
+| Condition | Our calibration | What happens |
+|-----------|-----------------|--------------|
+| C1 practice, C2 no calibration, C4 Sol built-in | must **not** be applied | A profile that exists for the User Name is ignored (not deleted); the console says so. Nothing has to be cleared before these conditions (since 1.16.1 *Clear Offset* is no longer in the normal flow, see *Delete profile...* below). |
+| C3 our calibration, C5 both | **required** | With a profile: it is applied. Without one: the test does **not** start. |
+
+- **C3/C5 without a profile** shows an error dialog with the file that was looked for. *No* goes back, so the 5-point calibration can be run for this subject and condition. *Yes* continues **without** our calibration; it then asks for the operator code (a code, not a name) as confirmation, and the choice, the code and the time are written to the report.
+- The start dialog shows the status once a condition is picked: `校正檔：已載入（file, time, points）` in green, or `校正檔：未載入` in grey (the condition does not use it) or red (C3/C5 and no profile).
+- During the test the examiner view carries a banner with a status dot: green `OUR CALIB: LOADED <file> <n> pts <time>`, or grey `OUR CALIB: NOT LOADED (...)`. The bar at the bottom of the subject screen shows `Our calib: ON` / `OFF`, which is what a single-monitor setup has.
+- The result dialog repeats the status. It is a **warning** dialog when a C3/C5 test ran without our calibration, or when a profile was loaded but corrected and raw gaze are identical on every point.
+- The report folder name carries the condition: `accuracy_test/<User Name>_<YYYYMMDD_HHMMSS>/`, for example `s01_c3_20261122_100305`, where the User Name is made of Subject Code and Condition (since 1.13.0; 1.6.0–1.12.x: `<User Name as typed>_<condition>_<YYYYMMDD_HHMMSS>`, which gave `s01_c3_c3_...` for a User Name typed with its condition; before 1.6.0: `<User Name>_<YYYYMMDD_HHMMSS>`). Existing folders are not renamed.
+- `accuracy_report.json` → `meta` keeps its ten keys (`user`, `timestamp`, `screen_w`, `screen_h`, `view_dist_cm`, `screen_width_cm`, `n_points`, `calib_model_loaded`, `offset_mode`, `aborted`) and gains five:
+
+  | Key | Meaning |
+  |-----|---------|
+  | `condition_code` | `C1` … `C5`, as picked in the start dialog |
+  | `our_calibration_expected` | `true` for C3 and C5 |
+  | `profile_path` | The profile file found for the subject and condition (since 1.16.0; before, the file the User Name maps to), relative to the program folder when it is inside it. When none was found it is the pattern looked for, `calibration_profiles/sol2d/<User Name>_*.json`. It was loaded only if `calib_model_loaded` is `true` |
+  | `profile_calibration_timestamp` | Calibration time stored in the profile; `null` unless the profile was applied |
+  | `gate` | `{status, message, condition, operator_code, time}`. `status` is `ok` (applied), `not_applied_by_condition` (C1/C2/C4) or `no_calib_by_operator` (C3/C5 run without it by the operator's choice; `operator_code` and `time` are set) |
+
+**Sol offset for VA/VF (since 1.11.0, tracker REQ-0031).** VA and VF **no longer apply our offset by
+User Name**: before 1.11.0 they applied `<User Name>_sol_2d_offset.json` (2D gaze) or
+`<User Name>_sol_offset.json` (3D gaze) whenever the file existed, and nothing in the output said so.
+Now nothing is applied unless the operator picks a profile in the group *Sol offset for VA/VF* on this tab:
+
+- **OFF** (the default, and after every program start): VA/VF use the Sol gaze without our offset.
+- **Select profile...**: pick a profile directly in `calibration_profiles/sol2d/` (since 1.16.0), or a legacy
+  `*_sol_2d_offset.json` directly in `calibration_profiles/` (marked `LEGACY`). Before 1.16.0: a
+  `*_sol_2d_offset.json` in the Calibration Folder. The group then
+  shows the file, the user name it was made under, the number of points and the calibration time. A
+  profile not made today asks for a confirm. The pick is not remembered when the program closes.
+- The profile is applied in 2D, the only gaze method (since 1.15.0; from 1.11.0 to 1.14.x a picked
+  profile was recorded but not applied when *Gaze Method* was 3D). No 3D angular offset is applied in
+  VA/VF any more.
+- During the test the examiner view (Examiner Screen) has a strip under its panels with a status dot:
+  green `OUR CALIB: APPLIED <file> user <name> <n> pts <time>`, or grey `OUR CALIB: NOT APPLIED (...)`.
+- The pick stays when the User Name changes. *Start* asks for a confirm when the picked profile was made
+  for another subject (the previous subject's); *No* does not start. Since 1.16.0 only the Subject Code is
+  compared, so a profile of another condition of the same subject is applied without a question (before,
+  the whole User Name was compared).
+- A picked file that can no longer be read stops the test before it starts, with an error dialog.
+- The session records the choice: `session_meta.json` → `our_calibration.expected` (a profile was picked),
+  `gaze_method`, the profile entry with its sha256 and the copy `calib_profile_snapshot.json`, and the
+  event `profile_selected` in `events.csv` ([session_bundle.md](session_bundle.md)).
+
+**Calibration NOT saved.** When *Start Calibration* finishes but the profile file cannot be written (for example a read-only `calibration_profiles/sol2d/`), an error dialog **Calibration NOT saved / 校正未存檔** shows the path instead of *Calibration Complete*. The calibration is kept in memory, so an accuracy test run next under the same User Name still uses it (the status then reads `NOT SAVED (in memory)`); it is lost when the program closes.
+
 - The accuracy test and the gaze preview both run on the subject screen set at *General → Screen & Viewing → **Subject Screen***, and the operator's monitoring screen is *General → Screen & Viewing → Examiner Screen*. When these are two different monitors, an **examiner view** opens on the Examiner Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
 - The camera picture appears as soon as frames arrive; the target and corrected-gaze markers need a valid homography, so until the ArUco markers are found you see the video with the raw gaze only and a "no homography yet" note.
 - The examiner view is shown only on the Examiner Screen; the subject never sees a gaze dot (so they cannot chase it and bias the measurement). With a single monitor the test runs as before, without a tester window.
+- **Every 2D offset calibration run leaves a folder** `calibration_sessions/<User Name>_<date>_<time>/` (since 1.9.0) with the statistics of each calibration point (`calib_points.csv`), a copy of the profile it saved and whether the save worked; see [session_bundle.md](session_bundle.md).
+
+**Sol offset profiles (since 1.16.0, tracker REQ-0041 / REQ-0042).**
+
+- **One new file per calibration, never overwritten**: `calibration_profiles/sol2d/<calib_session_id>.json`
+  next to the program, where `calib_session_id` is the name of the run's folder in `calibration_sessions/`
+  (for example `s01_c3_20261124_101500.json`). The Webcam tab's Calibration Folder does not move it.
+  Before 1.16.0 a calibration overwrote `<User Name>_sol_2d_offset.json` in the Calibration Folder.
+- Besides the model and the fields of the old file, a profile holds `calib_session_id`, `subject_code`,
+  `condition_code`, `app_version`, `build_id` and `per_point`: the `calib_points.csv` rows of the run
+  (n, SD, leave-one-out errors ...). Every session that uses a profile records its sha256.
+- **Which profile the accuracy test uses** (and the status on this tab, the gaze preview and *Delete profile...*):
+  the newest profile of the same Subject Code and Condition made **after the subject's previous test session
+  in another condition** (VA, VF or accuracy test). A retake of the same condition still finds the profile;
+  a profile from an earlier condition or an earlier visit does not. A profile not made today asks for a
+  confirm (*No* goes back; the answer is logged as `profile_not_today`).
+- **Legacy profiles** `<User Name>_sol_2d_offset.json` directly in `calibration_profiles/` are still read
+  (their subject and condition come from the User Name), never written or deleted. They are marked
+  `legacy_profile: true` in `session_meta.json` and `LEGACY` / `舊格式` in the dialogs. Legacy files in other
+  folders (for example inside `anonymous_9pt/`) are not looked at.
+- **Delete profile... / 刪除校正檔…** (since 1.16.1, tracker REQ-0033; it replaces the *Clear Offset* button)
+  sits in the group *Advanced / 進階* at the bottom of the Sol Calib tab. It is **not** a routine step: the
+  condition already decides whether our calibration is applied. It takes the profile currently found for the
+  subject and condition, asks for a confirm that names the subject, the condition and the file, and then
+  **moves** the file to `calibration_profiles/sol2d/_deleted/` (nothing is deleted; a name already there gets a
+  time suffix). A moved profile is no longer found, and the VA/VF picker refuses it. The dialog after the move
+  says which profile is found now (an older one of the same subject and condition, or none). When that file was
+  picked in *Sol offset for VA/VF*, the pick is set back to OFF. With no profile the message is
+  `沒有校正檔可刪除 / No profile to delete`; a legacy profile is never moved; the button is disabled while
+  Subject Code and Condition are locked after *Start Calibration* (until that condition's accuracy test is
+  completed). Before 1.16.1 *Clear Offset* deleted the file without asking (1.16.0: the profile found; before:
+  `<User Name>_sol_2d_offset.json`) and said "cleared" also when there was nothing to delete.
 - **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
 
 ### Recording Tab
@@ -179,7 +271,7 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 ## Output Data
 
-Experiment data is saved to `VA_output/` **next to `VA_center_opt.exe`**. Strictly, `VA_output/` is created in the folder the program was started from: double-clicking the `.exe` or `run_debug.bat` puts it next to the `.exe`, but a shortcut whose "Start in" folder is elsewhere does not (tracker REQ-0042).
+Experiment data is saved to `VA_output/` (VF: `VF_output/`) **next to `VA_center_opt.exe`**, also when the program is started from a shortcut or another folder (since 1.13.0; before, these two folders and the `va_crash_log.txt` / `vf_crash_log.txt` / `va_trial_crash_log.txt` files went to the folder the program was started from). Run from source, the program folder is the folder of `VA_center_opt.py`, or the folder in the environment variable `NTUH_APP_DIR`.
 
 ### Session Folder
 
@@ -187,7 +279,7 @@ Each session creates a timestamped folder:
 
 ```
 VA_output/
-  VA_{username}_sess1_{date}_{time}/
+  VA_{User Name}_sess{run}_{date}_{time}/     - run = Run (第幾次); always sess1 before 1.13.0
     webcam_gaze_data.csv        - Webcam gaze coordinates per frame
     sol_gaze_data.csv           - Sol gaze coordinates per frame
     webcam_video.mp4            - Webcam recording
@@ -200,8 +292,28 @@ VA_output/
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
     trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
+    session_meta.json           - Program version, settings, identity, start/end, status (since 1.7.0)
+    events.csv                  - Operator and program events (since 1.7.0)
+    console.log                 - What the program printed during the session (since 1.7.0)
+    crash_log.txt               - Only after an exception (since 1.7.0)
+    va_result.json              - The final result as the result screen shows it (since 1.9.0)
+    calib_profile_snapshot.json - Copy of the Sol offset profile the test applied, if one loaded (since 1.9.0)
+    calib_profiles/             - Copies of the other calibration profiles it loaded (since 1.9.0)
     review_labels.json          - Created later by replayer (review labels)
 ```
+
+A VF session folder holds `vf_result.json` instead of `va_result.json`.
+
+> **Session record (since 1.7.0).** `session_meta.json`, `events.csv` and `console.log` are written
+> into every VA, VF and accuracy-test folder; [session_bundle.md](session_bundle.md) describes them.
+> Everything the program prints is also kept in `logs/console_<date>_<time>.log` next to the exe.
+> The accuracy-test folder (`accuracy_test/<User Name>_<date>_<time>/`) is now created when the test
+> starts and named after the start time, and a test aborted before its first point leaves a folder too.
+>
+> **Since 1.9.0** the record also says which calibration profiles the test looked for and whether each
+> was loaded (with a copy of every loaded profile), whether the Sol built-in calibration was confirmed,
+> and the final result (`va_result.json`, `vf_result.json`, and `result` in `accuracy_report.json` →
+> `meta`; its existing keys are unchanged).
 
 > The screen video may be downscaled (e.g. 4K → 1080p); `screen_meta.json` records the
 > original screen resolution so the replayer can align the gaze overlays.

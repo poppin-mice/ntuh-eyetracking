@@ -6,11 +6,14 @@ app folder self-contained for the end user (the Professor):
   - copies read-only defaults next to the .exe (the apps read them from the .exe folder
     via their frozen APP_DIR): the default calibration profile + image folders,
   - creates the writable output folders (so recordings/logs land next to the .exe),
-  - writes a run_debug.bat launcher per app (keeps the console open after exit/crash).
+  - writes a run_debug.bat launcher per app (keeps the console open after exit/crash),
+  - writes build_info.json per app (which commit the exe was built from; the apps copy it
+    into every session_meta.json).
 
 Run from the repo root (see build_exe.bat).  Uses Python (not .bat) so the
 Chinese-named image folders copy correctly regardless of console code page.
 """
+import json
 import os
 import shutil
 import sys
@@ -68,10 +71,33 @@ pause
 """
 
 
+def build_info():
+    """What these exes were built from. Read at run time by
+    ntuh.recording.session_bundle.build_info() and stored in every session_meta.json."""
+    import datetime
+    import subprocess
+
+    def git(*args):
+        out = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True)
+        return out.stdout.strip() if out.returncode == 0 else None
+
+    sys.path.insert(0, ROOT)
+    from ntuh.version import APP_VERSIONS
+    status = git("status", "--porcelain")
+    return {"build_id": git("rev-parse", "--short", "HEAD") or "unknown",
+            "commit_date": git("show", "-s", "--format=%cI", "HEAD"),
+            "dirty": None if status is None else bool(status),
+            "build_date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "app_versions": dict(APP_VERSIONS)}
+
+
 def main():
     if not os.path.isdir(DIST):
         print(f"ERROR: {DIST} not found - build the apps first.")
         return 1
+
+    info = build_info()
+    print(f"build: {info['build_id']}" + (" (uncommitted changes)" if info["dirty"] else ""))
 
     for app, cfg in PLAN.items():
         app_dir = os.path.join(DIST, app)
@@ -95,6 +121,10 @@ def main():
         with open(os.path.join(app_dir, "run_debug.bat"), "w", encoding="utf-8") as f:
             f.write(LAUNCHER.format(exe=app + ".exe"))
         print("    wrote run_debug.bat")
+
+        with open(os.path.join(app_dir, "build_info.json"), "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=2)
+        print("    wrote build_info.json")
 
     # Documentation -> dist\manual\
     manual_dir = os.path.join(DIST, "manual")
