@@ -37,6 +37,7 @@ VA_center_opt measures **grating acuity**, not contrast sensitivity. Each trial 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | User Name | Participant **code** (e.g. `s01`), never a real name. It becomes part of the output folder name, and the Sol offset profile `<code>_sol_2d_offset.json` is looked up by this exact string | anonymous |
+| Operator Code | Code of the person running the test (e.g. `OT1`), never a real name. Remembered between runs and stored in each session's `session_meta.json` (since 1.7.0) | (empty) |
 | Trackers | Enable Webcam and/or Sol Glasses | Webcam: ON, Sol: ON |
 | Evaluation Source | Which tracker to use for VA scoring (Webcam or Sol) | Sol |
 | Show Gaze Marker | Display gaze point on screen during test | ON |
@@ -129,7 +130,7 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 >
 > **Silent fallback (tracker REQ-0041).** If the selected folder holds no webcam profile (no `svr_x.xml`), *Start* switches the Calibration Folder to `anonymous_9pt` without a warning (only the console says so) and keeps that setting for later runs.
 >
-> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found and the test runs on uncorrected Sol gaze. The test screens give no warning; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0018, REQ-0031).
+> **The same folder holds the Sol offset profiles.** Sol offset calibration saves `<code>_sol_2d_offset.json` into the current Calibration Folder, and the accuracy test and the VA test look it up there by the exact User Name. If the folder or the User Name changes between Sol calibration and the test (including the automatic switch above), the saved offset is not found. The **accuracy test** then refuses to start a C3/C5 condition (since 1.6.0, see *Sol Calib Tab*). The **VA/VF test** still runs on uncorrected Sol gaze without a warning on the test screens; only the console and the Sol Calib tab status ("Not calibrated") show it (tracker REQ-0031).
 
 ### Sol Tab
 
@@ -141,6 +142,8 @@ The tabs scroll, so a larger font never pushes controls out of reach.
 | Dict | ArUco dictionary type | DICT_4X4_250 |
 | Gaze Method | 3D (ray-plane) or 2D (homography) | 2D |
 | Pose Smooth / Gaze Smooth | Smoothing factors (0-1, higher = more smooth) | 1 / 1 |
+| Sol built-in calibration done | Tick it after the Sol built-in calibration (Chronus, lighthouse mode) was done for this subject; untick it for the next subject. The program cannot read this from the glasses, so the tick and its time are what every session records (since 1.9.0). Not remembered between runs | OFF |
+| Chronus participant code | The participant code used in the Chronus app. Remembered between runs and stored in every session (since 1.9.0) | (empty) |
 
 > **Note:** Before running experiments, the tester should test different ArUco marker counts (HxV) and pattern sizes on the target screen to ensure markers do not overlap each other or the stimulus area. Choosing the right combination for the specific screen size is important for achieving the best gaze tracking accuracy.
 
@@ -150,16 +153,60 @@ Offset calibration for Sol glasses. Corrects systematic gaze offset when the Sol
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| Target Image | Image shown as fixation target during calibration | stimulus_images/ball.jpg |
-| Target Size (px) | Display size of the target | 100 |
+| Target Image | *1.19.0.* Fixation target of the calibration: a picture (PNG, JPG) or an animated GIF (plays at its own speed), its centre on the point; empty = the accuracy-test ring. Any file can be chosen with *Browse...*. A file that is missing or cannot be read falls back to the ring (event `target_image_missing` / `target_image_unreadable`) | stimulus_images/ball.jpg |
+| Target Size (deg) | *1.19.0*, replaces *Target Size (px)* (a saved px value is ignored). Longest edge of the picture in degrees of visual angle at the set viewing distance and screen width, so it is the same on every screen; also the accuracy test's picture. 2.5 deg is about 95 px on a 1920 px, 53 cm screen at 60 cm. The ring keeps its size | 2.5 |
+| Centre dot | *1.19.0.* A small red dot on the centre of a picture (calibration and accuracy test) | OFF |
 | Calibration Points | Number of calibration positions: 1, 3, 5 or 9 (1 point applies a constant offset; 3 or more use IDW interpolation) | 5 |
+| Collect per Point (s) | *1.17.0.* How long each point collects after SPACE (at least 30 rendered frames) | 3.0 |
+| Point Estimate | *1.17.0.* `steadiest_1s_median`: the median of the steadiest second of valid gaze within the collection; a point without one is not accepted ("NOT STEADY ... press SPACE again"). `legacy_30frame_mean`: the mean of the first 30 frames, the estimate before 1.17.0 | steadiest_1s_median |
+| Point Advance | *1.18.0.* `auto`: each point starts as soon as the homography is good and ends by itself (see *Auto-advance* below); `space`: SPACE starts a point, which then collects *Collect per Point* and uses *Point Estimate* (the 1.17.0 behaviour) | auto |
+| Stable per Point (s) | *1.18.0.* Auto-advance, calibration **and** accuracy test: how long the gaze must be stable before the next point | 1.0 |
+| Max per Point (s) | *1.18.0.* Auto-advance: usable time after which a point without enough stable gaze is marked *insufficient* and the next point follows | 5.0 |
+| Stable Spread (deg) | *1.18.0.* Auto-advance: 90 % of the valid gaze samples of that second must lie within this angle of their median | 1.5 |
 
-**Accuracy Test** (button in *Preview Gaze Mapping*): measures Sol gaze accuracy + precision before and after the loaded 2D offset, over concentric-ring + corner targets, and saves a CSV/JSON report plus heatmap/by-angle PNGs under `accuracy_test/`. The subject fixates each target and the operator presses **SPACE** (ESC/Q aborts).
+**Auto-advance** (*1.18.0*, default for the calibration and the accuracy test). The program decides when a point has enough stable data (`ntuh/sol/stability.py`, `Dwell`):
+
+- It looks at every Sol sample once (a repeated old value never counts), mapped to the screen through the homography (`raw_screen`, before any offset). *Stable* = the samples of the last *Stable per Point* seconds are valid (gaze_2d valid, both eyes open), at least half of that second is valid (a blink is allowed), and 90 % of the valid ones lie within *Stable Spread* of their median (degrees at the set viewing distance and screen width).
+- As soon as a stable second has arrived, the next point follows. If *Max per Point* seconds pass first, the point is marked **insufficient** and the next point follows. Only time with a usable homography counts (accuracy test: `LIVE`/`CACHED`; calibration: the quality check passed and the scene video runs); while it is not usable the point waits (`(paused)` on the examiner view) and the stable second starts again.
+- **R** redoes the current point, **S** skips it. Q / ESC abort as before. SPACE does nothing in auto.
+- The examiner view shows `AUTO <time>/<max> s  spread <now>/<threshold> deg` and a bar under the status line (green while the last second is within the threshold). The subject screen shows nothing new (in the accuracy test the target no longer turns red, as there is no "collecting" moment).
+- Calibration: the point is the median gaze_2d of the valid samples of the stable second (`estimator` `stable_dwell_median`). An insufficient point uses the steadiest valid second of the point instead (smallest 2-D MAD on the screen; `insufficient` = 1); a point without any valid second (or skipped with S) is not used for training and has a `calib_points.csv` row with empty model columns.
+- Accuracy test: see the `points.csv` notes below. The result dialog and `accuracy_report.json` still show the 30-frame headline.
+
+**Accuracy Test** (button in *Preview Gaze Mapping*): measures Sol gaze accuracy + precision before and after the loaded 2D offset, over concentric-ring + corner targets, and saves a CSV/JSON report plus heatmap/by-angle PNGs under `accuracy_test/`. The subject fixates each target; with *Accuracy Test Advance* `auto` (*1.18.0*, the default, next to the button) the next target follows by itself (*Auto-advance* above; R redo, S skip), with `space` the operator presses **SPACE** as before (ESC/Q aborts). *Accuracy Target Image* (*1.19.0*, below the button): empty (default) = the ring as before; a PNG, JPG or GIF is drawn like the calibration target (*Target Size (deg)*, *Centre dot*). A picture does not turn red while collecting under `space`.
+
+**`points.csv` under auto-advance (1.18.0).** The headline columns (`raw_x` … `n_samples`, also in `accuracy_data.csv`, `accuracy_report.json` and the result dialog) are the legacy estimate: the mean of the **last 30** render-frame samples before the point ended (under SPACE: the first 30 after SPACE, unchanged). They stay comparable with 2026-09-18 and recomputable (`tools/check_accuracy_replay.py` R3). The result from the stable data only is in the existing median columns, now computed over the stable second (insufficient: the steadiest second): `raw/corr_valid_median_x/y`, `err_raw/corr_valid_median_deg`, with `n_sdk_samples` / `n_sdk_valid` / `h_state_mix` of that second. New at the end: `dwell_s` (usable time spent on the point), `n_stable` (valid samples of the stable second; 0 when insufficient), `insufficient` (1/0), `threshold_deg`. Under SPACE the four are empty.
+
+**Condition and our calibration (since 1.6.0).** The Accuracy Test opens with a start dialog in which the operator must pick the **Condition** (C1–C5; there is no default). The condition decides whether our offset profile (`<User Name>_sol_2d_offset.json` in the Calibration Folder) is used:
+
+| Condition | Our calibration | What happens |
+|-----------|-----------------|--------------|
+| C1 practice, C2 no calibration, C4 Sol built-in | must **not** be applied | A profile that exists for the User Name is ignored (not deleted); the console says so. *Clear Offset* is no longer needed before these conditions. |
+| C3 our calibration, C5 both | **required** | With a profile: it is applied. Without one: the test does **not** start. |
+
+- **C3/C5 without a profile** shows an error dialog with the file that was looked for. *No* goes back, so the 5-point calibration can be run under exactly this User Name. *Yes* continues **without** our calibration; it then asks for the operator code (a code, not a name) as confirmation, and the choice, the code and the time are written to the report.
+- The start dialog shows the status once a condition is picked: `校正檔：已載入（file, time, points）` in green, or `校正檔：未載入` in grey (the condition does not use it) or red (C3/C5 and no profile).
+- During the test the examiner view carries a banner with a status dot: green `OUR CALIB: LOADED <file> <n> pts <time>`, or grey `OUR CALIB: NOT LOADED (...)`. The bar at the bottom of the subject screen shows `Our calib: ON` / `OFF`, which is what a single-monitor setup has.
+- The result dialog repeats the status. It is a **warning** dialog when a C3/C5 test ran without our calibration, or when a profile was loaded but corrected and raw gaze are identical on every point.
+- The report folder name carries the condition: `accuracy_test/<User Name>_<condition>_<YYYYMMDD_HHMMSS>/`, for example `s01_c3_20261122_100305` (before 1.6.0: `<User Name>_<YYYYMMDD_HHMMSS>`). The condition is the one picked in the start dialog, in lower case. The User Name is used as typed, so a User Name that already ends in a condition gives `s01_c3_c3_...`. Existing folders are not renamed.
+- `accuracy_report.json` → `meta` keeps its ten keys (`user`, `timestamp`, `screen_w`, `screen_h`, `view_dist_cm`, `screen_width_cm`, `n_points`, `calib_model_loaded`, `offset_mode`, `aborted`) and gains five:
+
+  | Key | Meaning |
+  |-----|---------|
+  | `condition_code` | `C1` … `C5`, as picked in the start dialog |
+  | `our_calibration_expected` | `true` for C3 and C5 |
+  | `profile_path` | The profile file the User Name maps to, relative to the program folder when it is inside it. It was loaded only if `calib_model_loaded` is `true` |
+  | `profile_calibration_timestamp` | Calibration time stored in the profile; `null` unless the profile was applied |
+  | `gate` | `{status, message, condition, operator_code, time}`. `status` is `ok` (applied), `not_applied_by_condition` (C1/C2/C4) or `no_calib_by_operator` (C3/C5 run without it by the operator's choice; `operator_code` and `time` are set) |
+
+**Calibration NOT saved.** When *Start Calibration* finishes but the profile file cannot be written (for example a read-only Calibration Folder), an error dialog **Calibration NOT saved / 校正未存檔** shows the path instead of *Calibration Complete*. The calibration is kept in memory, so an accuracy test run next under the same User Name still uses it (the status then reads `NOT SAVED (in memory)`); it is lost when the program closes.
 
 - The accuracy test and the gaze preview both run on the subject screen set at *General → Screen & Viewing → **Subject Screen***, and the operator's monitoring screen is *General → Screen & Viewing → Examiner Screen*. When these are two different monitors, an **examiner view** opens on the Examiner Screen showing the subject's **live front (scene) camera** from the Sol glasses, with the offset-corrected gaze (green dot) and the raw gaze (gray) drawn on top in camera space, plus live **accuracy and precision** in px and deg. The target itself is not redrawn — you see the real one on the subject's screen in the video — and a yellow line runs from the gaze marker to it. Confirm the gaze dot is on the target, then press SPACE.
 - The camera picture appears as soon as frames arrive; the target and corrected-gaze markers need a valid homography, so until the ArUco markers are found you see the video with the raw gaze only and a "no homography yet" note.
 - The examiner view is shown only on the Examiner Screen; the subject never sees a gaze dot (so they cannot chase it and bias the measurement). With a single monitor the test runs as before, without a tester window.
-- **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
+- **The accuracy-test folder keeps every sample** (since 1.12.0): `sol_gaze_data.csv` (every Sol sample, about 120 per second, with the raw and corrected screen position), `homography_log.csv`, `targets.csv`, `points.csv` (the `accuracy_data.csv` columns plus collect window, sample counts and medians over all and over valid samples only) and `trial_events.csv` (one row per point). `accuracy_report.json`, `accuracy_data.csv` and the PNGs are unchanged; `meta` gains `session_id`. The headline numbers are still the mean of 30 render-frame samples. See [session_bundle.md](session_bundle.md#bundle-v2-replayable).
+- **Every 2D offset calibration run leaves a folder** `calibration_sessions/<User Name>_<date>_<time>/` (since 1.9.0) with the statistics of each calibration point (`calib_points.csv`), a copy of the profile it saved and whether the save worked; see [session_bundle.md](session_bundle.md). Since 1.17.0 (bundle v2) it also keeps every Sol sample (`sol_gaze_data.csv`) and every homography (`homography_log.csv`), and `calib_points.csv` gains, at the end, the collect window, the sample counts, the estimator and its chosen window.
+- **If the scene video stalls**, the header switches to `Homography: STALE` and a red **SCENE VIDEO STALLED &lt;age&gt;** banner appears over the picture. The gaze stream is independent of the video, so gaze keeps moving — but the head pose (homography) every measurement is mapped through is frozen at the last decoded frame, so **SPACE is refused while stale**, and a point that goes stale mid-collection is discarded and must be repeated. (Under auto-advance the point is not discarded: it waits until the video recovers, and the stable second starts again.) Wait for the banner to clear; the console logs when the stream stalls and recovers. This also applies on a single monitor, where there is no tester view to look at.
 
 ### Recording Tab
 
@@ -200,8 +247,28 @@ VA_output/
     webcam_quality.csv          - Per-frame webcam face/eye validity
     screen_meta.json            - Capture vs recorded screen resolution
     trial_events.csv            - Per-trial start/end, CPD, side, result, trial_type (normal/catch)
+    session_meta.json           - Program version, settings, identity, start/end, status (since 1.7.0)
+    events.csv                  - Operator and program events (since 1.7.0)
+    console.log                 - What the program printed during the session (since 1.7.0)
+    crash_log.txt               - Only after an exception (since 1.7.0)
+    va_result.json              - The final result as the result screen shows it (since 1.9.0)
+    calib_profile_snapshot.json - Copy of the Sol offset profile the test applied, if one loaded (since 1.9.0)
+    calib_profiles/             - Copies of the other calibration profiles it loaded (since 1.9.0)
     review_labels.json          - Created later by replayer (review labels)
 ```
+
+A VF session folder holds `vf_result.json` instead of `va_result.json`.
+
+> **Session record (since 1.7.0).** `session_meta.json`, `events.csv` and `console.log` are written
+> into every VA, VF and accuracy-test folder; [session_bundle.md](session_bundle.md) describes them.
+> Everything the program prints is also kept in `logs/console_<date>_<time>.log` next to the exe.
+> The accuracy-test folder (`accuracy_test/<User Name>_<date>_<time>/`) is now created when the test
+> starts and named after the start time, and a test aborted before its first point leaves a folder too.
+>
+> **Since 1.9.0** the record also says which calibration profiles the test looked for and whether each
+> was loaded (with a copy of every loaded profile), whether the Sol built-in calibration was confirmed,
+> and the final result (`va_result.json`, `vf_result.json`, and `result` in `accuracy_report.json` →
+> `meta`; its existing keys are unchanged).
 
 > The screen video may be downscaled (e.g. 4K → 1080p); `screen_meta.json` records the
 > original screen resolution so the replayer can align the gaze overlays.
