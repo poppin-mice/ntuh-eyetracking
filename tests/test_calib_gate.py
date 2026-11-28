@@ -143,6 +143,12 @@ def test_status_line_says_not_loaded_in_every_other_case(profile):
         assert zh.startswith("校正檔：未載入")
 
 
+def test_a_condition_other_than_the_general_tabs_is_refused_with_both_named():
+    assert cg.condition_mismatch("C3", "C3") is None
+    text = cg.condition_mismatch("C5", "C3")
+    assert "C5" in text and "C3" in text and "General" in text
+
+
 def test_blocked_message_says_how_to_fix_it():
     text = cg.blocked_message(cg.decide_gate("C3", None), "s01_c3", "profiles/s01_c3_sol_2d_offset.json")
     assert "s01_c3" in text and "profiles/s01_c3_sol_2d_offset.json" in text
