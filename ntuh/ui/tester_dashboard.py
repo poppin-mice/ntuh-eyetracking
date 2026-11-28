@@ -16,6 +16,7 @@ from ntuh.ui.face_overlay import (
     draw_face_quality_overlay, guide_kwargs_from_cfg, _put_text, _quality_color,
     _Q_GRAY, _Q_WHITE, _Q_YELLOW, _Q_RED,
 )
+from ntuh.ui.calib_status import STRIP_H, draw_calib_status
 
 
 class TesterDashboard:
@@ -34,7 +35,8 @@ class TesterDashboard:
     PANEL_W = 480
     CANVAS_H = 540
 
-    def __init__(self, gf, sol_quality, dash_state, cfg, tester_rect=None, fps=15, session_dir=None):
+    def __init__(self, gf, sol_quality, dash_state, cfg, tester_rect=None, fps=15, session_dir=None,
+                 calib_status=None):
         self.gf = gf
         self.sol_quality = sol_quality
         self.dash_state = dash_state
@@ -44,6 +46,8 @@ class TesterDashboard:
         self.window_sec = float(self.cfg.get('sol_quality_window', 3.0))
         self.enable_sol = bool(self.cfg.get('enable_sol'))
         self.session_dir = session_dir
+        # (status, ASCII text) of our Sol offset, a strip under the panels for the whole test
+        self.calib_status = calib_status if self.enable_sol else None
         self._running = False
         self._thread = None
         self._face_aligner = None
@@ -138,7 +142,7 @@ class TesterDashboard:
         try:
             if not self._window_created:
                 cv2.namedWindow(self.WIN_NAME, cv2.WINDOW_NORMAL)
-                cv2.resizeWindow(self.WIN_NAME, self.PANEL_W * 2, self.CANVAS_H)
+                cv2.resizeWindow(self.WIN_NAME, canvas.shape[1], canvas.shape[0])
                 if self.tester_rect:
                     tx, ty = int(self.tester_rect[0]), int(self.tester_rect[1])
                     try:
@@ -169,6 +173,9 @@ class TesterDashboard:
         gate = state.get('gate')
         if gate:
             self._render_gate_banner(canvas, gate)
+        if self.calib_status:
+            canvas = draw_calib_status(np.vstack([canvas, np.full((STRIP_H,) + canvas.shape[1:], 30, np.uint8)]),
+                                       *self.calib_status, y0=self.CANVAS_H)
         return canvas
 
     def _render_gate_banner(self, canvas, gate):

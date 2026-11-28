@@ -137,6 +137,33 @@ def get_monitor_info_windows():
     return monitors
 
 
+def monitor_dpi_scale(x, y):
+    """Windows display scale (1.0 = 100 %) of the monitor containing the point; None if unknown."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32, shcore = ctypes.windll.user32, ctypes.windll.shcore
+        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        shcore.GetDpiForMonitor.argtypes = [wintypes.HMONITOR, ctypes.c_int,
+                                            ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint)]
+        hmon = user32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)   # nearest monitor
+        dpi_x, dpi_y = ctypes.c_uint(), ctypes.c_uint()
+        if shcore.GetDpiForMonitor(hmon, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) != 0:
+            return None
+        return round(dpi_x.value / 96.0, 2)
+    except Exception:
+        return None
+
+
+def centered_on_monitor_at(monitors, px, py, width, height):
+    """Top-left (x, y) that centres a width x height window on the monitor containing the point
+    (px, py); the first monitor when none contains it. Physical pixels, as get_monitor_info_windows()."""
+    m = next((m for m in monitors if m['x'] <= px < m['x'] + m['width']
+              and m['y'] <= py < m['y'] + m['height']), monitors[0])
+    return m['x'] + (m['width'] - width) // 2, m['y'] + (m['height'] - height) // 2
+
+
 def screen_options(monitors):
     """Screen-picker labels for a monitor list: "<index>: <name> (<w>x<h>)".
 

@@ -120,10 +120,6 @@ class ScreenProjector3D:
         # [2D Gaze Offset] SVR-based offset correction model
         self.gaze_2d_offset_model = None
 
-    def is_calibrated(self):
-        with self.pose_lock:
-            return self.is_pose_valid
-
     def start_background_detection(self, marker_physical_size_m, marker_screen_positions_px, marker_container_size, screen_width_px, screen_height_px, screen_width_m):
         """Start background ArUco detection thread"""
         if self.pose_running:
@@ -576,96 +572,6 @@ class ScreenProjector3D:
         # Return current pose state
         return (self.smoothed_rvec, self.smoothed_tvec) if self.is_pose_valid else None, detected_ids_list
 
-    def project_gaze_to_screen(self, gaze_origin_cam_m, gaze_direction_cam_unit):
-        """
-        將 Camera Frame 的 Gaze Ray 投射到 Screen Frame 並計算與 Z=0 平面的交點
-        """
-        # [OPT] Thread-safe pose read
-        with self.pose_lock:
-            if not self.is_pose_valid:
-                return None
-            rvec = self.smoothed_rvec.copy() if self.smoothed_rvec is not None else None
-            tvec = self.smoothed_tvec.copy() if self.smoothed_tvec is not None else None
-
-        if rvec is None or tvec is None:
-            return None
-
-        R_screen_to_cam, _ = cv2.Rodrigues(rvec)
-        R_cam_to_screen = R_screen_to_cam.T
-        t_screen_to_cam = tvec
-        
-        # 轉換 Origin
-        gaze_origin_screen_m = R_cam_to_screen @ (gaze_origin_cam_m.reshape(3,1) - t_screen_to_cam)
-        gaze_origin_screen_m = gaze_origin_screen_m.flatten()
-        
-        # 轉換 Direction
-        gaze_dir_screen_unit = R_cam_to_screen @ gaze_direction_cam_unit.reshape(3,1)
-        gaze_dir_screen_unit = gaze_dir_screen_unit.flatten()
-        
-        if abs(gaze_dir_screen_unit[2]) < 1e-6: # 平行於螢幕
-            return None
-            
-        t = -gaze_origin_screen_m[2] / gaze_dir_screen_unit[2]
-        
-        if t < 0: # 交點在背後
-            return None
-            
-        intersection_point_screen_m = gaze_origin_screen_m + t * gaze_dir_screen_unit
-        
-        return intersection_point_screen_m # (x, y, 0) in meters
-
-    def physical_to_pixels(self, point_screen_m, screen_width_px, screen_width_m):
-        """
-        將 Screen Frame 的物理座標 (meters) 轉換為 Pixel 座標
-        """
-        if point_screen_m is None:
-            return None
-            
-        px_to_m = screen_width_m / screen_width_px
-        
-        x_px = point_screen_m[0] / px_to_m
-        y_px = point_screen_m[1] / px_to_m
-        
-        return (int(x_px), int(y_px))
-
-    # Helper method for specialized use cases (like recording) that might need 3d point projection logic exposed
-    def project_gaze_to_3d_point(self, gaze_origin_m, gaze_direction_unit, plane):
-        # Plane defined by (point, normal)
-        plane_point, plane_normal = plane
-        
-        # Flatten inputs to ensure they are 1D arrays
-        gaze_direction_unit = np.array(gaze_direction_unit).flatten()
-        plane_point = np.array(plane_point).flatten()
-        plane_normal = np.array(plane_normal).flatten()
-
-        # Check if parallel
-        denom = np.dot(gaze_direction_unit, plane_normal)
-        if abs(denom) < 1e-6:
-            return None
-        
-        t = np.dot(plane_point - gaze_origin_m, plane_normal) / denom
-        if t < 0:
-            return None
-            
-        return gaze_origin_m + t * gaze_direction_unit
-
-    def camera_point_to_screen_pixels(self, point_camera_m, rvec, tvec, screen_width_px, screen_width_m):
-        """
-        Convert a 3D point in Camera Frame to Screen Pixels using provided pose (rvec, tvec).
-        """
-        if point_camera_m is None: return None
-
-        # T_cam_to_screen = T_screen_to_cam ^ -1
-        R_screen_to_cam, _ = cv2.Rodrigues(rvec)
-        R_cam_to_screen = R_screen_to_cam.T
-        t_screen_to_cam = tvec
-
-        # P_screen = R^T * (P_cam - t)
-        point_screen_m = R_cam_to_screen @ (point_camera_m.reshape(3,1) - t_screen_to_cam.reshape(3,1))
-        point_screen_m = point_screen_m.flatten()
-
-        return self.physical_to_pixels(point_screen_m, screen_width_px, screen_width_m)
-
     def get_current_pose(self):
         """
         Thread-safe retrieval of current pose for calibration.
@@ -677,31 +583,6 @@ class ScreenProjector3D:
             if not self.is_pose_valid or self.smoothed_rvec is None:
                 return None, None
             return self.smoothed_rvec.copy(), self.smoothed_tvec.copy()
-
-    def back_project_screen_to_camera(self, screen_point_m, rvec, tvec):
-        """
-        Convert screen point (in meters, Z=0 plane) to camera frame coordinates.
-
-        This is the inverse of project_gaze_to_screen - given a point on the screen,
-        compute its 3D position in the camera coordinate frame.
-
-        Args:
-            screen_point_m: 2D point on screen in meters [x, y] (Z=0 assumed)
-            rvec: Rotation vector from screen to camera
-            tvec: Translation vector from screen to camera
-
-        Returns:
-            3D point in camera frame coordinates (meters)
-        """
-        # Screen point in 3D (Z=0 plane)
-        screen_3d = np.array([screen_point_m[0], screen_point_m[1], 0], dtype=np.float64)
-
-        # Transform from screen frame to camera frame
-        # P_cam = R * P_screen + t
-        R_screen_to_cam, _ = cv2.Rodrigues(rvec)
-        point_camera_m = R_screen_to_cam @ screen_3d.reshape(3, 1) + tvec.reshape(3, 1)
-
-        return point_camera_m.flatten()
 
     def _debug_print_homography(self, H, src_pts, dst_pts, status, screen_w, screen_h):
         """Print detailed homography debug info."""

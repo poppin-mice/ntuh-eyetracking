@@ -1,6 +1,6 @@
 # Hardware-free unit tests (tests/, settings in pytest.ini).
 # Installs only what the tests import: numpy + OpenCV at the versions pinned in
-# requirements.txt, plus pytest from requirements-dev.txt. The app stack (Sol SDK,
+# requirements.txt, plus pytest and pyflakes from requirements-dev.txt. The app stack (Sol SDK,
 # MediaPipe, MNN, pygame, PyQt6, PyInstaller) is NOT installed here; release builds
 # stay local (see CLAUDE.md, "Versioning & release flow").
 name: tests
@@ -43,3 +43,10 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -p no:cacheprovider
+
+      - name: Undefined names in ntuh/ (pyflakes)
+        shell: bash
+        run: |
+          python -m pyflakes ntuh > pyflakes.txt || true
+          if grep "undefined name" pyflakes.txt; then exit 1; fi
+          echo "No undefined names in ntuh/."

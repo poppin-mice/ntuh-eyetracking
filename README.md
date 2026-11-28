@@ -71,6 +71,9 @@ python -m pytest
 
 `pytest.ini` sets `-p no:cacheprovider`, so no `.pytest_cache/` is written. Test data must be
 synthetic or use participant **codes** only (s01, K03 ...) — never real names or field recordings.
+Shared synthetic builders live in `tests/helpers/synthetic.py` (`from helpers.synthetic import ...`):
+`parse_outcomes("P2 P4 F6")` for staircase outcome sequences and `make_sol_stream(...)` for Sol
+samples with stream gaps and invalid spans.
 
 ## Build the executables
 
@@ -108,8 +111,10 @@ gazefollower/         vendored webcam gaze pipeline (do not edit internals)
 vendor/               Ganzin Sol SDK wheel
 packaging/            build & release: *.spec, build_exe.bat, stage_release.py, release.py,
                       pyinstaller_helpers.py, hooks/
-doc/                  end-user docs + release notes
+doc/                  end-user docs + release notes; session_bundle.md = what each session folder records
 tests/                hardware-free pytest suite (see Tests)
+tools/                check_session_bundle.py: checks the session folders under a path;
+                      rescore_session.py: scores a session again from its own files
 release/              built release zips (git-ignored)
 THIRD_PARTY_NOTICES.md  third-party licences + material under licence review
 ```
@@ -133,4 +138,5 @@ workflow. The full rules are in [`CLAUDE.md`](CLAUDE.md); the short version:
 
 Each app has an independent version in `ntuh/version.py` (`APP_VERSIONS`), shown in its window title.
 Bump the relevant app before a release build; see [`CLAUDE.md`](CLAUDE.md#versioning--release-flow) for
-the PATCH/MINOR/MAJOR rules, tagging, and the full release checklist.
+the PATCH/MINOR/MAJOR rules, tagging, and the full release checklist. Every release is also checked by
+hand with the Sol glasses: [`doc/dev/release_hardware_checklist.md`](doc/dev/release_hardware_checklist.md).
