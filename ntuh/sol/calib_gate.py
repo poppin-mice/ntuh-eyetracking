@@ -122,6 +122,18 @@ def describe(gate, profile=None, profile_name=""):
     return f"校正檔：未載入（{zh}）", f"OUR CALIB: NOT LOADED ({en})"
 
 
+def condition_mismatch(picked, general):
+    """Why the condition picked in the accuracy-test start dialog cannot be used, or None. It must
+    be the Condition of the General tab, which names the folder and the profile; the dialog shows
+    this as soon as another condition is picked."""
+    if picked == general:
+        return None
+    return (f"這裡選的是 {picked}，但 General 頁的條件是 {general}。"
+            f"請在 General 頁改條件，或在這裡選 {general}。\n"
+            f"{picked} is not the Condition on the General tab ({general}): "
+            f"change it there, or pick {general} here.")
+
+
 def blocked_message(gate, user_name, profile_path):
     """Text of the error dialog for a blocked C3/C5 start (Yes = continue without, No = go back)."""
     c = gate.condition

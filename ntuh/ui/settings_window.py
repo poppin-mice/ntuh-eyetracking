@@ -2526,17 +2526,15 @@ Controls: SPACE = Record point, Q = Cancel"""
         status.grid(row=2, column=0, columnspan=2, sticky="w", **pad)
         chosen = [None]
 
-        def start():
+        def mismatch():
             # Picked again on purpose: it must be the Condition of the General tab, which names
             # the folder and the profile (a test is never saved under another condition's name).
-            picked, general = var.get().split()[0], self._condition_code()
-            if picked != general:
-                status.config(fg="#c00000", text=f"這裡選的是 {picked}，但 General 頁的條件是 {general}。"
-                              f"請在 General 頁改條件，或在這裡選 {general}。\n"
-                              f"{picked} is not the Condition on the General tab ({general}): "
-                              f"change it there, or pick {general} here.")
+            return calib_gate.condition_mismatch(var.get().split()[0], self._condition_code())
+
+        def start():
+            if mismatch():          # Start is disabled then; this is the safety net
                 return
-            chosen[0] = picked
+            chosen[0] = var.get().split()[0]
             dlg.destroy()
 
         btns = ttk.Frame(dlg)
@@ -2546,6 +2544,11 @@ Controls: SPACE = Record point, Q = Cancel"""
         ttk.Button(btns, text="Cancel", command=dlg.destroy).pack(side="left")
 
         def on_pick(_event=None):
+            wrong = mismatch()
+            if wrong:               # said as soon as it is picked, not only when Start is pressed
+                status.config(text=wrong, fg="#c00000")
+                btn_start.config(state="disabled")
+                return
             gate = calib_gate.decide_gate(var.get().split()[0], profile)
             colour = {"green": "#0a7d0a", "grey": "#555555", "red": "#c00000"}[calib_gate.icon_state(gate.status)]
             status.config(text="\n".join(calib_gate.describe(gate, profile, profile_name)), fg=colour)
