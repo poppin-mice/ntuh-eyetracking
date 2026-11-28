@@ -55,6 +55,9 @@ class ReplayerApp(QMainWindow):
         open_action.setShortcut(QKeySequence("Ctrl+O"))
         open_action.triggered.connect(self._open_session)
         file_menu.addAction(open_action)
+        qc_action = QAction("Batch QC export (accuracy / calibration)...", self)
+        qc_action.triggered.connect(self._batch_qc_export)
+        file_menu.addAction(qc_action)
         file_menu.addSeparator()
         exit_action = QAction("Exit", self)
         exit_action.setShortcut(QKeySequence("Ctrl+Q"))
@@ -236,10 +239,37 @@ class ReplayerApp(QMainWindow):
                                              os.path.join(os.path.dirname(__file__), "VA_output"))
         if not d:
             return
+        from ntuh.replayer import session_qc
+        if session_qc.session_mode(d):      # accuracy test / Sol calibration: own window, read-only
+            from ntuh.replayer.acc_cal_view import AccCalWindow
+            self._acc_cal_windows = [w for w in getattr(self, "_acc_cal_windows", []) if w.isVisible()]
+            self._acc_cal_windows.append(AccCalWindow(d))
+            self._acc_cal_windows[-1].show()
+            self._status_label.setText(f"Opened as Calibration / Accuracy session: {os.path.basename(d)}")
+            return
         if self.engine.load_session(d):
             self._status_label.setText(f"Loaded: {os.path.basename(d)}")
         else:
             self._status_label.setText("Failed to load session — no valid timestamps found")
+
+    def _batch_qc_export(self):
+        """Every accuracy / calibration session below a folder: one PNG each and qc_summary.csv,
+        all into an output folder the user picks (never into a session folder)."""
+        from PyQt6.QtWidgets import QMessageBox
+        from ntuh.replayer import session_qc
+        from ntuh.replayer.acc_cal_view import render_png
+        root = QFileDialog.getExistingDirectory(self, "Folder with accuracy / calibration sessions")
+        if not root:
+            return
+        out = QFileDialog.getExistingDirectory(self, "Output folder for the QC export (not a session folder)")
+        if not out:
+            return
+        try:
+            summary, pngs = session_qc.export_all(root, out, render_png)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Batch QC export", str(e))
+            return
+        QMessageBox.information(self, "Batch QC export", f"{len(pngs)} session(s) exported:\n{summary}")
 
     def _on_session_loaded(self):
         self.config_panel.set_session_path(self.engine.session_dir)

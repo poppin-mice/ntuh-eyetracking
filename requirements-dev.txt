@@ -9,3 +9,6 @@
 # exactly those two, at the versions pinned in requirements.txt, plus this file.
 # ---------------------------------------------------------------------------
 pytest==9.1.1
+# Static check for undefined names in ntuh/ (CI runs it as a non-blocking step):
+#     python -m pyflakes ntuh | findstr /C:"undefined name"
+pyflakes==4.1.0

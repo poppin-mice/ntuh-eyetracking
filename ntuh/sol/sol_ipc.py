@@ -79,7 +79,9 @@ def gaze_to_dict(g):
             },
             "left_eye": _eye_to_dict(g.left_eye),
             "right_eye": _eye_to_dict(g.right_eye),
-            "timestamp": int(getattr(g, "timestamp", 0) or 0),
+            # the SDK's GazeData field is timestamp_ms (device clock, Unix ms); reading
+            # "timestamp" gave 0 for every sample
+            "timestamp": int(getattr(g, "timestamp_ms", None) or getattr(g, "timestamp", 0) or 0),
         }
     except Exception:
         return None
