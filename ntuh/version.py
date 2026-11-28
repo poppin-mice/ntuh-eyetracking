@@ -149,6 +149,66 @@ VA_center_opt
            negatives already), so a low-VA subject gets few or no catch trials instead of a
            block of them at the end; only what is still owed is forced in when the staircase
            ends early. Settings keys (catch_enabled / catch_trials) are unchanged.
+    1.6.0  Accuracy Test: a required Condition (C1-C5) in a new start dialog decides whether our
+           Sol 2D offset profile is used. C3/C5 no longer start silently without it (4 of 14
+           C3/C5 tests in one field session ran on raw gaze unnoticed): a missing profile is an
+           error dialog, and continuing without calibration needs the operator code and is
+           recorded. C1/C2/C4 ignore a profile that exists. The status is shown in the start
+           dialog, as a banner with a status dot on the examiner view, on the subject-screen
+           bar and in the result dialog (a warning when expected but not applied, or applied
+           but corrected == raw). accuracy_report.json meta gains condition_code,
+           our_calibration_expected, profile_path, profile_calibration_timestamp and gate; the
+           ten existing keys are unchanged. The report folder name gains the condition:
+           accuracy_test/<User Name>_<condition>_<date>_<time> (was <User Name>_<date>_<time>).
+           Fix: a 2D offset calibration whose profile could not be written still said
+           "Calibration Complete". It now says "Calibration NOT saved" with the path and keeps
+           the model in memory for the accuracy test that follows.
+           Fix: "Last Calibrated" kept the previous user's time when the new user had no
+           profile (2D and 3D); it now follows the current user and gaze method.
+    1.7.0  Session bundle v1, part 1 (doc/session_bundle.md): every VA, VF and accuracy-test
+           folder now carries session_meta.json (program version and build, the settings the
+           test ran with, subject / condition / operator as separate fields, start and end
+           time, status completed / aborted / crashed, and a sha256 manifest of the folder),
+           events.csv (aborts, the SPACE override of the quality gate, Clear Offset, a changed
+           User Name or Calibration Folder, scene stalls, Sol worker crashes, exceptions,
+           including what happened since the previous session) and console.log. Everything
+           printed is also kept in logs/console_<time>.log. New "Operator Code" field on the
+           General tab. The accuracy-test folder is created when the test starts and named
+           after the start time; accuracy_report.json meta gains started_at (the ten existing
+           keys are unchanged). tools/check_session_bundle.py checks the folders.
+    1.9.0  Session bundle v1, part 2 (doc/session_bundle.md). (1.8.0 is the VA threshold
+           result.) session_meta.json now says which calibration profiles a test looked for,
+           whether each was loaded, its sha256 and which profiles the folder held, and the
+           folder keeps a byte copy of every loaded profile (calib_profile_snapshot.json,
+           calib_profiles/). New "Sol built-in calibration done" checkbox and Chronus
+           participant code on the Sol tab, stored in every session. Every Sol 2D offset
+           calibration run writes its own folder under calibration_sessions/ with the
+           per-point statistics and leave-one-out errors (calib_points.csv), a copy of the
+           profile it saved, and whether the save worked. New result files va_result.json and
+           vf_result.json; accuracy_report.json meta gains "result". tools/rescore_session.py
+           scores a session again from its own files into a separate _derived folder.
+    1.12.0 Session bundle v2 for the accuracy test (doc/session_bundle.md): its folder now keeps
+           every Sol sample (sol_gaze_data.csv, VA columns first), every homography
+           (homography_log.csv), targets.csv, points.csv (accuracy_data.csv columns + collect
+           window, sample counts, medians over all / valid samples) and a trial_events.csv, so a
+           test can be mapped again from its files. events.csv gains gate_check, target_show,
+           space_pressed, collect_start/end and h_state_change. accuracy_report.json,
+           accuracy_data.csv and the PNGs are unchanged (headline = 30-frame mean); meta gains
+           session_id. bundle.version is 2 for the accuracy test.
+    1.17.0 The Sol 2D calibration point estimate changed: each point now collects 3 s (setting
+           Collect per Point) and is the median of the steadiest valid second of gaze
+           (steadiest_1s_median) instead of the mean of 30 frames taken right after SPACE; a
+           point without a steady valid second is not accepted (SPACE again). The old mean stays
+           selectable (Point Estimate: legacy_30frame_mean). The calibration folder is bundle v2:
+           sol_gaze_data.csv, homography_log.csv, and calib_points.csv gains collect window,
+           sample counts, estimator and window at the end; the profile records the estimator
+           per point. Fix: sdk_timestamp_ms of sol_gaze_data.csv was 0 (wrong SDK field).
+    1.18.0 Auto-advance (default) for the Sol 2D calibration and the accuracy test: a point
+           ends once 1 s of stable gaze has arrived (90 % of the valid samples within Stable
+           Spread, 1.5 deg), or after 5 s of usable time as "insufficient"; R redoes, S skips a
+           point. SPACE stays selectable (Point Advance / Accuracy Test Advance). points.csv and
+           calib_points.csv gain dwell_s, n_stable, insufficient, threshold_deg at the end;
+           events point_auto_advance / point_insufficient / point_retry / point_skip.
 calibration
     1.0.0  Baseline: versioning introduced.
     1.0.1  Multi-screen selection, screen-width (cm) input, image size shown in
@@ -187,6 +247,8 @@ calibration
            clinic screens (more so now that the app is per-monitor DPI aware and Windows no
            longer stretches the window). It retunes Tk's named fonts, so the whole window
            follows at once.
+    1.3.0  Everything the program prints is kept in logs/console_<time>.log next to the exe
+           (session bundle v1, doc/session_bundle.md).
 replayer
     1.0.0  Baseline: versioning introduced.
     1.1.0  A "Font" spinner in the menu-bar corner, applied live and remembered between runs
@@ -232,8 +294,8 @@ replayer
 """
 
 APP_VERSIONS = {
-    "VA_center_opt": "1.5.0",
-    "calibration": "1.2.0",
+    "VA_center_opt": "1.18.0",
+    "calibration": "1.3.0",
     "replayer": "1.2.0",
 }
 

@@ -39,3 +39,15 @@ def _load_functions(relpath, names, namespace=None):
 def load_functions():
     """Fixture form of _load_functions(relpath, names, namespace=None)."""
     return _load_functions
+
+
+@pytest.fixture
+def bundle_app(tmp_path):
+    """Session-bundle state pointed at an empty temp program folder (logs/ lands there), so a
+    test never writes into the real one. Yields that folder."""
+    from ntuh.recording import session_bundle
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    session_bundle.reset(app_dir=app_dir)
+    yield app_dir
+    session_bundle.reset()
