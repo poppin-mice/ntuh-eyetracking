@@ -22,6 +22,8 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, Dict, List, Any
 
+from ntuh.common.identity import safe_code
+
 
 def force_pygame_window_to_front():
     """Force the pygame window to the foreground on Windows.
@@ -128,7 +130,7 @@ def load_sol_offset(username: str, calibration_dir: Path) -> Optional[Dict[str, 
     Returns:
         Dictionary with offset data or None if not found
     """
-    offset_file = calibration_dir / f"{username}_sol_offset.json"
+    offset_file = calibration_dir / f"{safe_code(username)}_sol_offset.json"
 
     if not offset_file.exists():
         return None
@@ -157,7 +159,7 @@ def save_sol_offset(username: str, calibration_dir: Path, offset_data: Dict[str,
     calibration_dir = Path(calibration_dir)
     calibration_dir.mkdir(parents=True, exist_ok=True)
 
-    offset_file = calibration_dir / f"{username}_sol_offset.json"
+    offset_file = calibration_dir / f"{safe_code(username)}_sol_offset.json"
 
     try:
         with open(offset_file, 'w', encoding='utf-8') as f:
@@ -180,7 +182,7 @@ def clear_sol_offset(username: str, calibration_dir: Path) -> bool:
     Returns:
         True if deleted (or didn't exist), False on error
     """
-    offset_file = Path(calibration_dir) / f"{username}_sol_offset.json"
+    offset_file = Path(calibration_dir) / f"{safe_code(username)}_sol_offset.json"
 
     try:
         if offset_file.exists():

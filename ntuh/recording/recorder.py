@@ -9,6 +9,8 @@ import threading
 import queue
 import copy
 
+from ntuh.common.identity import session_folder_name
+
 class Recorder:
     def __init__(self, output_dir="VA_output", subject_id="test", session_num="1", is_va=True,
                  screen_max_height=1080):
@@ -26,8 +28,8 @@ class Recorder:
             os.makedirs(output_dir)
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = "VA" if is_va else "VF"
-        self.session_dir = os.path.join(output_dir, f"{prefix}_{subject_id}_sess{session_num}_{timestamp}")
+        self.session_dir = os.path.join(output_dir, session_folder_name(
+            "va" if is_va else "vf", subject_id, session_num, timestamp))
         os.makedirs(self.session_dir)
 
         # 1. Webcam Gaze Data (matching NTUH-Gaze-Stimuli format)
