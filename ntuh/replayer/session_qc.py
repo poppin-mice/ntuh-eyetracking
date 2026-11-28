@@ -135,7 +135,9 @@ def header_badges(s):
         name = Path(applied.get("source_path") or "").name
         text = (f"Our calib LOADED {name}, {_age(applied.get('age_s_at_start'))}" if loaded
                 else "Our calib NOT LOADED")
-        text += {True: " (expected)", False: " (not expected)", None: " (expected ?)"}[expected]
+        # What the condition asks for, in words that cannot be read as "this is unexpected".
+        text += {True: " - the condition needs it", False: " - the condition runs without it",
+                 None: " - condition unknown"}[expected]
         out.append((text, expected is not None and expected != loaded))
     sol = m.get("sol_builtin_calibration") or {}
     done = bool(sol.get("confirmed"))

@@ -114,8 +114,9 @@ An accuracy-test folder (`accuracy_test/...`) or a Sol 2D calibration folder
 **This window never writes into the session folder** (no `review_labels.json`).
 
 - **Header badges:** subject, condition, operator, program version; *Our calib LOADED (profile,
-  age at start) / NOT LOADED*, red when that is not what the condition expects (C3 / C5 with,
-  C1 / C2 / C4 without); *Sol built-in* as the operator confirmed it, red when it does not fit the
+  age at start) / NOT LOADED*, followed by what the condition asks for (*the condition needs it* for
+  C3 / C5, *the condition runs without it* for C1 / C2 / C4), red when the two do not agree;
+  *Sol built-in* as the operator confirmed it, red when it does not fit the
   condition (C4 / C5 need it); the start *Gate*, red when blocked or missing; the *Status*, red
   unless completed. A calibration run shows *Profile SAVED / NOT SAVED* instead of the calibration
   and gate badges.

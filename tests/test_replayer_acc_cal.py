@@ -149,6 +149,10 @@ def test_our_calibration_is_red_when_expected_and_loaded_differ():
                 "our_calibration": {"expected": expected, "loaded": loaded, "profiles": []}}
         b = badges(meta, events=gate)
         assert [r for t, r in b.items() if t.startswith("Our calib")] == [red]
+        (text,) = [t for t in b if t.startswith("Our calib")]
+        # the badge says what the condition asks for; "(not expected)" read as "this is unexpected"
+        assert text.endswith({True: "the condition needs it", False: "the condition runs without it",
+                              None: "condition unknown"}[expected]) and "expected" not in text
 
 
 def test_sol_builtin_gate_and_status_badges():
