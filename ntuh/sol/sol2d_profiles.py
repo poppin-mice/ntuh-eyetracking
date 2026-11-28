@@ -77,12 +77,14 @@ def list_profiles(app_dir=None, name_has=""):
 
 
 def _local(timestamp):
-    """A naive local datetime from an ISO time (with or without a zone), None if unreadable."""
+    """The wall-clock time an ISO time was written with, None if unreadable. A profile stores
+    its time without a zone and a session with one, both from the clock of the PC that wrote
+    them: they are compared as written. Converting to the zone of the PC that reads them would
+    make the selection depend on where the data is looked at."""
     try:
-        t = datetime.fromisoformat(str(timestamp))
+        return datetime.fromisoformat(str(timestamp)).replace(tzinfo=None)
     except ValueError:
         return None
-    return t.astimezone().replace(tzinfo=None) if t.tzinfo else t
 
 
 def list_sessions(app_dir=None, name_has=""):

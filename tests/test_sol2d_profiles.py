@@ -111,6 +111,15 @@ def test_a_retake_of_the_same_condition_still_finds_its_profile():
     assert sp.select(profiles, sessions, "s01", "C3") is None
 
 
+def test_times_are_compared_as_written_whatever_the_zone_of_this_pc():
+    """A session time carries an offset, a profile time none; both are the writing PC's clock.
+    (The selection used to convert to this PC's zone and gave another answer on a UTC machine.)"""
+    from datetime import datetime
+    for written in ("2026-09-18T11:00:00+08:00", "2026-09-18T11:00:00+00:00", "2026-09-18T11:00:00"):
+        assert sp._local(written) == datetime(2026, 9, 18, 11, 0)
+    assert sp._local("not a time") is None
+
+
 def test_profiles_and_sessions_are_read_from_the_program_folder(tmp_path):
     _calibrate(tmp_path, "s01_c3_20261124_100000")
     legacy = sp.legacy_dir(tmp_path) / "s02_c3_sol_2d_offset.json"
